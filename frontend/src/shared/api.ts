@@ -22,10 +22,18 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+    })
+  } catch {
+    throw new ApiError(
+      '无法连接后端服务，请确认 API 地址、后端服务和 CORS 配置是否正确',
+      0,
+    )
+  }
 
   let payload: (ApiEnvelope<T> & { detail?: unknown }) | undefined
   try {

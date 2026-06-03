@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(default="change-me-in-production", alias="JWT_SECRET_KEY")
     access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    login_fail_limit: int = Field(default=5, alias="LOGIN_FAIL_LIMIT")
+    login_fail_window_seconds: int = Field(default=600, alias="LOGIN_FAIL_WINDOW_SECONDS")
+    login_lock_seconds: int = Field(default=900, alias="LOGIN_LOCK_SECONDS")
 
     admin_bootstrap_username: str = Field(default="admin", alias="ADMIN_BOOTSTRAP_USERNAME")
     admin_bootstrap_email: str = Field(default="admin@example.com", alias="ADMIN_BOOTSTRAP_EMAIL")

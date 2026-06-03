@@ -36,6 +36,7 @@ from app.core.security import (
     verify_password,
 )
 from app.infra.db import get_db
+from app.infra.redis_client import get_redis
 
 
 @dataclass
@@ -184,6 +185,54 @@ def record_admin_login(
     db.commit()
 
 
+def login_rate_key(*, role: str, account: str, ip: Optional[str]) -> str:
+    account_fingerprint = hash_token(f"{role}:{account.strip().lower()}")
+    ip_fingerprint = hash_token(ip or "unknown")
+    return f"auth:login_fail:{role}:{account_fingerprint}:{ip_fingerprint}"
+
+
+def check_login_rate_limit(*, role: str, account: str, ip: Optional[str]) -> None:
+    key = login_rate_key(role=role, account=account, ip=ip)
+    lock_key = f"{key}:lock"
+    try:
+        client = get_redis()
+        ttl = client.ttl(lock_key)
+        if ttl and ttl > 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录失败次数过多，请 {ttl} 秒后再试",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        return
+
+
+def record_login_failure(*, role: str, account: str, ip: Optional[str]) -> None:
+    settings = get_settings()
+    key = login_rate_key(role=role, account=account, ip=ip)
+    lock_key = f"{key}:lock"
+    try:
+        client = get_redis()
+        count = int(client.incr(key))
+        if count == 1:
+            client.expire(key, settings.login_fail_window_seconds)
+        if count >= settings.login_fail_limit:
+            client.setex(lock_key, settings.login_lock_seconds, "1")
+            client.delete(key)
+    except Exception:
+        return
+
+
+def clear_login_failures(*, role: str, account: str, ip: Optional[str]) -> None:
+    key = login_rate_key(role=role, account=account, ip=ip)
+    try:
+        client = get_redis()
+        client.delete(key, f"{key}:lock")
+    except Exception:
+        return
+
+
 def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest) -> dict:
     settings = get_settings()
     provider = get_mail_provider(settings)
@@ -305,8 +354,10 @@ def login_student(
     user_agent: Optional[str],
 ) -> dict:
     email = normalize_email(payload.email)
+    check_login_rate_limit(role="student", account=email, ip=ip)
     student = db.scalar(select(StudentUser).where(StudentUser.email == email, StudentUser.is_deleted.is_(False)))
     if not student or not student.password_hash or not verify_password(payload.password, student.password_hash):
+        record_login_failure(role="student", account=email, ip=ip)
         record_student_login(
             db,
             email=email,
@@ -323,6 +374,7 @@ def login_student(
         student.email_verified_at = utcnow()
     db.commit()
 
+    clear_login_failures(role="student", account=email, ip=ip)
     tokens = issue_tokens(db, user_id=student.id, role="student", tenant_id=student.tenant_id)
     record_student_login(
         db,
@@ -345,12 +397,14 @@ def login_admin(
 ) -> dict:
     account = payload.account.strip()
     normalized_account = normalize_email(account)
+    check_login_rate_limit(role="admin", account=normalized_account, ip=ip)
     admin = db.scalar(
         select(AdminUser).where(
             ((AdminUser.username == account) | (AdminUser.email == normalized_account)) & AdminUser.is_deleted.is_(False)
         )
     )
     if not admin or not verify_password(payload.password, admin.password_hash):
+        record_login_failure(role="admin", account=normalized_account, ip=ip)
         record_admin_login(
             db,
             account=account,
@@ -364,6 +418,7 @@ def login_admin(
 
     admin.last_login_at = utcnow()
     db.commit()
+    clear_login_failures(role="admin", account=normalized_account, ip=ip)
     tokens = issue_tokens(db, user_id=admin.id, role="admin", tenant_id=admin.tenant_id)
     record_admin_login(
         db,
