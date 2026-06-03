@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>模型广场 - 智培职联 Admin</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Be+Vietnam+Pro:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error": "#ffffff",
+                        "primary-fixed": "#dce1ff",
+                        "on-surface-variant": "#434656",
+                        "on-tertiary-fixed-variant": "#733500",
+                        "on-primary-fixed": "#00164f",
+                        "inverse-on-surface": "#f0f0fd",
+                        "surface-container-low": "#f3f2ff",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "secondary": "#006e16",
+                        "surface-bright": "#faf8ff",
+                        "primary-fixed-dim": "#b6c4ff",
+                        "inverse-surface": "#2e303a",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-variant": "#e1e1ef",
+                        "on-primary": "#ffffff",
+                        "primary": "#0047cf",
+                        "on-background": "#191b24",
+                        "error": "#ba1a1a",
+                        "on-tertiary": "#ffffff",
+                        "surface-container": "#ededfa",
+                        "surface": "#faf8ff",
+                        "on-secondary-container": "#007317",
+                        "outline": "#737688",
+                        "secondary-fixed-dim": "#4ee253",
+                        "on-secondary-fixed-variant": "#00530e",
+                        "outline-variant": "#c3c5d9",
+                        "on-primary-container": "#eeefff",
+                        "inverse-primary": "#b6c4ff",
+                        "secondary-fixed": "#72ff70",
+                        "surface-container-high": "#e7e7f4",
+                        "tertiary-fixed": "#ffdbc8",
+                        "primary-container": "#165dff",
+                        "surface-tint": "#004fe5",
+                        "surface-dim": "#d9d9e6",
+                        "on-tertiary-container": "#ffece2",
+                        "secondary-container": "#6bfd6a",
+                        "on-surface": "#191b24",
+                        "tertiary": "#894000",
+                        "on-secondary-fixed": "#002203",
+                        "background": "#faf8ff",
+                        "tertiary-container": "#ae5300",
+                        "tertiary-fixed-dim": "#ffb689",
+                        "on-tertiary-fixed": "#311300",
+                        "surface-container-highest": "#e1e1ef",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#003bb0"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "gutter": "16px",
+                        "layout-max-width": "1440px",
+                        "container-padding": "24px",
+                        "unit": "4px",
+                        "margin-md": "16px",
+                        "margin-sm": "8px",
+                        "margin-lg": "24px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter", "sans-serif"],
+                        "label-caps": ["Inter", "sans-serif"],
+                        "headline-md": ["Be Vietnam Pro", "sans-serif"],
+                        "display-lg": ["Be Vietnam Pro", "sans-serif"],
+                        "title-sm": ["Inter", "sans-serif"],
+                        "body-sm": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", { "lineHeight": "22px", "fontWeight": "400" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "fontWeight": "600" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "display-lg": ["36px", { "lineHeight": "44px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "title-sm": ["16px", { "lineHeight": "24px", "fontWeight": "500" }],
+                        "body-sm": ["12px", { "lineHeight": "20px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Warm grainy texture simulation without base64 */
+        .bg-textured {
+            background-color: theme('colors.background');
+            background-image: 
+                radial-gradient(rgba(29, 33, 41, 0.03) 1px, transparent 1px),
+                radial-gradient(rgba(29, 33, 41, 0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+        /* Arco specific tag tinting */
+        .tag-tinted-blue {
+            background-color: rgba(22, 93, 255, 0.1);
+            color: theme('colors.primary-container');
+        }
+        .tag-tinted-gray {
+            background-color: rgba(67, 70, 86, 0.05);
+            color: theme('colors.on-surface-variant');
+        }
+        /* Custom Switch Active Color */
+        .switch-input:checked {
+            background-color: theme('colors.primary-container');
+            border-color: theme('colors.primary-container');
+        }
+    </style>
+</head>
+<body class="bg-textured text-on-surface antialiased overflow-hidden flex h-screen">
+<!-- JSON: SideNavBar (8 tabs) -->
+<aside class="bg-surface fixed left-0 top-0 h-full w-[240px] border-r border-outline-variant flex flex-col h-full p-margin-md overflow-y-auto z-40 hidden md:flex">
+<!-- Header -->
+<div class="flex items-center gap-3 mb-8 px-2">
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container overflow-hidden">
+<img alt="Admin Avatar" class="w-full h-full object-cover" data-alt="A minimal, professional stylized 3D avatar of a corporate system administrator, facing forward with a neutral expression, brightly lit against a solid light blue background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC3GDqFTfR6OFSdMNUOtCKz70QXZrMJmBj2HnbyrLnYtU0qCKq88Tj07twHcrS__hcx81mCxgH18edw6pwJeHn3-1rHn-gf1PcscEgoICLuqTx60H1ybsI99DPWJc3TbR37kYT8x1LALcHOVRGHLgzJz5TVcHGRvd3CzCpuVZJtss_LiAMZUkSKM1999Fmsyo7xgLj0-PPmU9jXH7wJjO-A5QyvD6dIot1rtGDjEQDdaa03HcJeaOTCJ12jPuBHM7VYFn27TRvNb4Y"/>
+</div>
+<div>
+<h1 class="text-title-sm font-headline-md font-bold text-primary">智培职联</h1>
+<p class="font-label-caps text-label-caps text-on-surface-variant opacity-70">Admin Console</p>
+</div>
+</div>
+<!-- Navigation -->
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="smart_toy">smart_toy</span>
+<span class="font-body-md text-body-md">Agent Management</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-body-md text-body-md">Main Agent Config</span>
+</a>
+<!-- Active Tab: Model Plaza -->
+<a class="flex items-center gap-3 px-3 py-2 bg-primary-container text-on-primary-container rounded-lg scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="grid_view" data-weight="fill" style="font-variation-settings: 'FILL' 1;">grid_view</span>
+<span class="font-body-md text-body-md font-medium">Model Plaza</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="extension">extension</span>
+<span class="font-body-md text-body-md">MCP Plaza</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="construction">construction</span>
+<span class="font-body-md text-body-md">Skills Plaza</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="menu_book">menu_book</span>
+<span class="font-body-md text-body-md">Knowledge Base</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="group">group</span>
+<span class="font-body-md text-body-md">Students &amp; Usage</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high transition-colors rounded-lg group mt-4" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:scale-95 transition-transform" data-icon="settings">settings</span>
+<span class="font-body-md text-body-md">Settings</span>
+</a>
+</nav>
+<!-- Bottom Left Status -->
+<div class="mt-auto pt-4 border-t border-outline-variant/30 flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">本地大模型：在线</span>
+</div>
+</aside>
+<!-- Main Content Wrapper -->
+<div class="flex-1 flex flex-col ml-0 md:ml-[240px] h-screen w-full relative">
+<!-- JSON: TopNavBar -->
+<header class="bg-surface fixed top-0 right-0 w-full z-30 border-b border-outline-variant flex justify-between items-center h-16 px-margin-lg md:pl-[264px] transition-all">
+<div class="flex items-center gap-4">
+<div class="md:hidden">
+<span class="material-symbols-outlined text-on-surface" data-icon="menu">menu</span>
+</div>
+<h2 class="text-title-sm font-headline-md font-bold text-on-surface">智培职联 AI Platform</h2>
+</div>
+<div class="flex items-center gap-4">
+<!-- Search (on_left in JSON, implying left of trailing icons) -->
+<div class="hidden sm:flex items-center bg-surface-container-high rounded-full px-3 py-1.5 focus-within:ring-2 ring-primary-container">
+<span class="material-symbols-outlined text-on-surface-variant text-[20px] mr-2" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-body-md font-body-md w-48 text-on-surface placeholder:text-on-surface-variant/50" placeholder="Search..." type="text"/>
+</div>
+<!-- Trailing Icons -->
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
+<span class="material-symbols-outlined" data-icon="help_outline">help_outline</span>
+</button>
+<!-- Profile -->
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-outline-variant overflow-hidden cursor-pointer hover:opacity-80 transition-opacity">
+<img alt="User Avatar" class="w-full h-full object-cover" data-alt="A minimal, professional stylized 3D avatar of a corporate system administrator, facing forward with a neutral expression, brightly lit against a solid light blue background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAu0Abxkp2lO86BuvtamjP1SyRcw_2GertRnUYuCFVoWRSh0JG6AcfHYukVy8T5R2kejdlqFgMIwhYAdCTeTN6EUpfafbnrLwvfLU9QDIvfH5aDbk4Eg71A6TkHBvBy-m0zoePhxpKHWa5vCp2lZw38Dg57ujnfIMkas5EkKkt2mKdeILf5HbqYHVjPDoj3qtYx3UiW5dTF0Q1utNTqAgyUzcNi-4yUreQciQDk4gSZYmXn9NN3ftkkYu1JR9Va_jSVCk1ITJjG7Y"/>
+</div>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 overflow-y-auto pt-[80px] p-container-padding flex flex-col gap-6 max-w-layout-max-width mx-auto w-full">
+<!-- Page Header -->
+<div class="flex justify-between items-end pb-4 border-b border-outline-variant/50">
+<div class="flex items-baseline gap-3">
+<h1 class="font-display-lg text-display-lg text-on-surface m-0 leading-none">模型广场</h1>
+<span class="font-label-caps text-label-caps text-on-surface-variant tracking-wider uppercase">ROSTER</span>
+</div>
+<button class="px-4 py-2 bg-surface border border-outline-variant hover:bg-surface-variant text-on-surface font-body-md text-body-md rounded-lg flex items-center gap-2 transition-colors">
+<span class="material-symbols-outlined text-[18px]" data-icon="speed">speed</span>
+                    测试速度
+                </button>
+</div>
+<!-- Card Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-gutter">
+<!-- Card 1: DeepSeek -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 flex flex-col gap-4 relative overflow-hidden group hover:border-outline transition-colors">
+<div class="flex justify-between items-start">
+<span class="tag-tinted-blue px-2 py-0.5 rounded font-label-caps text-[10px]">云端</span>
+<div class="flex gap-2 text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="hover:text-primary font-body-sm text-body-sm">编辑</button>
+<button class="hover:text-error font-body-sm text-body-sm">删除</button>
+</div>
+</div>
+<div>
+<h3 class="font-headline-md text-[20px] font-bold text-on-surface mb-3">DeepSeek V3</h3>
+<div class="font-mono text-body-sm text-on-surface-variant space-y-1.5 opacity-90">
+<p class="truncate" title="模型：deepseek-chat">模型：deepseek-chat</p>
+<p class="truncate" title="来源：api.deepseek.com/v1">来源：api.deepseek.com/v1</p>
+<p>延迟：<span class="text-secondary font-medium">380ms</span></p>
+</div>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant/40 flex justify-between items-center z-10">
+<div class="flex gap-2">
+<span class="tag-tinted-gray px-2 py-0.5 rounded font-label-caps text-[10px]">OpenAI</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">对学生开放</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer switch-input" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+</div>
+<!-- Watermark Icon -->
+<span class="material-symbols-outlined absolute -bottom-4 -right-4 text-[120px] text-on-surface-variant opacity-[0.03] pointer-events-none transform -rotate-12 select-none" data-icon="memory">memory</span>
+</div>
+<!-- Card 2: GPT-4o -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 flex flex-col gap-4 relative overflow-hidden group hover:border-outline transition-colors">
+<div class="flex justify-between items-start">
+<span class="tag-tinted-blue px-2 py-0.5 rounded font-label-caps text-[10px]">云端</span>
+<div class="flex gap-2 text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="hover:text-primary font-body-sm text-body-sm">编辑</button>
+<button class="hover:text-error font-body-sm text-body-sm">删除</button>
+</div>
+</div>
+<div>
+<h3 class="font-headline-md text-[20px] font-bold text-on-surface mb-3">GPT-4o Mini</h3>
+<div class="font-mono text-body-sm text-on-surface-variant space-y-1.5 opacity-90">
+<p class="truncate" title="模型：gpt-4o-mini">模型：gpt-4o-mini</p>
+<p class="truncate" title="来源：api.openai.com/v1">来源：api.openai.com/v1</p>
+<p>延迟：<span class="text-tertiary font-medium">850ms</span></p>
+</div>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant/40 flex justify-between items-center z-10">
+<div class="flex gap-2">
+<span class="tag-tinted-gray px-2 py-0.5 rounded font-label-caps text-[10px]">OpenAI</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">对学生开放</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer switch-input" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+</div>
+<span class="material-symbols-outlined absolute -bottom-4 -right-4 text-[120px] text-on-surface-variant opacity-[0.03] pointer-events-none transform -rotate-12 select-none" data-icon="all_inclusive">all_inclusive</span>
+</div>
+<!-- Card 3: Claude 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 flex flex-col gap-4 relative overflow-hidden group hover:border-outline transition-colors">
+<div class="flex justify-between items-start">
+<span class="tag-tinted-blue px-2 py-0.5 rounded font-label-caps text-[10px]">云端</span>
+<div class="flex gap-2 text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="hover:text-primary font-body-sm text-body-sm">编辑</button>
+<button class="hover:text-error font-body-sm text-body-sm">删除</button>
+</div>
+</div>
+<div>
+<h3 class="font-headline-md text-[20px] font-bold text-on-surface mb-3">Claude 3.5 Sonnet</h3>
+<div class="font-mono text-body-sm text-on-surface-variant space-y-1.5 opacity-90">
+<p class="truncate" title="模型：claude-3-5-sonnet-20240620">模型：claude-3-5-sonnet...</p>
+<p class="truncate" title="来源：api.anthropic.com/v1">来源：api.anthropic.com/v1</p>
+<p>延迟：<span class="text-error font-medium">1200ms</span></p>
+</div>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant/40 flex justify-between items-center z-10">
+<div class="flex gap-2">
+<span class="tag-tinted-gray px-2 py-0.5 rounded font-label-caps text-[10px]">Anthropic</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">对学生开放</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer switch-input" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+</div>
+<span class="material-symbols-outlined absolute -bottom-4 -right-4 text-[120px] text-on-surface-variant opacity-[0.03] pointer-events-none transform -rotate-12 select-none" data-icon="auto_awesome">auto_awesome</span>
+</div>
+<!-- Card 4: Local Model -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 flex flex-col gap-4 relative overflow-hidden group hover:border-outline transition-colors">
+<div class="flex justify-between items-start">
+<span class="bg-surface-variant text-on-surface-variant px-2 py-0.5 rounded font-label-caps text-[10px]">本地</span>
+<div class="flex gap-2 text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="hover:text-primary font-body-sm text-body-sm">编辑</button>
+<button class="hover:text-error font-body-sm text-body-sm">删除</button>
+</div>
+</div>
+<div>
+<h3 class="font-headline-md text-[20px] font-bold text-on-surface mb-3">Llama 3 8B Instruct</h3>
+<div class="font-mono text-body-sm text-on-surface-variant space-y-1.5 opacity-90">
+<p class="truncate" title="模型：llama3">模型：llama3</p>
+<p class="truncate" title="来源：localhost:11434/v1">来源：localhost:11434/v1</p>
+<p>延迟：<span class="text-secondary font-medium">85ms</span></p>
+</div>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant/40 flex justify-between items-center z-10">
+<div class="flex gap-2">
+<span class="tag-tinted-gray px-2 py-0.5 rounded font-label-caps text-[10px]">Ollama</span>
+<span class="tag-tinted-gray px-2 py-0.5 rounded font-label-caps text-[10px]">OpenAI</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">对学生开放</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer switch-input" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+</div>
+<span class="material-symbols-outlined absolute -bottom-4 -right-4 text-[120px] text-on-surface-variant opacity-[0.03] pointer-events-none transform -rotate-12 select-none" data-icon="dns">dns</span>
+</div>
+<!-- Add Model Card -->
+<div class="border-2 border-dashed border-outline-variant hover:border-primary hover:bg-surface-container-low transition-colors rounded-lg p-5 flex flex-col items-center justify-center gap-2 cursor-pointer min-h-[220px]">
+<span class="material-symbols-outlined text-[32px] text-on-surface-variant mb-2" data-icon="add_circle">add_circle</span>
+<h3 class="font-headline-md text-title-sm font-bold text-on-surface">＋ 添加模型</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant text-center max-w-[80%]">OpenAI / Anthropic API</p>
+</div>
+</div>
+</main>
+</div>
+</body></html>

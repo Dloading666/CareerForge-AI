@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>就业总助手 - 智培职联</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-high": "#e7e7f4",
+                        "on-tertiary": "#ffffff",
+                        "primary": "#0047cf",
+                        "on-tertiary-container": "#ffece2",
+                        "on-secondary-fixed": "#002203",
+                        "on-primary-fixed": "#00164f",
+                        "on-error-container": "#93000a",
+                        "surface-bright": "#faf8ff",
+                        "inverse-primary": "#b6c4ff",
+                        "secondary": "#006e16",
+                        "primary-fixed": "#dce1ff",
+                        "inverse-on-surface": "#f0f0fd",
+                        "surface-dim": "#d9d9e6",
+                        "primary-container": "#165dff",
+                        "error-container": "#ffdad6",
+                        "surface-container-highest": "#e1e1ef",
+                        "secondary-container": "#6bfd6a",
+                        "on-secondary-container": "#007317",
+                        "error": "#ba1a1a",
+                        "tertiary-fixed": "#ffdbc8",
+                        "tertiary-container": "#ae5300",
+                        "outline-variant": "#c3c5d9",
+                        "on-secondary": "#ffffff",
+                        "on-background": "#191b24",
+                        "surface": "#faf8ff",
+                        "secondary-fixed-dim": "#4ee253",
+                        "tertiary": "#894000",
+                        "surface-container-lowest": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "surface-container-low": "#f3f2ff",
+                        "surface-container": "#ededfa",
+                        "surface-tint": "#004fe5",
+                        "on-error": "#ffffff",
+                        "on-surface": "#191b24",
+                        "tertiary-fixed-dim": "#ffb689",
+                        "on-surface-variant": "#434656",
+                        "on-primary-fixed-variant": "#003bb0",
+                        "on-primary-container": "#eeefff",
+                        "surface-variant": "#e1e1ef",
+                        "on-tertiary-fixed": "#311300",
+                        "primary-fixed-dim": "#b6c4ff",
+                        "on-secondary-fixed-variant": "#00530e",
+                        "secondary-fixed": "#72ff70",
+                        "inverse-surface": "#2e303a",
+                        "background": "#faf8ff",
+                        "on-tertiary-fixed-variant": "#733500",
+                        "outline": "#737688"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin-sm": "8px",
+                        "gutter": "16px",
+                        "container-padding": "24px",
+                        "margin-md": "16px",
+                        "layout-max-width": "1440px",
+                        "margin-lg": "24px",
+                        "unit": "4px"
+                    },
+                    "fontFamily": {
+                        "title-sm": ["inter"],
+                        "headline-md": ["beVietnamPro"],
+                        "body-sm": ["inter"],
+                        "display-lg": ["beVietnamPro"],
+                        "body-md": ["inter"],
+                        "label-caps": ["inter"]
+                    },
+                    "fontSize": {
+                        "title-sm": ["16px", { "lineHeight": "24px", "fontWeight": "500" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "body-sm": ["12px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "display-lg": ["36px", { "lineHeight": "44px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "22px", "fontWeight": "400" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Custom grain/noise overlay using CSS radial gradients to mimic noise without data URIs */
+        .bg-grain-texture {
+            background-color: #F7F7F5;
+            background-image: radial-gradient(#d9d9e6 1px, transparent 1px);
+            background-size: 4px 4px;
+        }
+        
+        /* Custom scrollbar for chat area */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #c3c5d9;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-grain-texture text-on-surface h-screen w-full flex overflow-hidden font-body-md text-body-md">
+<!-- Shared Component: SideNavBar -->
+<nav class="fixed left-0 top-0 h-full w-[240px] bg-surface-container-lowest dark:bg-surface-dim border-r border-outline-variant flex flex-col p-4 gap-2 z-20">
+<!-- Header / Logo -->
+<div class="px-2 py-4 mb-2">
+<h1 class="font-headline-md text-headline-md text-primary font-bold flex items-center gap-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">psychology</span>
+                智培职联
+            </h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1 ml-8">学生端</p>
+</div>
+<!-- CTA Button -->
+<button class="w-full bg-primary-container text-on-primary-container hover:opacity-90 transition-opacity rounded-xl py-2 px-4 flex items-center justify-center gap-2 font-title-sm text-title-sm mb-4 scale-95 duration-200">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">add</span>
+            新建对话
+        </button>
+<!-- Navigation Links -->
+<div class="flex flex-col gap-1 flex-1">
+<!-- Active Tab: 主智能体 -->
+<a class="bg-primary-container text-on-primary-container rounded-xl flex items-center gap-3 px-4 py-3 scale-95 duration-200 group cursor-pointer" href="#">
+<span class="material-symbols-outlined group-hover:animate-pulse">smart_toy</span>
+<span class="font-title-sm text-title-sm">主智能体</span>
+</a>
+<!-- Inactive Tabs -->
+<a class="text-on-surface-variant hover:bg-surface-container-high transition-colors flex items-center gap-3 px-4 py-3 rounded-xl scale-95 duration-200 cursor-pointer" href="#">
+<span class="material-symbols-outlined">explore</span>
+<span class="font-title-sm text-title-sm">智能体广场</span>
+</a>
+<a class="text-on-surface-variant hover:bg-surface-container-high transition-colors flex items-center gap-3 px-4 py-3 rounded-xl scale-95 duration-200 cursor-pointer" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="font-title-sm text-title-sm">我的记录</span>
+</a>
+<a class="text-on-surface-variant hover:bg-surface-container-high transition-colors flex items-center gap-3 px-4 py-3 rounded-xl scale-95 duration-200 cursor-pointer" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-title-sm text-title-sm">个人中心</span>
+</a>
+</div>
+<!-- Bottom Profile Avatar -->
+<div class="mt-auto pt-4 border-t border-outline-variant/50">
+<div class="flex items-center gap-3 px-2 py-2 hover:bg-surface-container-high rounded-xl cursor-pointer transition-colors">
+<img alt="用户头像" class="w-8 h-8 rounded-full border border-outline-variant object-cover" data-alt="A professional headshot of a young male student, cleanly styled, soft studio lighting, representing the user profile avatar in a digital platform." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCwaXQ5oWz52ooPbwBLx8nz6xK8PWBuB-7g7UvVphIwHZ1ssXkLv2WItvz3siC6vFqG08LZdsxBKsAWlI3CwOpPEqNYkvONUiJJTY3qMsBoiaYoMAKXysJh6VMEdayZKRvxX2LRIVxHI0V5rgTafRF0rSDiJtZBt1mgfOkf8IG6VS3Ab9mFSeWAz9phPLIHf4YAhf3WqdACRasMMQvXi0I2JwsFFuCdjouvV2lNjlOyYuClf8LlNbOb5QAv7SikwqUZEgb5rKruVKE"/>
+<div class="flex flex-col">
+<span class="font-title-sm text-title-sm text-on-surface">张明同学</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">软件工程 2024届</span>
+</div>
+</div>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 ml-[240px] flex flex-col h-full relative">
+<!-- Shared Component: TopNavBar (Adjusted for context) -->
+<header class="flex justify-between items-center w-full h-16 px-8 bg-transparent text-primary font-title-sm text-title-sm docked full-width top-0 z-10 backdrop-blur-sm border-b border-outline-variant/30">
+<div class="flex items-center gap-4">
+<!-- Overriding product_name strictly for context title as requested by prompt -->
+<h2 class="font-headline-md text-headline-md text-on-surface">就业总助手（主智能体）</h2>
+</div>
+<div class="flex items-center gap-6">
+<!-- Arco Select Model Switcher -->
+<div class="relative group">
+<div class="flex items-center gap-2 bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 text-on-surface cursor-pointer hover:border-primary transition-colors hover:shadow-sm">
+<span class="font-body-sm text-body-sm flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px] text-primary">model_training</span>
+                            模型：DeepSeek-V3
+                        </span>
+<span class="material-symbols-outlined text-[18px] text-on-surface-variant">keyboard_arrow_down</span>
+</div>
+<!-- Tooltip -->
+<div class="absolute top-full right-0 mt-2 bg-inverse-surface text-inverse-on-surface px-3 py-2 rounded shadow-lg text-body-sm font-body-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        当前使用高级逻辑推理模型，适合深度规划与分析。
+                    </div>
+</div>
+<!-- Trailing Actions -->
+<div class="flex items-center gap-4 text-on-surface-variant">
+<button class="opacity-80 hover:opacity-100 hover:text-primary transition-colors flex items-center">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="opacity-80 hover:opacity-100 hover:text-primary transition-colors flex items-center">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Chat Canvas -->
+<main class="flex-1 overflow-y-auto custom-scrollbar flex flex-col items-center pt-container-padding pb-32">
+<div class="w-full max-w-[760px] flex flex-col gap-margin-lg px-4">
+<!-- Welcome Section -->
+<div class="flex flex-col items-center py-10 fade-in-up">
+<div class="w-16 h-16 bg-primary-container rounded-2xl flex items-center justify-center mb-6 shadow-sm shadow-primary/20 rotate-3">
+<span class="material-symbols-outlined text-on-primary-container text-[32px]">psychology</span>
+</div>
+<h2 class="font-display-lg text-display-lg text-on-surface text-center mb-3">你好！我是你的就业总助手</h2>
+<p class="font-body-md text-body-md text-on-surface-variant text-center max-w-lg">
+                        可以帮你优化简历、模拟面试或匹配岗位。你想从哪开始？
+                    </p>
+<!-- Suggestion Bento Grid -->
+<div class="grid grid-cols-2 gap-4 w-full mt-10">
+<div class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant/60 p-5 rounded-xl hover:border-primary hover:shadow-sm cursor-pointer transition-all group hover:-translate-y-0.5">
+<div class="flex items-center gap-3 mb-2 text-primary">
+<span class="material-symbols-outlined">record_voice_over</span>
+<span class="font-title-sm text-title-sm text-on-surface group-hover:text-primary transition-colors">帮我模拟一次面试</span>
+</div>
+<p class="text-body-sm font-body-sm text-on-surface-variant line-clamp-1">沉浸式多回合对话，检验真实水平</p>
+</div>
+<div class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant/60 p-5 rounded-xl hover:border-primary hover:shadow-sm cursor-pointer transition-all group hover:-translate-y-0.5">
+<div class="flex items-center gap-3 mb-2 text-primary">
+<span class="material-symbols-outlined">radar</span>
+<span class="font-title-sm text-title-sm text-on-surface group-hover:text-primary transition-colors">看看我和某岗位的匹配度</span>
+</div>
+<p class="text-body-sm font-body-sm text-on-surface-variant line-clamp-1">上传JD与简历，智能分析优劣势</p>
+</div>
+<div class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant/60 p-5 rounded-xl hover:border-primary hover:shadow-sm cursor-pointer transition-all group hover:-translate-y-0.5">
+<div class="flex items-center gap-3 mb-2 text-primary">
+<span class="material-symbols-outlined">description</span>
+<span class="font-title-sm text-title-sm text-on-surface group-hover:text-primary transition-colors">优化我的简历项目经历</span>
+</div>
+<p class="text-body-sm font-body-sm text-on-surface-variant line-clamp-1">运用STAR法则重塑项目描述</p>
+</div>
+<div class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant/60 p-5 rounded-xl hover:border-primary hover:shadow-sm cursor-pointer transition-all group hover:-translate-y-0.5">
+<div class="flex items-center gap-3 mb-2 text-primary">
+<span class="material-symbols-outlined">help_center</span>
+<span class="font-title-sm text-title-sm text-on-surface group-hover:text-primary transition-colors">应届生求职常见问题</span>
+</div>
+<p class="text-body-sm font-body-sm text-on-surface-variant line-clamp-1">三方协议、网申技巧、秋招时间线</p>
+</div>
+</div>
+</div>
+<!-- Chat History -->
+<!-- User Message -->
+<div class="flex w-full justify-end mb-6">
+<div class="flex gap-3 max-w-[85%] flex-row-reverse">
+<img class="w-10 h-10 rounded-full border border-outline-variant flex-shrink-0 object-cover" data-alt="A professional headshot of a young male student, cleanly styled, soft studio lighting, representing the user profile avatar in a digital platform." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCRPh7lGRazOvzbtld2qCYPhOVJUI5ExLmY4y7a_kT2IHfKhpZPo7Qvxa2W_gYi7um3R9Y0zqC6KZL4GbpPpX1noWBmTMSNbctYxLHl9uEaFwtuRbJv4UY-86Xd0BXYdZkqrFwtYtzRtKFeEbQ4745iCsAoejctHJQyb7ssEDXxM2qsr7OuRVvqkTzwnGbvYkLongL-rYJu2yhbsGLjVnDDhj_A30bkFBXN3A23Q3yIIPI_7t9lwYTxPcOLYPe_TX_bLyOaT5DXWCs"/>
+<div class="bg-primary-container text-on-primary-container px-5 py-3.5 rounded-2xl rounded-tr-sm shadow-sm font-body-md text-body-md">
+                            我想了解下 Java 开发岗位的面试重点
+                        </div>
+</div>
+</div>
+<!-- Assistant Message -->
+<div class="flex w-full justify-start mb-6">
+<div class="flex gap-3 max-w-[85%]">
+<div class="w-10 h-10 bg-primary-container rounded-full flex items-center justify-center flex-shrink-0 shadow-sm border border-outline-variant/50">
+<span class="material-symbols-outlined text-on-primary-container text-[20px]">psychology</span>
+</div>
+<div class="flex flex-col gap-3 w-full">
+<!-- Skill Calling Tags -->
+<div class="flex gap-2 flex-wrap">
+<span class="inline-flex items-center gap-1.5 bg-[#f2f3f5] text-on-surface-variant font-label-caps text-label-caps px-2.5 py-1 rounded border border-outline-variant/30">
+<span class="material-symbols-outlined text-[14px]">build</span>
+                                    🔧 调用 简历解析 Skill
+                                </span>
+<span class="inline-flex items-center gap-1.5 bg-[#f2f3f5] text-on-surface-variant font-label-caps text-label-caps px-2.5 py-1 rounded border border-outline-variant/30">
+<span class="material-symbols-outlined text-[14px]">menu_book</span>
+                                    📚 查询 就业政策知识库
+                                </span>
+</div>
+<!-- Text Content -->
+<div class="bg-surface-container-lowest text-on-surface px-5 py-4 rounded-2xl rounded-tl-sm shadow-sm border border-outline-variant/40 font-body-md text-body-md leading-relaxed">
+<p class="mb-4">针对 Java 开发岗位，面试通常会围绕以下几个核心重点展开，结合你的目标，我为你梳理了以下框架：</p>
+<ul class="list-disc pl-5 space-y-2 mb-4 text-on-surface-variant">
+<li><strong class="text-on-surface">Java 基础与集合框架：</strong> HashMap的底层原理、并发集合（ConcurrentHashMap）、JVM内存模型与垃圾回收机制。</li>
+<li><strong class="text-on-surface">并发编程：</strong> 线程池参数配置、锁机制（Synchronized, ReentrantLock, CAS操作）、ThreadLocal。</li>
+<li><strong class="text-on-surface">主流框架：</strong> Spring Boot 自动配置原理、Spring AOP/IOC 机制、MyBatis 缓存设计。</li>
+<li><strong class="text-on-surface">数据库与中间件：</strong> MySQL 索引优化、事务隔离级别；Redis 缓存击穿/穿透/雪崩解决方案、MQ（如RabbitMQ/Kafka）消息防丢。</li>
+</ul>
+<p class="mb-4">为了更有针对性，我建议我们可以先进行一次模拟面试。我已经为你召唤了专门的 <strong>AI 面试官</strong> 子智能体，它可以为你提供高度逼真的实战演练。</p>
+<!-- Sub-agent Invocation Card (Glassmorphism / Arco style) -->
+<div class="bg-surface border border-outline-variant/50 rounded-xl p-4 mt-2 flex items-start gap-4">
+<div class="w-12 h-12 bg-secondary-container rounded-lg flex items-center justify-center flex-shrink-0 text-on-secondary-container">
+<span class="material-symbols-outlined text-[24px]">support_agent</span>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-center mb-1">
+<h4 class="font-title-sm text-title-sm text-on-surface font-semibold">AI 面试官 (Java后端方向)</h4>
+<span class="bg-surface-container-high text-on-surface-variant text-[10px] px-2 py-0.5 rounded-full border border-outline-variant/30">子智能体</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-2">配置了字节跳动、阿里等大厂最新面经题库，支持追问模式与代码口述评估。</p>
+<a class="font-title-sm text-title-sm text-primary hover:text-primary-container transition-colors inline-flex items-center gap-1" href="#">
+                                            展开详情并开始模拟
+                                            <span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</a>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Input Area -->
+<div class="absolute bottom-0 w-full left-0 bg-gradient-to-t from-[#F7F7F5] via-[#F7F7F5] to-transparent pt-10 pb-6 px-4 z-10 flex justify-center">
+<div class="w-full max-w-[760px]">
+<p class="text-center font-body-sm text-body-sm text-on-surface-variant mb-2">主智能体可调用技能、工具并按需查询知识库</p>
+<div class="relative bg-surface-container-lowest border border-outline-variant/60 rounded-full shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] hover:border-primary/50 transition-colors flex items-center p-1.5 pl-4">
+<button class="text-outline hover:text-primary transition-colors p-2 rounded-full hover:bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined">mic</span>
+</button>
+<input class="flex-1 bg-transparent border-none focus:ring-0 text-on-surface font-body-md text-body-md px-3 placeholder:text-outline-variant outline-none" placeholder="输入你想咨询的职业问题，或使用快捷指令..." type="text"/>
+<button class="bg-primary-container text-on-primary-container w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity ml-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">send</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</body></html>
