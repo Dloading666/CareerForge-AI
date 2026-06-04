@@ -9,6 +9,7 @@ backend/*.db
 backend/.env.docker
 backend/.env
 .stack/
+docker-compose.override.yml
 *.pyc
 .DS_Store
 .claude/
