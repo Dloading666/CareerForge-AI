@@ -1038,6 +1038,42 @@ textarea {
   margin-bottom: 18px;
 }
 
+.admin-feedback {
+  margin-bottom: 18px;
+}
+
+.skill-file-tools {
+  border: 1px solid #d9def0;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(22, 93, 255, 0.08), transparent 48%),
+    #f8f9fd;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.skill-file-tools p {
+  margin: 4px 0 0;
+  color: #646b7c;
+  font-size: 13px;
+}
+
+.skill-editor-meta {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 0.7fr;
+  gap: 10px;
+}
+
+.skill-code-editor textarea {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  line-height: 1.7;
+  background: #111827;
+  color: #e5e7eb;
+}
+
 .kb-list {
   display: flex;
   flex-direction: column;
@@ -1175,4 +1211,3 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-

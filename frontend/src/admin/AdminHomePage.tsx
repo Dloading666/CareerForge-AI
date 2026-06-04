@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -24,12 +25,41 @@ import {
   IconSettings,
   IconUser,
 } from '@arco-design/web-react/icon'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { apiRequest, ApiError } from '../shared/api'
 import { useAuth } from '../shared/auth'
 
 type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
 type DrawerMode = 'agent' | 'master' | 'model' | 'mcp' | 'skill' | 'knowledge'
+type SkillStatus = 'enabled' | 'disabled'
+
+type SkillRecord = {
+  id: number
+  slug: string
+  name: string
+  description: string
+  version: string
+  category: string
+  tags: string[]
+  status: SkillStatus
+  file_name: string
+  content: string
+  content_hash: string
+  created_at: string
+  updated_at: string
+}
+
+type SkillDraft = {
+  name: string
+  description: string
+  version: string
+  category: string
+  tagsText: string
+  status: SkillStatus
+  fileName: string
+  content: string
+}
 
 const MODELS = [
   {
@@ -139,48 +169,34 @@ const MCP_SERVICES = [
   },
 ]
 
-const SKILLS = [
-  {
-    name: '简历全生命周期处理',
-    category: '简历',
-    desc: '解析、诊断、重写、结构化输出候选人经历。',
-    method: 'Dify 工作流',
-    tags: ['解析', '优化', 'STAR'],
-    deps: ['DeepSeek V3', '网页抓取 MCP'],
-    usedBy: 2,
-    status: '启用',
-  },
-  {
-    name: '岗位匹配打分',
-    category: '求职',
-    desc: '计算岗位匹配度，并拆解加分项、扣分项和补强路径。',
-    method: 'LangGraph 子图',
-    tags: ['匹配', '解释', '画像'],
-    deps: ['岗位检索 MCP', '岗位库'],
-    usedBy: 1,
-    status: '启用',
-  },
-  {
-    name: '面试全流程分析',
-    category: '面试',
-    desc: '生成追问、评分维度、逐题点评与复盘报告。',
-    method: 'Dify 工作流',
-    tags: ['追问', '评分', '报告'],
-    deps: ['面试题库'],
-    usedBy: 1,
-    status: '启用',
-  },
-  {
-    name: '内容安全检测',
-    category: '平台',
-    desc: '过滤敏感输入输出，保护平台问答边界。',
-    method: 'LangGraph 子图',
-    tags: ['安全', '审计'],
-    deps: ['规则库'],
-    usedBy: 3,
-    status: '启用',
-  },
-]
+const DEFAULT_SKILL_CONTENT = `---
+name: 简历亮点提炼
+description: 从学生简历中提炼可用于求职沟通的项目亮点、量化成果和风险点。
+version: 1.0.0
+category: 简历
+tags: 简历, 项目经历, STAR
+---
+
+# 简历亮点提炼
+
+## 适用场景
+当主 Agent 或子 Agent 需要帮助学生把经历改写成更清晰的求职表达时，使用这个 Skill。
+
+## 输入
+- 学生原始简历或项目经历
+- 目标岗位或 JD，可选
+
+## 工作步骤
+1. 识别经历中的任务、行动、结果和量化证据。
+2. 判断表达是否存在空泛、夸大、缺少上下文的问题。
+3. 输出 3-5 条更适合投递或面试使用的亮点表达。
+
+## 输出格式
+- 亮点标题
+- 改写后的表达
+- 可追问证据
+- 风险提醒
+`
 
 const KNOWLEDGE_BASES = [
   {
@@ -263,6 +279,52 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action: string; dr
   },
 }
 
+function createEmptySkillDraft(): SkillDraft {
+  return {
+    name: '',
+    description: '',
+    version: '1.0.0',
+    category: '通用',
+    tagsText: '',
+    status: 'enabled',
+    fileName: 'SKILL.md',
+    content: DEFAULT_SKILL_CONTENT,
+  }
+}
+
+function skillToDraft(skill: SkillRecord): SkillDraft {
+  return {
+    name: skill.name,
+    description: skill.description,
+    version: skill.version,
+    category: skill.category,
+    tagsText: skill.tags.join(', '),
+    status: skill.status,
+    fileName: skill.file_name,
+    content: skill.content,
+  }
+}
+
+function splitTags(tagsText: string) {
+  return tagsText
+    .split(/[,，\n]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+}
+
+function skillDraftPayload(draft: SkillDraft) {
+  return {
+    name: draft.name.trim() || undefined,
+    description: draft.description.trim() || undefined,
+    version: draft.version.trim() || undefined,
+    category: draft.category.trim() || undefined,
+    tags: splitTags(draft.tagsText),
+    status: draft.status,
+    file_name: draft.fileName.trim() || 'SKILL.md',
+    content: draft.content,
+  }
+}
+
 export function AdminHomePage() {
   const { session, logout } = useAuth()
   const displayName = (session?.profile.display_name as string) || '平台管理员'
@@ -270,14 +332,34 @@ export function AdminHomePage() {
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
   const [activeAgent, setActiveAgent] = useState(AGENTS[0].id)
   const [skillFilter, setSkillFilter] = useState('all')
+  const [skills, setSkills] = useState<SkillRecord[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [skillSaving, setSkillSaving] = useState(false)
+  const [editingSkillId, setEditingSkillId] = useState<number | null>(null)
+  const [skillDraft, setSkillDraft] = useState<SkillDraft>(() => createEmptySkillDraft())
+  const [adminFeedback, setAdminFeedback] = useState<{
+    type: 'success' | 'error' | 'warning' | 'info'
+    content: string
+  } | null>(null)
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('agent')
   const [drawerVisible, setDrawerVisible] = useState(false)
 
   const meta = pageMeta[activeNav]
   const selectedAgent = AGENTS.find((agent) => agent.id === activeAgent) ?? AGENTS[0]
+  const skillCategories = useMemo(
+    () => Array.from(new Set(skills.map((skill) => skill.category).filter(Boolean))),
+    [skills],
+  )
   const filteredSkills = useMemo(
-    () => (skillFilter === 'all' ? SKILLS : SKILLS.filter((skill) => skill.category === skillFilter)),
-    [skillFilter],
+    () => (skillFilter === 'all' ? skills : skills.filter((skill) => skill.category === skillFilter)),
+    [skillFilter, skills],
+  )
+  const skillNameOptions = useMemo(
+    () =>
+      skills.length > 0
+        ? skills.map((skill) => skill.name)
+        : Array.from(new Set(AGENTS.flatMap((agent) => agent.skills))),
+    [skills],
   )
 
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
@@ -291,8 +373,121 @@ export function AdminHomePage() {
   ]
 
   function openDrawer(mode: DrawerMode = meta.drawer) {
+    if (mode === 'skill') {
+      setEditingSkillId(null)
+      setSkillDraft(createEmptySkillDraft())
+    }
     setDrawerMode(mode)
     setDrawerVisible(true)
+  }
+
+  useEffect(() => {
+    if (session?.role !== 'admin' || !session.access) {
+      return
+    }
+
+    let alive = true
+    async function loadSkills() {
+      setSkillsLoading(true)
+      try {
+        const data = await apiRequest<SkillRecord[]>('/api/v1/admin/skills', {
+          headers: {
+            Authorization: `Bearer ${session?.access}`,
+          },
+        })
+        if (alive) {
+          setSkills(data)
+        }
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : '加载 Skills 失败'
+        if (alive) {
+          setAdminFeedback({ type: 'error', content: message })
+        }
+      } finally {
+        if (alive) {
+          setSkillsLoading(false)
+        }
+      }
+    }
+
+    loadSkills()
+    return () => {
+      alive = false
+    }
+  }, [session?.access, session?.role])
+
+  function authHeaders() {
+    return {
+      Authorization: `Bearer ${session?.access ?? ''}`,
+    }
+  }
+
+  function editSkill(skill: SkillRecord) {
+    setEditingSkillId(skill.id)
+    setSkillDraft(skillToDraft(skill))
+    setDrawerMode('skill')
+    setDrawerVisible(true)
+  }
+
+  async function saveSkill() {
+    if (!skillDraft.content.trim()) {
+      setAdminFeedback({ type: 'warning', content: '请先填写或上传 Skill 文件内容' })
+      return
+    }
+
+    setSkillSaving(true)
+    try {
+      const path = editingSkillId ? `/api/v1/admin/skills/${editingSkillId}` : '/api/v1/admin/skills'
+      const saved = await apiRequest<SkillRecord>(path, {
+        method: editingSkillId ? 'PUT' : 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(skillDraftPayload(skillDraft)),
+      })
+      setSkills((current) =>
+        editingSkillId ? current.map((skill) => (skill.id === saved.id ? saved : skill)) : [saved, ...current],
+      )
+      setAdminFeedback({
+        type: 'success',
+        content: editingSkillId ? 'Skill 文件已更新' : 'Skill 已添加到广场',
+      })
+      setDrawerVisible(false)
+      setEditingSkillId(null)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '保存 Skill 失败'
+      setAdminFeedback({ type: 'error', content: message })
+    } finally {
+      setSkillSaving(false)
+    }
+  }
+
+  async function toggleSkillStatus(skill: SkillRecord) {
+    const nextStatus: SkillStatus = skill.status === 'enabled' ? 'disabled' : 'enabled'
+    try {
+      const saved = await apiRequest<SkillRecord>(`/api/v1/admin/skills/${skill.id}/status`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      setSkills((current) => current.map((item) => (item.id === saved.id ? saved : item)))
+      setAdminFeedback({ type: 'success', content: nextStatus === 'enabled' ? 'Skill 已启用' : 'Skill 已停用' })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '更新 Skill 状态失败'
+      setAdminFeedback({ type: 'error', content: message })
+    }
+  }
+
+  async function deleteSkillById(skill: SkillRecord) {
+    try {
+      await apiRequest(`/api/v1/admin/skills/${skill.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      })
+      setSkills((current) => current.filter((item) => item.id !== skill.id))
+      setAdminFeedback({ type: 'success', content: 'Skill 已从广场移除' })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '删除 Skill 失败'
+      setAdminFeedback({ type: 'error', content: message })
+    }
   }
 
   return (
@@ -351,11 +546,34 @@ export function AdminHomePage() {
             </Button>
           </div>
 
+          {adminFeedback ? (
+            <Alert
+              className="admin-feedback"
+              type={adminFeedback.type}
+              content={adminFeedback.content}
+              closable
+              showIcon
+              onClose={() => setAdminFeedback(null)}
+            />
+          ) : null}
+
           {activeNav === 'agents' ? renderAgentsPage(selectedAgent, setActiveAgent, openDrawer) : null}
           {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
           {activeNav === 'models' ? renderModelsPage(openDrawer) : null}
           {activeNav === 'mcp' ? renderMcpPage(openDrawer) : null}
-          {activeNav === 'skills' ? renderSkillsPage(skillFilter, setSkillFilter, filteredSkills, openDrawer) : null}
+          {activeNav === 'skills'
+            ? renderSkillsPage({
+                skillFilter,
+                setSkillFilter,
+                categories: skillCategories,
+                filteredSkills,
+                loading: skillsLoading,
+                openDrawer,
+                onEdit: editSkill,
+                onToggleStatus: toggleSkillStatus,
+                onDelete: deleteSkillById,
+              })
+            : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
           {activeNav === 'settings' ? renderSettingsPage(displayName, email, logout) : null}
         </main>
@@ -365,6 +583,19 @@ export function AdminHomePage() {
         mode={drawerMode}
         visible={drawerVisible}
         selectedAgent={selectedAgent}
+        skillNames={skillNameOptions}
+        skillDraft={skillDraft}
+        editingSkillId={editingSkillId}
+        skillSaving={skillSaving}
+        onSkillDraftChange={(patch) => setSkillDraft((current) => ({ ...current, ...patch }))}
+        onSkillFileUpload={(fileName, content) =>
+          setSkillDraft((current) => ({
+            ...current,
+            fileName,
+            content,
+          }))
+        }
+        onSaveSkill={saveSkill}
         onClose={() => setDrawerVisible(false)}
       />
     </div>
@@ -584,50 +815,107 @@ function renderMcpPage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderSkillsPage(
-  skillFilter: string,
-  setSkillFilter: (category: string) => void,
-  filteredSkills: typeof SKILLS,
-  openDrawer: (mode: DrawerMode) => void,
-) {
+function renderSkillsPage({
+  skillFilter,
+  setSkillFilter,
+  categories,
+  filteredSkills,
+  loading,
+  openDrawer,
+  onEdit,
+  onToggleStatus,
+  onDelete,
+}: {
+  skillFilter: string
+  setSkillFilter: (category: string) => void
+  categories: string[]
+  filteredSkills: SkillRecord[]
+  loading: boolean
+  openDrawer: (mode: DrawerMode) => void
+  onEdit: (skill: SkillRecord) => void
+  onToggleStatus: (skill: SkillRecord) => void
+  onDelete: (skill: SkillRecord) => void
+}) {
   return (
     <>
       <Tabs activeTab={skillFilter} onChange={setSkillFilter} className="admin-tabs">
         <Tabs.TabPane key="all" title="全部" />
-        <Tabs.TabPane key="简历" title="简历" />
-        <Tabs.TabPane key="求职" title="求职" />
-        <Tabs.TabPane key="面试" title="面试" />
-        <Tabs.TabPane key="平台" title="平台" />
+        {categories.map((category) => (
+          <Tabs.TabPane key={category} title={category} />
+        ))}
       </Tabs>
       <div className="admin-card-grid">
+        {loading ? (
+          <Card className="admin-card skill-card">
+            <div className="agent-card-head">
+              <span className="resource-icon purple">
+                <IconApps />
+              </span>
+              <div>
+                <h3>正在加载 Skills</h3>
+                <Tag color="arcoblue">File Based</Tag>
+              </div>
+            </div>
+            <p>正在从后端读取 Skill 文件资产。</p>
+          </Card>
+        ) : null}
         {filteredSkills.map((skill) => (
-          <Card key={skill.name} className="admin-card skill-card" hoverable>
+          <Card key={skill.id} className="admin-card skill-card" hoverable>
             <div className="agent-card-head">
               <span className="resource-icon purple">
                 <IconApps />
               </span>
               <div>
                 <h3>{skill.name}</h3>
-                <Tag color="arcoblue">{skill.method}</Tag>
+                <Tag color="arcoblue">{skill.file_name}</Tag>
               </div>
             </div>
-            <p>{skill.desc}</p>
-            <div className="tag-row">
-              {skill.tags.map((tag) => (
-                <Tag key={tag}>{tag}</Tag>
-              ))}
+            <p>{skill.description || '这个 Skill 暂未填写说明，Agent 会直接按文件内容使用。'}</p>
+            <div className="meta-list">
+              <span>分类：{skill.category}</span>
+              <span>版本：{skill.version}</span>
+              <span>Slug：{skill.slug}</span>
+              <span>Hash：{skill.content_hash.slice(0, 12)}</span>
             </div>
-            <AbilityChips title="依赖" items={skill.deps} compact />
+            {skill.tags.length > 0 ? <AbilityChips title="标签" items={skill.tags} compact /> : null}
             <div className="admin-card-footer">
-              <Tag color="green">{skill.status}</Tag>
-              <span className="subtle-text">被 {skill.usedBy} 个智能体引用</span>
+              <Tag color={skill.status === 'enabled' ? 'green' : 'gray'}>
+                {skill.status === 'enabled' ? '启用' : '停用'}
+              </Tag>
+              <Space size={4}>
+                <Button type="text" size="small" onClick={() => onEdit(skill)}>
+                  编辑文件
+                </Button>
+                <Button type="text" size="small" onClick={() => onToggleStatus(skill)}>
+                  {skill.status === 'enabled' ? '停用' : '启用'}
+                </Button>
+                <Popconfirm title="确定删除这个 Skill 吗？" okText="删除" cancelText="取消" onOk={() => onDelete(skill)}>
+                  <Button type="text" status="danger" size="small">
+                    删除
+                  </Button>
+                </Popconfirm>
+              </Space>
             </div>
           </Card>
         ))}
+        {!loading && filteredSkills.length === 0 ? (
+          <Card className="admin-card skill-card">
+            <div className="agent-card-head">
+              <span className="resource-icon purple">
+                <IconApps />
+              </span>
+              <div>
+                <h3>还没有 Skill 文件</h3>
+                <Tag color="orange">等待添加</Tag>
+              </div>
+            </div>
+            <p>可以上传或粘贴 Skill 文件，启用后会进入可复用能力池。</p>
+          </Card>
+        ) : null}
         <button className="admin-add-card" type="button" onClick={() => openDrawer('skill')}>
           <IconPlus />
-          <strong>新建 Skill</strong>
-          <span>Dify 工作流 / LangGraph 子图</span>
+          <strong>添加 Skill 文件</strong>
+          <span>上传或粘贴 SKILL.md / .txt</span>
         </button>
       </div>
     </>
@@ -733,11 +1021,25 @@ function AdminConfigDrawer({
   mode,
   visible,
   selectedAgent,
+  skillNames,
+  skillDraft,
+  editingSkillId,
+  skillSaving,
+  onSkillDraftChange,
+  onSkillFileUpload,
+  onSaveSkill,
   onClose,
 }: {
   mode: DrawerMode
   visible: boolean
   selectedAgent: (typeof AGENTS)[number]
+  skillNames: string[]
+  skillDraft: SkillDraft
+  editingSkillId: number | null
+  skillSaving: boolean
+  onSkillDraftChange: (patch: Partial<SkillDraft>) => void
+  onSkillFileUpload: (fileName: string, content: string) => void
+  onSaveSkill: () => void
   onClose: () => void
 }) {
   const titleMap: Record<DrawerMode, string> = {
@@ -745,7 +1047,7 @@ function AdminConfigDrawer({
     master: '编辑主智能体配置',
     model: '添加模型',
     mcp: '添加 MCP 服务',
-    skill: '新建 Skill',
+    skill: editingSkillId ? '编辑 Skill 文件' : '添加 Skill 文件',
     knowledge: '新建知识库',
   }
 
@@ -759,23 +1061,25 @@ function AdminConfigDrawer({
       footer={
         <div className="drawer-footer">
           <Button onClick={onClose}>取消</Button>
-          <Button type="primary" onClick={onClose}>
+          <Button type="primary" loading={mode === 'skill' ? skillSaving : false} onClick={mode === 'skill' ? onSaveSkill : onClose}>
             保存
           </Button>
         </div>
       }
     >
-      {mode === 'agent' ? <AgentDrawerContent agent={selectedAgent} /> : null}
+      {mode === 'agent' ? <AgentDrawerContent agent={selectedAgent} skillNames={skillNames} /> : null}
       {mode === 'master' ? <MasterDrawerContent /> : null}
       {mode === 'model' ? <ModelDrawerContent /> : null}
       {mode === 'mcp' ? <McpDrawerContent /> : null}
-      {mode === 'skill' ? <SkillDrawerContent /> : null}
+      {mode === 'skill' ? (
+        <SkillDrawerContent draft={skillDraft} onChange={onSkillDraftChange} onFileUpload={onSkillFileUpload} />
+      ) : null}
       {mode === 'knowledge' ? <KnowledgeDrawerContent /> : null}
     </Drawer>
   )
 }
 
-function AgentDrawerContent({ agent }: { agent: (typeof AGENTS)[number] }) {
+function AgentDrawerContent({ agent, skillNames }: { agent: (typeof AGENTS)[number]; skillNames: string[] }) {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
       <Input defaultValue={agent.name} addBefore="名称" />
@@ -787,7 +1091,7 @@ function AgentDrawerContent({ agent }: { agent: (typeof AGENTS)[number] }) {
           </Select.Option>
         ))}
       </Select>
-      <Checkbox.Group defaultValue={agent.skills} options={SKILLS.map((skill) => skill.name)} />
+      <Checkbox.Group defaultValue={agent.skills} options={skillNames} />
       <Checkbox.Group defaultValue={agent.mcps} options={MCP_SERVICES.map((service) => service.name)} />
       <Checkbox.Group defaultValue={agent.kbs} options={KNOWLEDGE_BASES.map((kb) => kb.name)} />
       <div className="switch-list">
@@ -869,22 +1173,61 @@ function McpDrawerContent() {
   )
 }
 
-function SkillDrawerContent() {
+function SkillDrawerContent({
+  draft,
+  onChange,
+  onFileUpload,
+}: {
+  draft: SkillDraft
+  onChange: (patch: Partial<SkillDraft>) => void
+  onFileUpload: (fileName: string, content: string) => void
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+    const content = await file.text()
+    onFileUpload(file.name, content)
+    event.target.value = ''
+  }
+
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Input defaultValue="就业数据洞察" addBefore="Skill 名称" />
-      <Input.TextArea placeholder="一句话能力说明" autoSize={{ minRows: 3, maxRows: 4 }} />
-      <Select defaultValue="LangGraph 子图" placeholder="实现方式">
-        {['Dify 工作流', 'LangGraph 子图'].map((item) => (
-          <Select.Option key={item} value={item}>
-            {item}
-          </Select.Option>
-        ))}
-      </Select>
-      <Checkbox.Group defaultValue={['DeepSeek V3']} options={MODELS.map((model) => model.name)} />
-      <Checkbox.Group options={MCP_SERVICES.map((service) => service.name)} />
+      <div className="skill-file-tools">
+        <div>
+          <strong>文件化 Skill</strong>
+          <p>上传 SKILL.md 文件，或直接编辑下方内容。</p>
+        </div>
+        <Button type="outline" onClick={() => fileInputRef.current?.click()}>
+          上传文件
+        </Button>
+        <input ref={fileInputRef} type="file" accept=".md,.txt" hidden onChange={handleFileChange} />
+      </div>
+      <div className="skill-editor-meta">
+        <Input value={draft.name} addBefore="Skill 名称" placeholder="留空则从文件解析" onChange={(value) => onChange({ name: value })} />
+        <Input value={draft.category} addBefore="分类" placeholder="例如：简历 / 求职 / 面试" onChange={(value) => onChange({ category: value })} />
+        <Input value={draft.version} addBefore="版本" placeholder="1.0.0" onChange={(value) => onChange({ version: value })} />
+      </div>
+      <Input.TextArea
+        value={draft.description}
+        placeholder="一句话说明这个 Skill 能做什么；也可留空，从 frontmatter 解析"
+        autoSize={{ minRows: 3, maxRows: 4 }}
+        onChange={(value) => onChange({ description: value })}
+      />
+      <Input value={draft.tagsText} addBefore="标签" placeholder="用逗号分隔，例如：简历, STAR, 评分" onChange={(value) => onChange({ tagsText: value })} />
+      <Input value={draft.fileName} addBefore="文件名" placeholder="SKILL.md" onChange={(value) => onChange({ fileName: value })} />
+      <Input.TextArea
+        className="skill-code-editor"
+        value={draft.content}
+        placeholder="在这里粘贴 SKILL.md 内容"
+        autoSize={{ minRows: 14, maxRows: 22 }}
+        onChange={(value) => onChange({ content: value })}
+      />
       <div className="switch-list">
-        <Switch defaultChecked />
+        <Switch checked={draft.status === 'enabled'} onChange={(checked) => onChange({ status: checked ? 'enabled' : 'disabled' })} />
         <span>启用 Skill</span>
       </div>
     </Space>

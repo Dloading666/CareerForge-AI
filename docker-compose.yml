@@ -54,6 +54,8 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - skill-data:/app/data
     healthcheck:
       test:
         [
@@ -83,3 +85,4 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  skill-data:

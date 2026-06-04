@@ -12,6 +12,8 @@ from app.auth.service import ensure_admin_bootstrap
 from app.core.config import get_settings
 from app.infra.db import Base, SessionLocal, engine
 from app.infra.redis_client import ping_redis
+from app.skills import models as skill_models  # noqa: F401
+from app.skills.router import router as skills_router
 from app.student.router import router as student_router
 
 
@@ -53,6 +55,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
+app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 
 

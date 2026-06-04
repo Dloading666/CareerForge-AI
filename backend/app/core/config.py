@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     email_code_cooldown_seconds: int = Field(default=60, alias="EMAIL_CODE_COOLDOWN_SECONDS")
     email_code_max_attempts: int = Field(default=5, alias="EMAIL_CODE_MAX_ATTEMPTS")
 
+    skill_storage_dir: str = Field(default="./data/skills", alias="SKILL_STORAGE_DIR")
+    skill_max_content_bytes: int = Field(default=200_000, alias="SKILL_MAX_CONTENT_BYTES")
+
     @property
     def is_development(self) -> bool:
         return self.app_env.lower() != "production"
