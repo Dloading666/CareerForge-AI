@@ -29,6 +29,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiRequest, ApiError } from '../shared/api'
 import { useAuth } from '../shared/auth'
+import { ModelPlaza } from './ModelPlaza'
+import { SystemSettings } from './SystemSettings'
 
 type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
 type DrawerMode = 'agent' | 'master' | 'model' | 'mcp' | 'skill' | 'knowledge'
@@ -559,7 +561,7 @@ export function AdminHomePage() {
 
           {activeNav === 'agents' ? renderAgentsPage(selectedAgent, setActiveAgent, openDrawer) : null}
           {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
-          {activeNav === 'models' ? renderModelsPage(openDrawer) : null}
+          {activeNav === 'models' ? <ModelPlaza /> : null}
           {activeNav === 'mcp' ? renderMcpPage(openDrawer) : null}
           {activeNav === 'skills'
             ? renderSkillsPage({
@@ -732,48 +734,6 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           ))}
         </div>
       </section>
-    </div>
-  )
-}
-
-function renderModelsPage(openDrawer: (mode: DrawerMode) => void) {
-  return (
-    <div className="admin-card-grid">
-      {MODELS.map((model) => (
-        <Card key={model.id} className="admin-card model-card" hoverable>
-          <div className="model-card-top">
-            <Tag>{model.location}</Tag>
-            <span className="watermark-mark">
-              <IconExperiment />
-            </span>
-          </div>
-          <h3>{model.name}</h3>
-          <div className="meta-list">
-            <span>模型：{model.id}</span>
-            <span>来源：{model.host}</span>
-            <span>
-              延迟：<strong style={{ color: model.latencyColor }}>{model.latency}ms</strong>
-            </span>
-          </div>
-          <div className="admin-card-footer">
-            <Space size={6}>
-              {model.protocols.map((protocol) => (
-                <Tag key={protocol}>{protocol}</Tag>
-              ))}
-              <Tag>{model.provider}</Tag>
-            </Space>
-            <div className="student-open-switch">
-              <span>对学生开放</span>
-              <Switch defaultChecked={model.enabled} />
-            </div>
-          </div>
-        </Card>
-      ))}
-      <button className="admin-add-card" type="button" onClick={() => openDrawer('model')}>
-        <IconPlus />
-        <strong>添加模型</strong>
-        <span>OpenAI / Anthropic / Ollama API</span>
-      </button>
     </div>
   )
 }
@@ -998,6 +958,7 @@ function renderSettingsPage(displayName: string, email: string, logout: () => vo
           </Button>
         </Popconfirm>
       </section>
+      <SystemSettings />
     </div>
   )
 }
