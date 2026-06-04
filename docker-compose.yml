@@ -1,4 +1,4 @@
-services:
+﻿services:
   mysql:
     image: mysql:8.4
     container_name: zhipei-mysql
@@ -12,7 +12,7 @@ services:
       MYSQL_USER: zhipei
       MYSQL_PASSWORD: zhipei123456
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
@@ -29,7 +29,7 @@ services:
     container_name: zhipei-redis
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "redis123456"]
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -83,3 +83,5 @@ services:
 volumes:
   mysql-data:
   redis-data:
+
+
