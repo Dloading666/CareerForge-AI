@@ -4,6 +4,20 @@
 
 ---
 
+## 分支规范
+
+| 分支 | 用途 |
+|------|------|
+| `main` | 生产服务器，只有负责人能合并 |
+| `master` | 团队开发主线，功能完成后 PR 到此 |
+| `dev-xxx` | 个人开发分支，从 `master` 切出 |
+
+**工作流**：从 `master` 切自己的分支 → 开发完成提 PR 到 `master` → 负责人审批合并 → `master` 由负责人部署到 `main`
+
+> ⚠️ `backend/.env.docker` 已加入 `.gitignore`，不要提交真实密钥，用 `backend/.env.docker.example` 作为模板。
+
+---
+
 ## 功能概览
 
 | 模块 | 说明 |
