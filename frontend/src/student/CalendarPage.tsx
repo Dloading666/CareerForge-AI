@@ -1,7 +1,6 @@
 import { Button, Form, Input, Message, Modal, Popconfirm, Select, Typography } from '@arco-design/web-react'
 import { IconLeft, IconRight, IconArrowLeft } from '@arco-design/web-react/icon'
 import { useEffect, useState } from 'react'
-import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 
 type Event = { id: number; title: string; description: string | null; event_date: string; event_time: string | null; color: string; created_at: string }
@@ -10,7 +9,6 @@ const WEEKDAYS = ['一','二','三','四','五','六','日']
 const COLORS = [{label:'蓝色',value:'#165dff'},{label:'绿色',value:'#00b42a'},{label:'橙色',value:'#ff7d00'},{label:'红色',value:'#f53f3f'},{label:'紫色',value:'#722ed1'}]
 
 export function CalendarPage({ onBack }: { onBack?: () => void }) {
-  const { session } = useAuth()
   const [events, setEvents] = useState<Event[]>([])
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
@@ -24,9 +22,9 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
 
   const fetchEvents = async () => {
     try {
-      const res = await apiRequest<Event[]>('/api/v1/student/events', { headers: { Authorization: 'Bearer ' + (session?.access || '') } })
+      const res = await apiRequest<Event[]>('/api/v1/student/events')
       setEvents(res)
-    } catch {}
+    } catch (e) { console.error(e) }
   }
   useEffect(() => { fetchEvents() }, [year, month])
 
@@ -50,10 +48,10 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
         event_date: editingEvent ? editingEvent.event_date : selectedDate ? dateStr(selectedDate.getDate()) : values.event_date,
         event_time: values.event_time || null }
       if (editingEvent) {
-        await apiRequest('/api/v1/student/events/' + editingEvent.id, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session?.access || '') }, body: JSON.stringify(body) })
+        await apiRequest('/api/v1/student/events/' + editingEvent.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         Message.success('已更新')
       } else {
-        await apiRequest('/api/v1/student/events', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session?.access || '') }, body: JSON.stringify(body) })
+        await apiRequest('/api/v1/student/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         Message.success('已添加')
       }
       setModalVisible(false); fetchEvents()
@@ -61,20 +59,20 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
   }
 
   const handleDelete = async (id: number) => {
-    try { await apiRequest('/api/v1/student/events/' + id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + (session?.access || '') } }); Message.success('已删除'); fetchEvents() }
+    try { await apiRequest('/api/v1/student/events/' + id, { method: 'DELETE' }); Message.success('已删除'); fetchEvents() }
     catch { Message.error('删除失败') }
   }
 
   return (
-    <div style={{ width: '100%', padding: '0 28px 40px' }}>
+    <div style={{ width: '100%', padding: '0 28px 40px', overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 0 16px' }}>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           {onBack && <Button type="text" icon={<IconArrowLeft/>} onClick={onBack} style={{padding:0}}/>}
-          <Typography.Title heading={4} style={{margin:0}}>日程管理</Typography.Title>
+          <Typography.Title heading={5} style={{margin:0}}>日程管理</Typography.Title>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <Button size="small" icon={<IconLeft/>} onClick={prevMonth}/>
-          <Typography.Text style={{fontWeight:600,minWidth:80,textAlign:'center'}}>{year}年{month+1}月</Typography.Text>
+          <Typography.Text style={{fontWeight:600,minWidth:60,textAlign:'center',fontSize:14}}>{year}年{month+1}月</Typography.Text>
           <Button size="small" icon={<IconRight/>} onClick={nextMonth}/>
         </div>
       </div>
@@ -84,14 +82,14 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
           {WEEKDAYS.map(w => <div key={w} style={{padding:'10px 0',textAlign:'center',fontSize:12,fontWeight:600,color:'var(--text-subtle)'}}>{w}</div>)}
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
-          {Array.from({length:offset}).map((_,i) => <div key={'e'+i} style={{aspectRatio:'1',padding:4}}/>)}
+          {Array.from({length:offset}).map((_,i) => <div key={'e'+i} style={{padding:2,minHeight:60}}/>)}
           {Array.from({length:daysInMonth}).map((_,i) => {
             const d=i+1; const evts=dayEvents(d); const today=new Date()
             const isToday=year===today.getFullYear()&&month===today.getMonth()&&d===today.getDate()
             return (
-              <div key={d} onClick={()=>openCreate(d)} style={{aspectRatio:'1',padding:4,cursor:'pointer',borderBottom:'1px solid #fafafa',borderRight:'1px solid #fafafa',transition:'background 0.15s'}}
+              <div key={d} onClick={()=>openCreate(d)} style={{padding:2,cursor:'pointer',minHeight:60,borderBottom:'1px solid #fafafa',borderRight:'1px solid #fafafa',transition:'background 0.15s'}}
                 onMouseEnter={(e)=>{e.currentTarget.style.background='#f5f7ff'}} onMouseLeave={(e)=>{e.currentTarget.style.background='transparent'}}>
-                <div style={{width:24,height:24,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:isToday?700:400,background:isToday?'#165dff':'transparent',color:isToday?'#fff':'var(--text-main)'}}>{d}</div>
+                <div style={{width:20,height:20,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:isToday?700:400,background:isToday?'#165dff':'transparent',color:isToday?'#fff':'var(--text-main)'}}>{d}</div>
                 <div style={{display:'flex',flexDirection:'column',gap:1,marginTop:2}}>
                   {evts.slice(0,2).map(evt => (
                     <div key={evt.id} onClick={(e)=>{e.stopPropagation();openEdit(evt)}} style={{fontSize:10,padding:'1px 4px',borderRadius:3,background:evt.color+'18',color:evt.color,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontWeight:500}}>{evt.title}</div>
@@ -111,7 +109,7 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
       {displayEvents.length===0 ? (
         <Typography.Text type="secondary" style={{fontSize:13}}>暂无日程，点击日历格子添加</Typography.Text>
       ) : (
-        <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:420,overflowY:'auto',paddingRight:4}}>
+        <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:300,overflowY:'auto',paddingRight:4}}>
           {displayEvents.map(evt => (
             <div key={evt.id} onClick={()=>openEdit(evt)} style={{display:'flex',alignItems:'center',padding:'12px 16px',background:'#fff',borderRadius:10,boxShadow:'0 1px 3px rgba(0,0,0,0.04)',cursor:'pointer',borderLeft:'3px solid '+evt.color}}>
               <div style={{flex:1}}>
