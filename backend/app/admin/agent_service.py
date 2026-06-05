@@ -17,6 +17,8 @@ def _agent_to_dict(agent: Agent) -> dict:
          "temperature": agent.temperature, "max_tokens": agent.max_tokens,
          "top_p": agent.top_p, "frequency_penalty": agent.frequency_penalty,
          "presence_penalty": agent.presence_penalty, "memory_window": agent.memory_window,
+         "use_dify": agent.use_dify, "dify_api_key_cipher": agent.dify_api_key_cipher,
+         "dify_app_id": agent.dify_app_id,
          "is_enabled": agent.is_enabled, "is_published": agent.is_published,
          "created_at": agent.created_at.isoformat() if agent.created_at else None,
          "updated_at": agent.updated_at.isoformat() if agent.updated_at else None}
@@ -35,6 +37,9 @@ def _agent_to_dict(agent: Agent) -> dict:
 
 def _build_agent(agent: Agent, payload):
     data = payload.model_dump(exclude_unset=True)
+    if "dify_api_key" in data:
+        key = data.pop("dify_api_key")
+        data["dify_api_key_cipher"] = encrypt_api_key(key) if key else None
     for jf in ["suggested_questions", "prompt_variables"]:
         if jf in data and data[jf] is not None:
             data[jf] = json.dumps(data[jf], ensure_ascii=False)

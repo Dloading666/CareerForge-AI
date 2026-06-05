@@ -26,6 +26,9 @@ class AgentCreate(BaseModel):
     frequency_penalty: float = Field(default=0.0, ge=-2.0, le=2.0)
     presence_penalty: float = Field(default=0.0, ge=-2.0, le=2.0)
     memory_window: int = Field(default=10, ge=0, le=100)
+    use_dify: bool = False
+    dify_api_key: Optional[str] = Field(default=None, max_length=256)
+    dify_app_id: Optional[str] = Field(default=None, max_length=128)
     is_enabled: bool = True; is_published: bool = True
 
 class AgentUpdate(BaseModel):
@@ -46,6 +49,9 @@ class AgentUpdate(BaseModel):
     frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
     presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
     memory_window: Optional[int] = Field(default=None, ge=0, le=100)
+    use_dify: Optional[bool] = None
+    dify_api_key: Optional[str] = Field(default=None, max_length=256)
+    dify_app_id: Optional[str] = Field(default=None, max_length=128)
     is_enabled: Optional[bool] = None; is_published: Optional[bool] = None
 
 class AgentToggle(BaseModel): is_enabled: bool

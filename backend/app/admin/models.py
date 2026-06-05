@@ -80,4 +80,7 @@ class Agent(TimestampMixin, Base):
     memory_window: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    use_dify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    dify_api_key_cipher: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    dify_app_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

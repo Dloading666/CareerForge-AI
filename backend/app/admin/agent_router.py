@@ -6,6 +6,7 @@ from app.admin.agent_service import (create_agent, delete_agent, get_agent, get_
 from app.admin.agent_schemas import AgentChatRequest, AgentChatResponse, AgentCreate, AgentToggle, AgentUpdate
 from app.auth.service import require_role
 from app.core.llm_client import chat_completion
+from app.core.dify_client import dify_chat_completion
 from app.core.response import ok
 from app.infra.db import get_db
 
@@ -51,6 +52,17 @@ def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(
 @router.post("/{agent_id}/chat")
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     agent = get_agent(db, agent_id)
+
+    # Dify mode
+    if agent.use_dify and agent.dify_api_key_cipher:
+        try:
+            result = dify_chat_completion(agent, user_message=payload.message, variables=payload.variables,
+                                           conversation_id=payload.variables.get("conversation_id", "") if payload.variables else "")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        return ok(AgentChatResponse(reply=result["reply"], model_name="Dify", usage=result["usage"]).model_dump())
+
+    # Direct LLM mode
     if not agent.model_config_id or not agent.model_config:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This agent has no model bound")
     if not agent.model_config.api_key_cipher:

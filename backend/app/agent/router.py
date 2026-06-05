@@ -7,6 +7,7 @@ from app.admin.agent_service import get_agent, get_agent_dict, list_agents
 from app.admin.agent_schemas import AgentChatRequest, AgentChatResponse
 from app.auth.service import get_current_identity
 from app.core.llm_client import chat_completion
+from app.core.dify_client import dify_chat_completion
 from app.core.response import ok
 from app.infra.db import get_db
 
@@ -40,6 +41,18 @@ def api_public_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depe
     agent = get_agent(db, agent_id)
     if not agent.is_enabled or not agent.is_published:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Smart agent not available")
+
+    # Dify mode
+    if agent.use_dify and agent.dify_api_key_cipher:
+        try:
+            result = dify_chat_completion(agent, user_message=payload.message, variables=payload.variables,
+                                           conversation_id=payload.variables.get("conversation_id", "") if payload.variables else "",
+                                           user_id=str(_identity[0].id) if _identity and _identity[0] else "student")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        return ok(AgentChatResponse(reply=result["reply"], model_name="Dify", usage=result["usage"]).model_dump())
+
+    # Direct LLM mode
     if not agent.model_config_id or not agent.model_config:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="This agent is temporarily unavailable")
     if not agent.model_config.api_key_cipher:
