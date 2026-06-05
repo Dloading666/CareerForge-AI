@@ -57,45 +57,45 @@ class DifyTestRequest(BaseModel):
 
 @router.post("/test-dify")
 async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
-    """Test Dify connection with provided credentials."""
+    """Test Dify connection - tries chat-messages then completion-messages."""
     import httpx
     base_url = payload.api_base_url.rstrip("/")
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            resp = await client.post(
-                f"{base_url}/chat-messages",
-                headers={"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
-                json={"inputs": {}, "query": "ping", "response_mode": "blocking", "user": "admin-test"},
-            )
-        if resp.status_code == 200:
-            return ok({"success": True, "message": "Connection successful"})
-        elif resp.status_code == 401:
-            try:
-                detail = resp.json()
-                err_msg = detail.get("message", "") or detail.get("error", "")
-            except Exception:
-                err_msg = ""
-            hint = ""
-            if "invalid" in str(err_msg).lower() or "unauthorized" in str(err_msg).lower():
-                hint = " - Please use the API Secret from Dify App > API Access (not App ID)"
-            return ok({"success": False, "message": f"Invalid API Key (401){hint}"})
-        elif resp.status_code == 404:
-            return ok({"success": False, "message": "App not found (404) - check Base URL path"})
-        elif resp.status_code == 400:
-            try:
-                detail = resp.json()
-                err_msg = detail.get("message", "") or str(detail)
-            except Exception:
-                err_msg = resp.text[:100]
-            return ok({"success": False, "message": f"Bad request (400): {err_msg[:100]}"})
-        else:
-            return ok({"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:100]}"})
-    except httpx.ConnectError:
-        return ok({"success": False, "message": "Cannot connect - check Base URL (is server reachable?)"})
-    except httpx.TimeoutException:
-        return ok({"success": False, "message": "Connection timed out"})
-    except Exception as exc:
-        return ok({"success": False, "message": str(exc)[:200]})
+    headers = {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"}
+    user = "admin-test"
+    
+    endpoints = [
+        ("/chat-messages", {"inputs": {}, "query": "ping", "response_mode": "blocking", "user": user}),
+        ("/completion-messages", {"inputs": {}, "query": "ping", "response_mode": "blocking", "user": user}),
+        ("/workflows/run", {"inputs": {}, "response_mode": "blocking", "user": user}),
+    ]
+    
+    last_error = ""
+    for path, body in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.post(f"{base_url}{path}", headers=headers, json=body)
+            if resp.status_code == 200:
+                mode = path.replace("/", "").replace("-messages", "")
+                return ok({"success": True, "message": f"Connection successful - app mode: {mode}"})
+            elif resp.status_code == 401:
+                return ok({"success": False, "message": "Invalid API Secret (401)"})
+            elif resp.status_code == 400:
+                try:
+                    detail = resp.json()
+                    err = detail.get("message", "") or str(detail)
+                except Exception:
+                    err = resp.text[:100]
+                last_error = f"{path}: {err[:80]}"
+            else:
+                last_error = f"{path}: HTTP {resp.status_code}"
+        except httpx.ConnectError:
+            return ok({"success": False, "message": f"Cannot connect to {base_url}"})
+        except httpx.TimeoutException:
+            last_error = f"{path}: timeout"
+        except Exception as exc:
+            last_error = f"{path}: {str(exc)[:80]}"
+    
+    return ok({"success": False, "message": f"All endpoints failed. {last_error}"})
 
 @router.post("/{agent_id}/chat")
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):

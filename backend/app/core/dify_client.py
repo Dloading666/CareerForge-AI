@@ -1,52 +1,54 @@
-"""Dify chat-messages client"""
+"""Dify chat-messages client - supports Chatbot, Text Generator, Workflow modes"""
 import httpx
 from app.admin.model_service import decrypt_api_key
 
 
 def dify_chat_completion(agent, *, user_message: str, variables: dict | None = None,
                           conversation_id: str = "", user_id: str = "admin") -> dict:
-    """Call Dify chat-messages API (blocking mode)."""
+    """Call Dify API (blocking mode). Auto-detects or uses configured app mode."""
     api_key = decrypt_api_key(agent.dify_api_key_cipher) if agent.dify_api_key_cipher else ""
     if not api_key:
-        raise RuntimeError("Dify API Key not configured for this agent")
+        raise RuntimeError("Dify API Secret not configured for this agent")
 
-    # Dify base URL: agent config first, then env var, then default
     import os
     base_url = (getattr(agent, "dify_api_base_url", None) or os.getenv("DIFY_API_BASE_URL", "") or "https://api.dify.ai/v1").rstrip("/")
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    # Build inputs from prompt_variables
     inputs = {}
     if variables:
         inputs = {k: v for k, v in variables.items()}
 
-    body = {
-        "inputs": inputs,
-        "query": user_message,
-        "response_mode": "blocking",
-        "user": user_id,
-    }
-    if conversation_id:
-        body["conversation_id"] = conversation_id
-
     client = httpx.Client(timeout=httpx.Timeout(120.0))
-    try:
-        resp = client.post(f"{base_url}/chat-messages", json=body, headers=headers)
-    finally:
-        client.close()
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    if resp.status_code != 200:
-        raise RuntimeError(f"Dify call failed ({resp.status_code}): {resp.text[:512]}")
+    # Try endpoints in order: chat-messages, completion-messages, workflows/run
+    endpoints = [
+        ("/chat-messages", {"inputs": inputs, "query": user_message, "response_mode": "blocking", "user": user_id}),
+        ("/completion-messages", {"inputs": inputs, "query": user_message, "response_mode": "blocking", "user": user_id}),
+        ("/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_id}),
+    ]
+    if conversation_id:
+        for _, body in endpoints:
+            body["conversation_id"] = conversation_id
 
-    data = resp.json()
-    reply = data.get("answer", "")
-    conv_id = data.get("conversation_id", "")
-    return {
-        "reply": reply,
-        "conversation_id": conv_id,
-        "usage": None,  # Dify doesn't return token usage in basic mode
-    }
+    last_error = ""
+    for path, body in endpoints:
+        try:
+            resp = client.post(f"{base_url}{path}", json=body, headers=headers)
+        finally:
+            if path == endpoints[-1][0]:
+                client.close()
+        if resp.status_code == 200:
+            data = resp.json()
+            reply = data.get("answer") or data.get("data", {}).get("outputs", {}).get("text", "") or ""
+            conv_id = data.get("conversation_id", "")
+            return {"reply": reply, "conversation_id": conv_id, "usage": None}
+        elif resp.status_code == 401:
+            raise RuntimeError(f"Dify call failed (401): Invalid API Secret")
+        else:
+            try:
+                detail = resp.json()
+                last_error = detail.get("message", "") or resp.text[:200]
+            except Exception:
+                last_error = resp.text[:200]
+
+    raise RuntimeError(f"Dify call failed: {last_error}")
