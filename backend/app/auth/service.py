@@ -75,6 +75,7 @@ def build_profile(user, role: str):
             "college": user.college,
             "major": user.major,
             "grade": user.grade,
+            "avatar_url": getattr(user, "avatar_url", None),
         },
     }
 

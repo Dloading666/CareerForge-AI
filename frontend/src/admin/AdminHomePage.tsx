@@ -1,16 +1,21 @@
 import {
   Alert,
+  Avatar,
   Button,
   Card,
   Checkbox,
   Drawer,
+  Dropdown,
   Input,
+  Menu,
+  Message,
   Popconfirm,
   Select,
   Space,
   Switch,
   Tag,
   Tabs,
+  Upload,
 } from '@arco-design/web-react'
 import {
   IconApps,
@@ -341,7 +346,7 @@ const ROUTES = [
   { intent: '简历建议 / 项目经历', agent: '简历优化', memory: '草稿期，暂不对学生开放' },
 ]
 
-const pageMeta: Record<NavKey, { title: string; desc: string; action: string; drawer: DrawerMode }> = {
+const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; drawer: DrawerMode }> = {
   agents: {
     title: '智能体管理',
     desc: '组装子智能体的模型范围、Skills、MCP 与专属知识库，并控制是否允许被主智能体调用。',
@@ -351,7 +356,6 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action: string; dr
   master: {
     title: '主智能体配置',
     desc: '配置就业总助手的默认模型、系统提示词、全量能力范围、路由策略和记忆隔离规则。',
-    action: '编辑配置',
     drawer: 'master',
   },
   models: {
@@ -525,6 +529,8 @@ function detailOwnerLabel(service: McpServiceRecord) {
 export function AdminHomePage() {
   const { session, logout } = useAuth()
   const displayName = (session?.profile.display_name as string) || '平台管理员'
+  const avatarUrl = (session?.profile.avatar_url as string) || ''
+  const [avatarKey, setAvatarKey] = useState(0)
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
   
@@ -969,10 +975,39 @@ export function AdminHomePage() {
           <div className="admin-topbar-actions">
             <Input className="admin-search" placeholder="Search..." allowClear />
             <Button icon={<IconNotification />} type="text" />
-            <Button icon={<IconSettings />} type="text" />
-            <div className="admin-avatar">
-              <IconUser />
-            </div>
+            <Button icon={<IconSettings />} type="text" onClick={() => setActiveNav("settings")} />
+            <Dropdown
+              droplist={
+                <Menu>
+                  <Menu.Item key="name" disabled>
+                    <span style={{ fontWeight: 600 }}>{displayName}</span>
+                  </Menu.Item>
+                  <Menu.Item key="email" disabled>
+                    <span style={{ color: '#86909C', fontSize: 12 }}>{email}</span>
+                  </Menu.Item>
+                  <Menu.Item key="logout" onClick={logout}>
+                    <IconPoweroff style={{ marginRight: 8 }} />
+                    退出登录
+                  </Menu.Item>
+                </Menu>
+              }
+              trigger="click"
+              position="br"
+            >
+              <div className="admin-avatar" style={{ cursor: 'pointer', overflow: 'hidden' }}>
+                {avatarUrl ? (
+                  <img
+                    key={avatarKey}
+                    src={avatarUrl}
+                    alt="avatar"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                ) : (
+                  <IconUser />
+                )}
+              </div>
+            </Dropdown>
           </div>
         </header>
 
@@ -983,9 +1018,11 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
-              {meta.action}
-            </Button>
+            {activeNav !== 'master' && (
+              <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
+                {meta.action}
+              </Button>
+            )}
           </div>
 
           {adminFeedback ? (
@@ -1048,7 +1085,7 @@ export function AdminHomePage() {
               })
             : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
-          {activeNav === 'settings' ? renderSettingsPage(displayName, email, logout) : null}
+          {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout) : null}
         </main>
       </section>
 
@@ -1091,16 +1128,6 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           <p>主智能体默认拥有全量能力，但可以在这里收窄访问范围。</p>
         </div>
         <div className="form-surface">
-          <label>
-            默认模型
-            <Select defaultValue="DeepSeek V3">
-              {MODELS.filter((model) => model.enabled).map((model) => (
-                <Select.Option key={model.name} value={model.name}>
-                  {model.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </label>
           <label>
             系统提示词
             <Input.TextArea
@@ -1680,13 +1707,45 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderSettingsPage(displayName: string, email: string, logout: () => void) {
+function renderSettingsPage(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, logout: () => void) {
   return (
     <div className="settings-grid">
       <section className="form-surface">
         <div className="admin-section-title">
           <h3>账号信息</h3>
           <p>当前登录管理员信息。</p>
+        </div>
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <Avatar size={80} style={{ marginBottom: 12 }}>
+            {avatarUrl ? (
+              <img key={avatarKey} src={avatarUrl} alt="avatar" />
+            ) : (
+              <IconUser />
+            )}
+          </Avatar>
+          <div style={{ marginTop: 12 }}>
+            <Upload
+              showUploadList={false}
+              accept=".png,.jpg,.jpeg,.gif,.webp"
+              customRequest={async (option) => {
+                const formData = new FormData()
+                formData.append('file', option.file)
+                try {
+                  await apiRequest<{ avatar_url: string }>('/api/v1/auth/avatar', {
+                    method: 'POST',
+                    body: formData,
+                  })
+                  setAvatarKey(k => k + 1)
+                  Message.success('头像上传成功')
+                  setTimeout(() => window.location.reload(), 500)
+                } catch (err) {
+                  Message.error(err instanceof ApiError ? err.message : '上传失败')
+                }
+              }}
+            >
+              <Button size="small" type="outline">上传头像</Button>
+            </Upload>
+          </div>
         </div>
         <div className="setting-field">
           <span>当前账号</span>

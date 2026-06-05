@@ -56,9 +56,7 @@ export function StudentAgentChat({ agent, onBack }: { agent: AgentItem; onBack: 
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
         {msgs.length === 0 && (
           <div style={{ textAlign: 'center', paddingTop: 40 }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, margin: '0 auto 16px', background: `linear-gradient(135deg, ${agent.icon_color_from || '#7C4DFF'}, ${agent.icon_color_to || '#2962FF'})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 28, fontVariationSettings: "'FILL' 1" }}>{agent.icon_name || 'smart_toy'}</span>
-            </div>
+            <img src="/baidi.png" alt="CareerForge" style={{ width: 56, height: 56, borderRadius: 16, margin: "0 auto 16px", display: "block", objectFit: "contain" }} />
             <h3 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px' }}>{agent.welcome_message || `你好！我是 ${agent.name}`}</h3>
             <p style={{ color: '#86909C', fontSize: 14, marginBottom: 20 }}>{agent.description}</p>
             {agent.suggested_questions && agent.suggested_questions.length > 0 && (
