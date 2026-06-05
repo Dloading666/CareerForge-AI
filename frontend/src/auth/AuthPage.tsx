@@ -366,6 +366,7 @@ export function AuthPage() {
                     placeholder="输入新密码"
                     value={studentPassword}
                     onChange={setStudentPassword}
+                    onPressEnter={handleResetPassword}
                   />
                   <Input.Password
                     size="large"
@@ -373,6 +374,7 @@ export function AuthPage() {
                     placeholder="再次输入新密码"
                     value={studentConfirmPassword}
                     onChange={setStudentConfirmPassword}
+                    onPressEnter={handleResetPassword}
                   />
                   <Typography.Text type="secondary">
                     密码至少 8 位，且需包含大写字母、小写字母和数字。
@@ -410,6 +412,7 @@ export function AuthPage() {
                     placeholder="输入学生邮箱"
                     value={studentEmail}
                     onChange={setStudentEmail}
+                    onPressEnter={handleStudentSubmit}
                   />
                   {studentMode === 'register' ? (
                     <>
@@ -419,6 +422,7 @@ export function AuthPage() {
                         placeholder="输入验证码"
                         value={studentCode}
                         onChange={setStudentCode}
+                        onPressEnter={handleStudentSubmit}
                         addAfter={
                           <Button
                             type="text"
@@ -437,6 +441,7 @@ export function AuthPage() {
                         placeholder="输入登录密码"
                         value={studentPassword}
                         onChange={setStudentPassword}
+                        onPressEnter={handleStudentSubmit}
                       />
                       <Input.Password
                         size="large"
@@ -444,6 +449,7 @@ export function AuthPage() {
                         placeholder="再次输入密码"
                         value={studentConfirmPassword}
                         onChange={setStudentConfirmPassword}
+                        onPressEnter={handleStudentSubmit}
                       />
                       <Typography.Text type="secondary">
                         密码至少 8 位，且需包含大写字母、小写字母和数字。
@@ -456,6 +462,7 @@ export function AuthPage() {
                       placeholder="输入登录密码"
                       value={studentPassword}
                       onChange={setStudentPassword}
+                      onPressEnter={handleStudentSubmit}
                     />
                   )}
                   <Button type="primary" size="large" long loading={submitting} onClick={handleStudentSubmit}>
@@ -493,6 +500,7 @@ export function AuthPage() {
                   placeholder="输入管理员账号"
                   value={adminAccount}
                   onChange={setAdminAccount}
+                  onPressEnter={handleAdminSubmit}
                 />
                 <Input.Password
                   size="large"
@@ -500,6 +508,7 @@ export function AuthPage() {
                   placeholder="输入管理员密码"
                   value={adminPassword}
                   onChange={setAdminPassword}
+                  onPressEnter={handleAdminSubmit}
                 />
                 <Button type="primary" size="large" long loading={submitting} onClick={handleAdminSubmit}>
                   登录管理员端
