@@ -278,8 +278,8 @@ export function AgentManagementPage() {
                   <Form.Item label="Dify API Base URL" field="dify_api_base_url" required>
                     <Input placeholder="https://api.dify.ai/v1" />
                   </Form.Item>
-                  <Form.Item label="Dify API Key" field="dify_api_key" required>
-                    <Input.Password placeholder="app-xxxxxxxxxxxxx" />
+                  <Form.Item label="Dify API Secret" field="dify_api_key" required>
+                    <Input.Password placeholder="app-xxxxxxxxxxxxxxxxxxxx" />
                   </Form.Item>
                   <Form.Item label="Dify App ID" field="dify_app_id">
                     <Input placeholder="可选，用于标识 Dify 应用" />
@@ -294,8 +294,9 @@ export function AgentManagementPage() {
                   </div>
                   <div style={{ padding: "10px 14px", background: "#f0f5ff", borderRadius: 6, fontSize: 12, color: "#4e5969", lineHeight: "18px", marginTop: 8 }}>
                     <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>开启后：</p>
-                    <p style={{ margin: 0 }}>1. 该智能体的对话将直接调用 Dify chat-messages API</p>
-                    <p style={{ margin: 0 }}>2. 自动注册为主智能体的可调用子智能体</p>
+                    <p style={{ margin: 0 }}>1. 请在 Dify 平台 → 应用 → API 访问 中获取 API Secret（非 App ID）</p>
+                    <p style={{ margin: 0 }}>2. 该智能体的对话将直接调用 Dify chat-messages API</p>
+                    <p style={{ margin: 0 }}>3. 自动注册为主智能体的可调用子智能体</p>
                     <p style={{ margin: 0, marginTop: 4, color: "#165DFF", fontWeight: 500 }}>注意：启用 Dify 后无需选择模型和配置参数，Dify 应用本身即为完整的智能体。</p>
                   </div>
                 </>

@@ -70,18 +70,32 @@ async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_rol
         if resp.status_code == 200:
             return ok({"success": True, "message": "Connection successful"})
         elif resp.status_code == 401:
-            return ok({"success": False, "message": "Invalid API Key (401)"})
+            try:
+                detail = resp.json()
+                err_msg = detail.get("message", "") or detail.get("error", "")
+            except Exception:
+                err_msg = ""
+            hint = ""
+            if "invalid" in str(err_msg).lower() or "unauthorized" in str(err_msg).lower():
+                hint = " - Please use the API Secret from Dify App > API Access (not App ID)"
+            return ok({"success": False, "message": f"Invalid API Key (401){hint}"})
         elif resp.status_code == 404:
-            return ok({"success": False, "message": "App not found (404) - check Base URL"})
+            return ok({"success": False, "message": "App not found (404) - check Base URL path"})
+        elif resp.status_code == 400:
+            try:
+                detail = resp.json()
+                err_msg = detail.get("message", "") or str(detail)
+            except Exception:
+                err_msg = resp.text[:100]
+            return ok({"success": False, "message": f"Bad request (400): {err_msg[:100]}"})
         else:
             return ok({"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:100]}"})
     except httpx.ConnectError:
-        return ok({"success": False, "message": "Cannot connect - check Base URL"})
+        return ok({"success": False, "message": "Cannot connect - check Base URL (is server reachable?)"})
     except httpx.TimeoutException:
         return ok({"success": False, "message": "Connection timed out"})
     except Exception as exc:
         return ok({"success": False, "message": str(exc)[:200]})
-
 
 @router.post("/{agent_id}/chat")
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
