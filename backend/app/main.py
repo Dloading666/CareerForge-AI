@@ -31,6 +31,7 @@ from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student.router import router as student_router
 from app.student.event_router import router as event_router
+from app.student.attachment_router import router as attachment_router
 
 AVATAR_DIR = Path("/app/data/avatars")
 BANNER_DIR = Path("/app/data/banners")
@@ -78,6 +79,7 @@ app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
 app.include_router(mcp_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(event_router, prefix=settings.api_v1_prefix)
+app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 
 

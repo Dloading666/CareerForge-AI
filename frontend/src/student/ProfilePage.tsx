@@ -1,9 +1,10 @@
 import { Form, Input, InputNumber, Message, Modal, Radio, Typography } from '@arco-design/web-react'
-import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook } from '@arco-design/web-react/icon'
+import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
+import { ResumeGallery } from './ResumeGallery'
 
 type Profile = {
   id: number; account: string; email: string; name: string | null
@@ -47,6 +48,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [uploading, setUploading] = useState(false)
   const [uploadingBanner, setUploadingBanner] = useState(false)
   const [calendarView, setCalendarView] = useState(false)
+  const [resumeView, setResumeView] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
@@ -96,6 +98,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   }
 
   if (loading) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',minHeight:300,color:'var(--text-subtle)'}}>加载中...</div>
+  if (resumeView) return <ResumeGallery onBack={() => setResumeView(false)} />
   if (calendarView) return <CalendarPage onBack={() => setCalendarView(false)} />
 
   const avatarUrl = profile?.avatar_url || ''
@@ -144,6 +147,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           desc={[profile?.name,profile?.gender&&genderLabel[profile.gender],profile?.age&&profile.age+'岁',profile?.college].filter(Boolean).join(' · ')||'完善你的个人信息'} accentColor="#165dff" onClick={openEdit}/>
         <MenuCard icon={<IconCalendar style={{fontSize:26,color:'#722ed1'}}/>} label="日程管理"
           desc="查看和管理日程安排" accentColor="#722ed1" onClick={() => setCalendarView(true)}/>
+        <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="查看已提交的简历和附件" accentColor="#f53f3f" onClick={() => setResumeView(true)}/>
         <MenuCard icon={<IconSafe style={{fontSize:26,color:'#00b42a'}}/>} label="账号安全"
           desc={profile?.email_verified_at?'邮箱已认证':'邮箱未认证'} accentColor="#00b42a"/>
         <MenuCard icon={<IconInfoCircle style={{fontSize:26,color:'#ff7d00'}}/>} label="关于智培职联"
