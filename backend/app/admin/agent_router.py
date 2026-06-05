@@ -57,45 +57,47 @@ class DifyTestRequest(BaseModel):
 
 @router.post("/test-dify")
 async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
-    """Test Dify connection - tries chat-messages then completion-messages."""
+    """Test Dify connection - tries multiple endpoints and returns detailed diagnostics."""
     import httpx
     base_url = payload.api_base_url.rstrip("/")
-    headers = {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"}
+    api_key = payload.api_key
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     user = "admin-test"
+    inputs_test = {"test": "ping"}
     
-    endpoints = [
-        ("/chat-messages", {"inputs": {}, "query": "ping", "response_mode": "blocking", "user": user}),
-        ("/completion-messages", {"inputs": {}, "query": "ping", "response_mode": "blocking", "user": user}),
-        ("/workflows/run", {"inputs": {}, "response_mode": "blocking", "user": user}),
-    ]
+    # Try multiple paths and body formats
+    attempts = []
     
-    last_error = ""
-    for path, body in endpoints:
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                resp = await client.post(f"{base_url}{path}", headers=headers, json=body)
-            if resp.status_code == 200:
-                mode = path.replace("/", "").replace("-messages", "")
-                return ok({"success": True, "message": f"Connection successful - app mode: {mode}"})
-            elif resp.status_code == 401:
-                return ok({"success": False, "message": "Invalid API Secret (401)"})
-            elif resp.status_code == 400:
+    # Attempt 1: chat-messages (Chatbot/Agent)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        for path, body in [
+            ("/chat-messages", {"inputs": inputs_test, "query": "ping", "response_mode": "blocking", "user": user}),
+            ("/completion-messages", {"inputs": inputs_test, "query": "ping", "response_mode": "blocking", "user": user}),
+            ("/workflows/run", {"inputs": inputs_test, "response_mode": "blocking", "user": user}),
+        ]:
+            full_url = f"{base_url}{path}"
+            try:
+                resp = await client.post(full_url, headers=headers, json=body)
+                status = resp.status_code
                 try:
                     detail = resp.json()
-                    err = detail.get("message", "") or str(detail)
+                    msg = detail.get("message", "") or detail.get("error", "") or str(detail)[:120]
                 except Exception:
-                    err = resp.text[:100]
-                last_error = f"{path}: {err[:80]}"
-            else:
-                last_error = f"{path}: HTTP {resp.status_code}"
-        except httpx.ConnectError:
-            return ok({"success": False, "message": f"Cannot connect to {base_url}"})
-        except httpx.TimeoutException:
-            last_error = f"{path}: timeout"
-        except Exception as exc:
-            last_error = f"{path}: {str(exc)[:80]}"
+                    msg = resp.text[:120]
+                attempts.append({"path": path, "status": status, "message": msg})
+                if status == 200:
+                    return ok({"success": True, "message": f"OK - connected via {path}", "diagnostics": attempts})
+            except Exception as exc:
+                attempts.append({"path": path, "status": 0, "message": str(exc)[:120]})
     
-    return ok({"success": False, "message": f"All endpoints failed. {last_error}"})
+    # All failed - return diagnostic info
+    return ok({
+        "success": False,
+        "message": f"All 3 endpoints failed. Base URL: {base_url}",
+        "diagnostics": attempts,
+        "hint": "Check: 1) API Secret is correct 2) App is published 3) Base URL matches your Dify server"
+    })
+
 
 @router.post("/{agent_id}/chat")
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):

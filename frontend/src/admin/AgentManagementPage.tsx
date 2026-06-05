@@ -86,17 +86,22 @@ export function AgentManagementPage() {
   const handleTestDify = async () => {
     const vals = form.getFieldsValue?.() || {}
     if (!vals.dify_api_base_url || !vals.dify_api_key) {
-      setDifyTestResult("???? Base URL ? API Key")
+      setDifyTestResult("???? Base URL ? API Secret")
       return
     }
     setDifyTestResult("???...")
     try {
-      const r = await apiRequest<{ success: boolean; message: string }>("/api/v1/admin/agents/test-dify", {
+      const r = await apiRequest<{ success: boolean; message: string; diagnostics?: { path: string; status: number; message: string }[]; hint?: string }>("/api/v1/admin/agents/test-dify", {
         method: "POST",
         body: JSON.stringify({ api_base_url: vals.dify_api_base_url, api_key: vals.dify_api_key, app_id: vals.dify_app_id || "" }),
       })
-      setDifyTestResult(r.success ? "OK ????" : "FAIL " + r.message)
-      setTimeout(() => setDifyTestResult(null), 5000)
+      if (r.success) {
+        setDifyTestResult("OK " + r.message)
+      } else {
+        const diag = r.diagnostics?.map(d => `${d.path}: ${d.status} ${d.message}`).join(" | ") || ""
+        setDifyTestResult("FAIL " + r.message + (diag ? " [" + diag + "]" : ""))
+      }
+      setTimeout(() => setDifyTestResult(null), 10000)
     } catch {
       setDifyTestResult("FAIL ????")
       setTimeout(() => setDifyTestResult(null), 5000)
