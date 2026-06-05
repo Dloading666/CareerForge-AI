@@ -24,10 +24,12 @@ import {
   IconSettings,
   IconUser,
 } from '@arco-design/web-react/icon'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { useAuth } from '../shared/auth'
+import { apiRequest } from '../shared/api'
 import { ModelPlaza } from './ModelPlaza'
+import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
 
 type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
@@ -282,13 +284,12 @@ export function AdminHomePage() {
     loadAvatar()
   }, [])
 
-  const [activeAgent, setActiveAgent] = useState(AGENTS[0].id)
-  const [skillFilter, setSkillFilter] = useState('all')
+    const [skillFilter, setSkillFilter] = useState('all')
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('agent')
   const [drawerVisible, setDrawerVisible] = useState(false)
 
   const meta = pageMeta[activeNav]
-  const selectedAgent = AGENTS.find((agent) => agent.id === activeAgent) ?? AGENTS[0]
+  const selectedAgent = AGENTS[0]
   const filteredSkills = useMemo(
     () => (skillFilter === 'all' ? SKILLS : SKILLS.filter((skill) => skill.category === skillFilter)),
     [skillFilter],
@@ -381,7 +382,7 @@ export function AdminHomePage() {
             </Button>
           </div>
 
-          {activeNav === 'agents' ? renderAgentsPage(selectedAgent, setActiveAgent, openDrawer) : null}
+          {activeNav === 'agents' ? <AgentManagementPage /> : null}
           {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
           {activeNav === 'models' ? <ModelPlaza /> : null}
           {activeNav === 'mcp' ? renderMcpPage(openDrawer) : null}
@@ -397,79 +398,6 @@ export function AdminHomePage() {
         selectedAgent={selectedAgent}
         onClose={() => setDrawerVisible(false)}
       />
-    </div>
-  )
-}
-
-function renderAgentsPage(
-  selectedAgent: (typeof AGENTS)[number],
-  setActiveAgent: (id: string) => void,
-  openDrawer: (mode: DrawerMode) => void,
-) {
-  return (
-    <div className="admin-layout-grid">
-      <section className="admin-card-grid">
-        {AGENTS.map((agent) => (
-          <Card
-            key={agent.id}
-            className={`admin-card agent-card ${selectedAgent.id === agent.id ? 'is-selected' : ''}`}
-            hoverable
-            onClick={() => setActiveAgent(agent.id)}
-          >
-            <div className="agent-card-head">
-              <span className={`resource-icon ${agent.iconTone}`}>
-                <IconRobot />
-              </span>
-              <div>
-                <h3>{agent.name}</h3>
-                <Tag color={agent.status === '已发布' ? 'green' : 'orange'}>{agent.status}</Tag>
-              </div>
-            </div>
-            <p>{agent.desc}</p>
-            <div className="ability-summary">
-              <span>{agent.models.length} 模型</span>
-              <span>{agent.skills.length} Skills</span>
-              <span>{agent.mcps.length} MCP</span>
-              <span>{agent.kbs.length} 知识库</span>
-            </div>
-            <div className="admin-card-footer">
-              <Tag bordered color={agent.callable ? 'arcoblue' : 'gray'}>
-                {agent.callable ? '允许主智能体调用' : '仅草稿配置'}
-              </Tag>
-              <Button type="text" size="small" onClick={() => openDrawer('agent')}>
-                配置能力
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </section>
-
-      <aside className="admin-detail-panel">
-        <div className="detail-panel-head">
-          <span className={`resource-icon ${selectedAgent.iconTone}`}>
-            <IconRobot />
-          </span>
-          <div>
-            <h3>{selectedAgent.name}</h3>
-            <p>{selectedAgent.route}</p>
-          </div>
-        </div>
-        <div className="binding-block">
-          <h4>执行绑定</h4>
-          <div className="binding-row">
-            <span>Dify / LangGraph</span>
-            <strong>{selectedAgent.id === 'matching' ? 'job_match_graph_v1' : `${selectedAgent.id}_agent_v1`}</strong>
-          </div>
-          <div className="binding-row">
-            <span>默认模型</span>
-            <strong>{selectedAgent.models[0]}</strong>
-          </div>
-        </div>
-        <AbilityChips title="模型范围" items={selectedAgent.models} />
-        <AbilityChips title="编排的 Skills" items={selectedAgent.skills} />
-        <AbilityChips title="授权 MCP 工具" items={selectedAgent.mcps} />
-        <AbilityChips title="专属知识库" items={selectedAgent.kbs} />
-      </aside>
     </div>
   )
 }
