@@ -266,9 +266,9 @@ export function AgentManagementPage() {
               </Form.Item>
             </Form>
           </Tabs.TabPane>
-          <Tabs.TabPane key="dify" title="Dify ??">
+          <Tabs.TabPane key="dify" title="Dify 配置">
             <Form form={form} layout="vertical">
-              <Form.Item label="?? Dify ???" field="use_dify" triggerPropName="checked">
+              <Form.Item label="启用 Dify 智能体" field="use_dify" triggerPropName="checked">
                 <Switch />
               </Form.Item>
               {(() => {
@@ -282,10 +282,10 @@ export function AgentManagementPage() {
                     <Input.Password placeholder="app-xxxxxxxxxxxxx" />
                   </Form.Item>
                   <Form.Item label="Dify App ID" field="dify_app_id">
-                    <Input placeholder="??????? Dify ??" />
+                    <Input placeholder="可选，用于标识 Dify 应用" />
                   </Form.Item>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                    <Button size="small" onClick={handleTestDify}>????</Button>
+                    <Button size="small" onClick={handleTestDify}>测试连接</Button>
                     {difyTestResult && (
                       <Tag size="small" color={difyTestResult.startsWith("OK") ? "green" : "red"}>
                         {difyTestResult}
@@ -293,15 +293,16 @@ export function AgentManagementPage() {
                     )}
                   </div>
                   <div style={{ padding: "10px 14px", background: "#f0f5ff", borderRadius: 6, fontSize: 12, color: "#4e5969", lineHeight: "18px", marginTop: 8 }}>
-                    <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>????</p>
-                    <p style={{ margin: 0 }}>1. ?????????? Dify chat-messages API</p>
-                    <p style={{ margin: 0 }}>2. ?????????????????</p>
-                    <p style={{ margin: 0, marginTop: 4, color: "#86909C" }}>????? Dify ????????? API ???</p>
+                    <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>开启后：</p>
+                    <p style={{ margin: 0 }}>1. 该智能体的对话将直接调用 Dify chat-messages API</p>
+                    <p style={{ margin: 0 }}>2. 自动注册为主智能体的可调用子智能体</p>
+                    <p style={{ margin: 0, marginTop: 4, color: "#165DFF", fontWeight: 500 }}>注意：启用 Dify 后无需选择模型和配置参数，Dify 应用本身即为完整的智能体。</p>
                   </div>
                 </>
               })()}
             </Form>
           </Tabs.TabPane>
+          {!form.getFieldValue?.("use_dify") && (
           <Tabs.TabPane key="model" title="模型与参数">
             <Form form={form} layout="vertical">
               <Form.Item label="绑定模型" field="model_id">
@@ -317,6 +318,7 @@ export function AgentManagementPage() {
               <Form.Item label="启用状态" field="enabled" triggerPropName="checked"><Switch /></Form.Item>
             </Form>
           </Tabs.TabPane>
+          )}
           <Tabs.TabPane key="test" title="测试对话" disabled={!edit}>
             <div style={{ display: 'flex', flexDirection: 'column', height: 500 }}>
               {edit?.prompt_variables && edit.prompt_variables.length > 0 && (
