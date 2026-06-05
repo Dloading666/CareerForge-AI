@@ -58,6 +58,15 @@ class PlannedToolCall:
     arguments: dict[str, Any]
 
 
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+# Capabilities that can serve OpenAI-compatible chat completions for the master
+# agent. The 模型广场 only tags models as "text" / "multimodal" (there is no
+# "chat" option in the admin form), so the student side must accept those — plus
+# "chat" for backward compatibility. Embedding / rerank models are excluded.
+CHAT_CAPABLE_CAPABILITIES = ("text", "multimodal", "chat")
+
+
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
 
@@ -308,7 +317,7 @@ def list_available_models(db: Session, identity: AuthIdentity) -> list[AgentMode
             ModelConfig.tenant_id == identity.tenant_id,
             ModelConfig.is_deleted.is_(False),
             ModelConfig.open_to_student.is_(True),
-            ModelConfig.capability == "chat",
+            ModelConfig.capability.in_(CHAT_CAPABLE_CAPABILITIES),
             ModelConfig.status == "active",
         )
         .order_by(ModelConfig.id.asc())
@@ -1049,7 +1058,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             and model.tenant_id == tenant_id
             and not model.is_deleted
             and model.open_to_student
-            and model.capability == "chat"
+            and model.capability in CHAT_CAPABLE_CAPABILITIES
             and model.status == "active"
         ):
             return model
@@ -1063,7 +1072,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             and model.tenant_id == tenant_id
             and not model.is_deleted
             and model.open_to_student
-            and model.capability == "chat"
+            and model.capability in CHAT_CAPABLE_CAPABILITIES
             and model.status == "active"
         ):
             return model
@@ -1073,7 +1082,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             ModelConfig.tenant_id == tenant_id,
             ModelConfig.is_deleted.is_(False),
             ModelConfig.open_to_student.is_(True),
-            ModelConfig.capability == "chat",
+            ModelConfig.capability.in_(CHAT_CAPABLE_CAPABILITIES),
             ModelConfig.status == "active",
         )
         .order_by(ModelConfig.id.asc())
