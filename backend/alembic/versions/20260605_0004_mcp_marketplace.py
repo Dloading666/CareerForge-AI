@@ -24,7 +24,7 @@ def upgrade():
         sa.Column("owner", sa.String(128), nullable=True),
         sa.Column("version", sa.String(32), nullable=False, server_default="v1.0.0"),
         sa.Column("status", sa.String(32), nullable=False, server_default="enabled"),
-        sa.Column("agent_ids_json", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("agent_ids_json", sa.Text(), nullable=False),  # MySQL: TEXT 不能有 DEFAULT，由 ORM default="[]" 兜底
         sa.Column("auto_disable_on_error", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("latency_ms", sa.Integer(), nullable=True),
         sa.Column("success_rate", sa.Integer(), nullable=True),
@@ -47,7 +47,7 @@ def upgrade():
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("risk", sa.String(32), nullable=False, server_default="低风险"),
-        sa.Column("input_schema_json", sa.Text(), nullable=False, server_default="{}"),
+        sa.Column("input_schema_json", sa.Text(), nullable=False),  # MySQL: TEXT 不能有 DEFAULT，由 ORM default="{}" 兜底
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
