@@ -1,4 +1,4 @@
-﻿export type ApiEnvelope<T> = { code: number; msg: string; data: T }
+export type ApiEnvelope<T> = { code: number; msg: string; data: T }
 
 export class ApiError extends Error {
   status: number

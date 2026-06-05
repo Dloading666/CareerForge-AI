@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.admin.agent_router import router as agent_router
 from app.admin.agent_service import seed_default_agents
@@ -24,6 +28,12 @@ from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student.router import router as student_router
+from app.student.event_router import router as event_router
+
+AVATAR_DIR = Path("/app/data/avatars")
+BANNER_DIR = Path("/app/data/banners")
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+BANNER_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
@@ -42,27 +52,19 @@ async def lifespan(_: FastAPI):
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-allowed_frontend_origins = list(
-    dict.fromkeys(
-        [
-            settings.frontend_origin,
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5174",
-            "http://127.0.0.1:5174",
-        ]
-    )
-)
+# Mount static files
+app.mount("/static/banners", StaticFiles(directory=str(BANNER_DIR)), name="banners")
+app.mount("/static/avatars", StaticFiles(directory=str(AVATAR_DIR)), name="avatars")
+
+allowed_frontend_origins = list(dict.fromkeys([
+    settings.frontend_origin, "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+]))
 allowed_origin_regex = r"^http://(localhost|127\.0\.0\.1):\d+$" if settings.is_development else None
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_frontend_origins,
-    allow_origin_regex=allowed_origin_regex,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=allowed_frontend_origins,
+    allow_origin_regex=allowed_origin_regex, allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"])
 
 os.makedirs("data/avatars", exist_ok=True)
 app.mount("/data", StaticFiles(directory="data"), name="data")
@@ -72,16 +74,13 @@ app.include_router(admin_router, prefix=settings.api_v1_prefix)
 app.include_router(agent_router, prefix=settings.api_v1_prefix)
 app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
+app.include_router(event_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
 def read_root():
-    return {
-        "name": settings.app_name,
-        "status": "ok",
-        "docs": "/docs",
-    }
+    return {"name": settings.app_name, "status": "ok", "docs": "/docs"}
 
 
 @app.get("/healthz")

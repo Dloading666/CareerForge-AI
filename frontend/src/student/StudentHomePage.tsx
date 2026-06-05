@@ -27,6 +27,7 @@ import remarkGfm from 'remark-gfm'
 
 import { ApiError, apiRequest } from '../shared/api'
 import { AgentPlaza } from './AgentPlaza'
+import { ProfilePage } from './ProfilePage'
 import { useAuth } from '../shared/auth'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -900,15 +901,7 @@ export function StudentHomePage() {
           </main>
         )}
 
-        {activeNav === 'profile' && (
-          <main className="page-content">
-            <section className="student-placeholder">
-              <IconUser />
-              <h3>个人中心</h3>
-              <p>你的求职档案、简历和记录将在这里汇总。</p>
-            </section>
-          </main>
-        )}
+        {activeNav === 'profile' && <ProfilePage />}
       </section>
     </div>
   )
