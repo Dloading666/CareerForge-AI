@@ -12,7 +12,7 @@ interface SystemConfigData {
 }
 
 const EMPTY_CONFIG: SystemConfigData = {
-  platform_name: "智培职联",
+  platform_name: "CareerForge",
   announcement: "",
   announcement_enabled: "false",
   maintenance_mode: "false",
@@ -93,7 +93,7 @@ export function SystemSettings() {
             <Input
               value={config.platform_name}
               onChange={(val) => setConfig((c) => ({ ...c, platform_name: val }))}
-              placeholder="智培职联"
+              placeholder="CareerForge"
             />
           </Form.Item>
 

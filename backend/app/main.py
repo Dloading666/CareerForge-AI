@@ -24,6 +24,8 @@ from app.auth.service import ensure_admin_bootstrap
 from app.core.config import get_settings
 from app.infra.db import Base, SessionLocal, engine
 from app.infra.redis_client import ping_redis
+from app.mcp import models as mcp_models  # noqa: F401
+from app.mcp.router import router as mcp_router
 from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
@@ -73,6 +75,7 @@ app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
 app.include_router(agent_router, prefix=settings.api_v1_prefix)
 app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
+app.include_router(mcp_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(event_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
