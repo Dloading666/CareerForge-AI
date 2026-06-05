@@ -1,4 +1,4 @@
-import { Button, Input, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
+import { Button, Dropdown, Input, Menu, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
@@ -297,6 +297,8 @@ function SessionHistoryPanel({
 export function StudentHomePage() {
   const { session, logout } = useAuth()
   const studentName = (session?.profile.name as string) || '同学'
+  const studentAvatar = (session?.profile.avatar_url as string) || ''
+  const [studentAvatarKey] = useState(0)
   const studentEmail = (session?.profile.email as string) || ''
 
   const [activeNav, setActiveNav] = useState<NavKey>('agent')
@@ -712,6 +714,40 @@ export function StudentHomePage() {
           <div className="topbar-title">
             <h2>就业助手</h2>
           </div>
+          <div className="topbar-actions">
+            <Dropdown
+              droplist={
+                <Menu>
+                  <Menu.Item key="name" disabled>
+                    <span style={{ fontWeight: 600 }}>{studentName}</span>
+                  </Menu.Item>
+                  <Menu.Item key="email" disabled>
+                    <span style={{ color: '#86909C', fontSize: 12 }}>{studentEmail}</span>
+                  </Menu.Item>
+                  <Menu.Item key="logout" onClick={logout}>
+                    <IconPoweroff style={{ marginRight: 8 }} />
+                    退出登录
+                  </Menu.Item>
+                </Menu>
+              }
+              trigger="click"
+              position="br"
+            >
+              <div style={{ cursor: 'pointer', width: 36, height: 36, borderRadius: '50%', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#edf2ff', color: '#0b45d9' }}>
+                {studentAvatar ? (
+                  <img
+                    key={studentAvatarKey}
+                    src={studentAvatar}
+                    alt="avatar"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                ) : (
+                  <IconUser />
+                )}
+              </div>
+            </Dropdown>
+          </div>
         </header>
 
         {activeNav === 'agent' && (
@@ -723,7 +759,7 @@ export function StudentHomePage() {
               {!bootingAgent && messages.length === 0 && (
                 <section className="agent-empty-state">
                   <div className="hero-icon">
-                    <IconRobot />
+                    <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
                   </div>
                   <h3>你好，{studentName}</h3>
                   <p>我可以调用 Skill、子智能体和工具，帮你完成求职准备。</p>

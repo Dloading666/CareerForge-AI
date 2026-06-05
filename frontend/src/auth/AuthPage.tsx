@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Card,
-  Divider,
   Input,
   Space,
   Tabs,
@@ -192,7 +191,6 @@ export function AuthPage() {
         <Card className="auth-card" bodyStyle={{ padding: 28 }}>
           <div className="auth-card-header">
             <h2>登录 / 注册</h2>
-            <p>先完成双端身份入口，后续能力在这个骨架上继续扩展。</p>
           </div>
 
           {feedback ? (
@@ -298,11 +296,6 @@ export function AuthPage() {
 
             <Tabs.TabPane key="admin" title="管理员">
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Alert
-                  type="warning"
-                  showIcon
-                  content="管理员账号当前不开放注册，首次启动会根据后端环境变量自动初始化。"
-                />
                 <Input
                   size="large"
                   prefix={<IconUser />}
@@ -324,8 +317,6 @@ export function AuthPage() {
             </Tabs.TabPane>
           </Tabs>
 
-          <Divider />
-          <div className="auth-form-footer">默认管理员：admin / 123456</div>
         </Card>
       </section>
     </div>

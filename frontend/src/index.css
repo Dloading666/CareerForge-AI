@@ -71,6 +71,8 @@ textarea {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
+  text-align: center;
 }
 
 .auth-brand::before,
@@ -99,6 +101,9 @@ textarea {
   position: relative;
   z-index: 1;
   max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .auth-brand-title {
@@ -351,8 +356,8 @@ textarea {
 }
 
 .hero-icon {
-  width: 72px;
-  height: 72px;
+  width: 96px;
+  height: 96px;
   margin: 0 auto 20px;
   border-radius: 24px;
   display: flex;
@@ -360,8 +365,13 @@ textarea {
   justify-content: center;
   color: #fff;
   font-size: 30px;
-  background: linear-gradient(135deg, var(--brand-blue) 0%, #2c73ff 100%);
-  box-shadow: 0 18px 48px rgba(22, 93, 255, 0.2);
+}
+.hero-icon .brand-logo {
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  background: none;
+  border-radius: 0;
 }
 
 .hero-panel h3 {
@@ -1606,7 +1616,6 @@ textarea {
   width: 148px;
   height: 148px;
   object-fit: contain;
-  display: block;
   margin-bottom: 18px;
   filter: drop-shadow(0 20px 36px rgba(8, 30, 92, 0.26));
 }

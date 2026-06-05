@@ -1,16 +1,21 @@
 import {
   Alert,
+  Avatar,
   Button,
   Card,
   Checkbox,
   Drawer,
+  Dropdown,
   Input,
+  Menu,
+  Message,
   Popconfirm,
   Select,
   Space,
   Switch,
   Tag,
   Tabs,
+  Upload,
 } from '@arco-design/web-react'
 import {
   IconApps,
@@ -524,6 +529,8 @@ function detailOwnerLabel(service: McpServiceRecord) {
 export function AdminHomePage() {
   const { session, logout } = useAuth()
   const displayName = (session?.profile.display_name as string) || '平台管理员'
+  const avatarUrl = (session?.profile.avatar_url as string) || ''
+  const [avatarKey, setAvatarKey] = useState(0)
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
   const [activeAgent, setActiveAgent] = useState(AGENTS[0].id)
@@ -968,10 +975,39 @@ export function AdminHomePage() {
           <div className="admin-topbar-actions">
             <Input className="admin-search" placeholder="Search..." allowClear />
             <Button icon={<IconNotification />} type="text" />
-            <Button icon={<IconSettings />} type="text" />
-            <div className="admin-avatar">
-              <IconUser />
-            </div>
+            <Button icon={<IconSettings />} type="text" onClick={() => setActiveNav("settings")} />
+            <Dropdown
+              droplist={
+                <Menu>
+                  <Menu.Item key="name" disabled>
+                    <span style={{ fontWeight: 600 }}>{displayName}</span>
+                  </Menu.Item>
+                  <Menu.Item key="email" disabled>
+                    <span style={{ color: '#86909C', fontSize: 12 }}>{email}</span>
+                  </Menu.Item>
+                  <Menu.Item key="logout" onClick={logout}>
+                    <IconPoweroff style={{ marginRight: 8 }} />
+                    退出登录
+                  </Menu.Item>
+                </Menu>
+              }
+              trigger="click"
+              position="br"
+            >
+              <div className="admin-avatar" style={{ cursor: 'pointer', overflow: 'hidden' }}>
+                {avatarUrl ? (
+                  <img
+                    key={avatarKey}
+                    src={avatarUrl}
+                    alt="avatar"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                ) : (
+                  <IconUser />
+                )}
+              </div>
+            </Dropdown>
           </div>
         </header>
 
@@ -1047,7 +1083,7 @@ export function AdminHomePage() {
               })
             : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
-          {activeNav === 'settings' ? renderSettingsPage(displayName, email, logout) : null}
+          {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout) : null}
         </main>
       </section>
 
@@ -1752,13 +1788,45 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderSettingsPage(displayName: string, email: string, logout: () => void) {
+function renderSettingsPage(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, logout: () => void) {
   return (
     <div className="settings-grid">
       <section className="form-surface">
         <div className="admin-section-title">
           <h3>账号信息</h3>
           <p>当前登录管理员信息。</p>
+        </div>
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <Avatar size={80} style={{ marginBottom: 12 }}>
+            {avatarUrl ? (
+              <img key={avatarKey} src={avatarUrl} alt="avatar" />
+            ) : (
+              <IconUser />
+            )}
+          </Avatar>
+          <div style={{ marginTop: 12 }}>
+            <Upload
+              showUploadList={false}
+              accept=".png,.jpg,.jpeg,.gif,.webp"
+              customRequest={async (option) => {
+                const formData = new FormData()
+                formData.append('file', option.file)
+                try {
+                  await apiRequest<{ avatar_url: string }>('/api/v1/auth/avatar', {
+                    method: 'POST',
+                    body: formData,
+                  })
+                  setAvatarKey(k => k + 1)
+                  Message.success('头像上传成功')
+                  setTimeout(() => window.location.reload(), 500)
+                } catch (err) {
+                  Message.error(err instanceof ApiError ? err.message : '上传失败')
+                }
+              }}
+            >
+              <Button size="small" type="outline">上传头像</Button>
+            </Upload>
+          </div>
         </div>
         <div className="setting-field">
           <span>当前账号</span>
