@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.admin.router import router as admin_router
 from app.admin import models as admin_models  # noqa: F401
+from app.admin import master_models as master_models  # noqa: F401
 from app.auth import models  # noqa: F401
 from app.auth.router import router as auth_router
 from app.auth.service import ensure_admin_bootstrap
@@ -15,6 +16,7 @@ from app.infra.db import Base, SessionLocal, engine
 from app.infra.redis_client import ping_redis
 from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
+from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student.router import router as student_router
 
 
@@ -75,4 +77,3 @@ def healthz():
         "status": "ok",
         "redis": "ok" if ping_redis() else "unavailable",
     }
-

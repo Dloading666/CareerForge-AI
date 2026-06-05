@@ -41,7 +41,12 @@ export function SystemSettings() {
     }
   }, [])
 
-  useEffect(() => { fetchConfig() }, [fetchConfig])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchConfig()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [fetchConfig])
 
   const handleSave = async () => {
     setSaving(true)

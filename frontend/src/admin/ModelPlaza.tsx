@@ -26,7 +26,12 @@ export function ModelPlaza() {
   const fetchModels = useCallback(async () => {
     try { const r = await apiRequest<{ list: ModelItem[] }>('/api/v1/admin/models?size=100'); setModels(r.list) } catch { showNotify('error', '加载失败') }
   }, [])
-  useEffect(() => { fetchModels() }, [fetchModels])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchModels()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [fetchModels])
 
   const openForm = (model?: ModelItem) => {
     setEditingModel(model ?? null)
