@@ -4,7 +4,7 @@ import {
   Checkbox,
   Drawer,
   Input,
-  Popconfirm,
+  Popconfirm, Popover,
   Select,
   Space,
   Switch,
@@ -270,6 +270,18 @@ export function AdminHomePage() {
   const displayName = (session?.profile.display_name as string) || '平台管理员'
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const loadAvatar = async () => {
+      try {
+        const data = await apiRequest<{ profile: { avatar_url: string | null } }>("/api/v1/auth/me")
+        setAvatarUrl(data.profile.avatar_url)
+      } catch {}
+    }
+    loadAvatar()
+  }, [])
+
   const [activeAgent, setActiveAgent] = useState(AGENTS[0].id)
   const [skillFilter, setSkillFilter] = useState('all')
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('agent')
@@ -334,10 +346,26 @@ export function AdminHomePage() {
           <div className="admin-topbar-actions">
             <Input className="admin-search" placeholder="Search..." allowClear />
             <Button icon={<IconNotification />} type="text" />
-            <Button icon={<IconSettings />} type="text" />
-            <div className="admin-avatar">
-              <IconUser />
-            </div>
+            <Button icon={<IconSettings />} type="text" onClick={() => setActiveNav('settings')} />
+            <Popover
+              trigger="click"
+              position="br"
+              content={
+                <div style={{ padding: '8px 0', minWidth: 160 }}>
+                  <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-2)', marginBottom: 8 }}>
+                    <strong style={{ fontSize: 14 }}>{displayName}</strong>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-3)', marginTop: 2 }}>{email || '未绑定邮箱'}</div>
+                  </div>
+                  <Button type="text" status="danger" icon={<IconPoweroff />} onClick={logout} style={{ width: '100%', justifyContent: 'flex-start', padding: '8px 16px' }}>
+                    退出登录
+                  </Button>
+                </div>
+              }
+            >
+              <div className="admin-avatar" style={{ cursor: 'pointer' }}>
+                {avatarUrl ? <img src={avatarUrl} alt="avatar" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} /> : <IconUser />}
+              </div>
+            </Popover>
           </div>
         </header>
 
@@ -359,7 +387,7 @@ export function AdminHomePage() {
           {activeNav === 'mcp' ? renderMcpPage(openDrawer) : null}
           {activeNav === 'skills' ? renderSkillsPage(skillFilter, setSkillFilter, filteredSkills, openDrawer) : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
-          {activeNav === 'settings' ? renderSettingsPage(displayName, email, logout) : null}
+          {activeNav === 'settings' ? renderSettingsPage(displayName, email, logout, avatarUrl, setAvatarUrl) : null}
         </main>
       </section>
 
@@ -634,43 +662,54 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderSettingsPage(displayName: string, email: string, logout: () => void) {
+function renderSettingsPage(displayName: string, email: string, logout: () => void, avatarUrl: string | null, setAvatarUrl: (url: string | null) => void) {
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const r = await apiRequest<{ avatar_url: string }>('/api/v1/auth/avatar', {
+        method: 'POST',
+        body: formData,
+      })
+      setAvatarUrl(r.avatar_url)
+      // Also persist to localStorage session
+      try {
+        const raw = localStorage.getItem('zhipei-auth-session')
+        if (raw) {
+          const session = JSON.parse(raw)
+          session.profile = { ...session.profile, avatar_url: r.avatar_url }
+          localStorage.setItem('zhipei-auth-session', JSON.stringify(session))
+        }
+      } catch {}
+    } catch {}
+    e.target.value = ''
+  }
+
   return (
     <div className="settings-grid">
-      <section className="form-surface">
-        <div className="admin-section-title">
-          <h3>账号信息</h3>
-          <p>当前登录管理员信息。</p>
-        </div>
-        <div className="setting-field">
-          <span>当前账号</span>
-          <strong>{displayName}</strong>
-        </div>
-        <div className="setting-field">
-          <span>邮箱</span>
-          <strong>{email || '未绑定'}</strong>
-        </div>
-      </section>
-      <section className="form-surface">
-        <div className="admin-section-title">
-          <h3>运行偏好</h3>
-          <p>保留给权限、审计、计费与安全策略。</p>
-        </div>
-        <div className="switch-list">
-          <Switch defaultChecked />
-          <span>启用管理端操作审计</span>
-        </div>
-        <div className="switch-list">
-          <Switch defaultChecked />
-          <span>能力资源异常时通知管理员</span>
+      <SystemSettings />
+      <Card className="form-surface" title={<><IconSafe style={{ marginRight: 8 }} />账号信息</>}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+          <div style={{ position: 'relative' }}>
+            {avatarUrl ? <img src={avatarUrl} alt="avatar" style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--color-fill-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconUser style={{ fontSize: 28, color: 'var(--color-text-3)' }} /></div>}
+            <label style={{ position: 'absolute', bottom: 0, right: 0, width: 24, height: 24, borderRadius: '50%', background: 'var(--color-primary-light-1)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid var(--color-bg-2)' }}>
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarUpload} />
+              <span style={{ fontSize: 12, color: 'var(--color-primary-6)', lineHeight: 1 }}>+</span>
+            </label>
+          </div>
+          <div>
+            <strong style={{ fontSize: 16 }}>{displayName}</strong>
+            <div style={{ fontSize: 12, color: 'var(--color-text-3)', marginTop: 2 }}>{email || "未绑定"}</div>
+          </div>
         </div>
         <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-          <Button type="outline" status="danger" icon={<IconPoweroff />}>
+          <Button type="outline" status="danger" icon={<IconPoweroff />} style={{ marginTop: 12 }}>
             退出登录
           </Button>
         </Popconfirm>
-      </section>
-      <SystemSettings />
+      </Card>
     </div>
   )
 }

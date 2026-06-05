@@ -32,6 +32,7 @@ class AdminUser(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
 
 class StudentUser(TimestampMixin, Base):

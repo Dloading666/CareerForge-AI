@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, File, Header, UploadFile
+import os, uuid, shutil
 from sqlalchemy.orm import Session
 
 from app.auth.schemas import (
@@ -79,6 +80,29 @@ def logout(payload: LogoutRequest, db: Session = Depends(get_db)):
     return ok({})
 
 
+@router.patch("/me")
+def update_my_profile(payload: dict, db: Session = Depends(get_db), current=Depends(get_current_user)):
+    identity, user = current
+    for key in ("display_name",):
+        if key in payload and payload[key]:
+            setattr(user, key, payload[key])
+    db.commit(); db.refresh(user)
+    return ok({"msg": "ok"})
+
+@router.post("/avatar")
+async def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db), current=Depends(get_current_user)):
+    identity, user = current
+    ext = os.path.splitext(file.filename or ".png")[1] or ".png"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    upload_dir = os.path.join("data", "avatars")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    with open(filepath, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    user.avatar_url = f"/data/avatars/{filename}"
+    db.commit(); db.refresh(user)
+    return ok({"avatar_url": user.avatar_url})
+
 @router.get("/me")
 def current_me(current=Depends(get_current_user)):
     identity, user = current
@@ -93,6 +117,7 @@ def current_me(current=Depends(get_current_user)):
             "college": getattr(user, "college", None),
             "major": getattr(user, "major", None),
             "grade": getattr(user, "grade", None),
+            "avatar_url": getattr(user, "avatar_url", None),
         },
     }
     return ok(profile)

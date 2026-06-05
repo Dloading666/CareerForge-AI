@@ -1,5 +1,5 @@
-﻿import { Alert, Button, Form, Input, Space, Switch } from "@arco-design/web-react"
-import { IconSave } from "@arco-design/web-react/icon"
+import { Alert, Button, Card, Form, Input, Space, Switch } from "@arco-design/web-react"
+import { IconSave, IconSettings } from "@arco-design/web-react/icon"
 import { useCallback, useEffect, useState } from "react"
 import { apiRequest, ApiError } from "../shared/api"
 
@@ -66,7 +66,7 @@ export function SystemSettings() {
   }
 
   return (
-    <section className="form-surface">
+    <Card className="form-surface" title={<><IconSettings style={{ marginRight: 8 }} />系统配置</>}>
       <div className="admin-section-title">
         <h3>系统配置</h3>
         <p>公告、维护模式、平台名称</p>
@@ -145,6 +145,6 @@ export function SystemSettings() {
           </Form.Item>
         </Form>
       )}
-    </section>
+    </Card>
   )
 }

@@ -1,4 +1,4 @@
-﻿"""模型广场 + 系统设置 — SQLAlchemy 模型"""
+"""模型广场 + 系统设置 — SQLAlchemy 模型"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,7 +22,7 @@ class ModelConfig(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     deploy_type: Mapped[str] = mapped_column(String(32), nullable=False, default="cloud")
-    capability: Mapped[str] = mapped_column(String(32), nullable=False, default="chat")
+    capability: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
     protocols: Mapped[str] = mapped_column(String(256), nullable=False, default="openai")
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
     api_key_cipher: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)

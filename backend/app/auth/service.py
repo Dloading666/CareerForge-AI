@@ -62,6 +62,7 @@ def build_profile(user, role: str):
             "profile": {
                 "display_name": user.display_name or user.username or user.email,
                 "email": user.email,
+                "avatar_url": getattr(user, "avatar_url", None),
             },
         }
 
