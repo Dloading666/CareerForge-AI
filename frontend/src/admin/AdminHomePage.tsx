@@ -290,55 +290,6 @@ export function AdminHomePage() {
     () => (skillFilter === 'all' ? SKILLS : SKILLS.filter((skill) => skill.category === skillFilter)),
     [skillFilter],
   )
-  const skillNameOptions = useMemo(
-    () =>
-      skills.length > 0
-        ? skills.map((skill) => skill.name)
-        : Array.from(new Set(AGENTS.flatMap((agent) => agent.skills))),
-    [skills],
-  )
-  const filteredMcps = useMemo(() => {
-    const keyword = mcpSearch.trim().toLowerCase()
-    return MCP_SERVICES.filter((service) => {
-      const matchesKeyword =
-        !keyword ||
-        [service.name, service.desc, service.endpoint, service.owner, service.category, ...service.tools.map((tool) => tool.name)]
-          .join(' ')
-          .toLowerCase()
-          .includes(keyword)
-      const matchesStatus = mcpStatusFilter === 'all' || service.status === mcpStatusFilter
-      const matchesCategory = mcpCategoryFilter === 'all' || service.category === mcpCategoryFilter
-      return matchesKeyword && matchesStatus && matchesCategory
-    })
-  }, [mcpCategoryFilter, mcpSearch, mcpStatusFilter])
-
-  useEffect(() => {
-    if (!session?.access) {
-      return
-    }
-
-    let alive = true
-    const timer = window.setTimeout(() => {
-      setAgentOptionsLoading(true)
-      void fetchAgentOptions(session.access)
-        .then((options) => {
-          if (alive) {
-            setAgentOptions(options)
-          }
-        })
-        .finally(() => {
-          if (alive) {
-            setAgentOptionsLoading(false)
-          }
-        })
-    }, 0)
-
-    return () => {
-      alive = false
-      window.clearTimeout(timer)
-    }
-  }, [session?.access])
-
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
     { key: 'agents', icon: <IconRobot />, label: '智能体管理' },
     { key: 'master', icon: <IconDashboard />, label: '主智能体配置' },
@@ -425,17 +376,6 @@ export function AdminHomePage() {
               {meta.action}
             </Button>
           </div>
-
-          {adminFeedback ? (
-            <Alert
-              className="admin-feedback"
-              type={adminFeedback.type}
-              content={adminFeedback.content}
-              closable
-              showIcon
-              onClose={() => setAdminFeedback(null)}
-            />
-          ) : null}
 
           {activeNav === 'agents' ? <AgentManagementPage /> : null}
           {activeNav === 'master' ? <MasterAgentConfig /> : null}

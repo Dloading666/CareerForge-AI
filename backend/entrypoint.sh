@@ -16,7 +16,7 @@ elif "student_agent_attachment" in tables:
 elif {"student_agent_session", "student_agent_message", "student_agent_activity"}.issubset(tables):
     print("20260605_0005")
 elif {"master_agent_config", "master_route_rule"}.issubset(tables):
-    print("20260604_0004")
+    print("20260605_0007")
 elif "system_config" in tables:
     print("20260604_0003")
 elif "model_config" in tables:
