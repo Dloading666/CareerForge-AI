@@ -3,6 +3,11 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.admin.master_service import (
+    MasterConfigUpdate, RouteRuleCreate, RouteRuleUpdate,
+    create_route, delete_route, get_or_create_master_config,
+    list_routes, update_master_config, update_route,
+)
 from app.admin.model_service import (
     create_model, delete_model, get_all_config, get_model_detail,
     list_models, test_batch, test_model_connection, toggle_open, update_config, update_model,
@@ -56,6 +61,33 @@ async def api_test_batch(db: Session = Depends(get_db), _current=Depends(require
 @router.patch("/models/{model_id}/open")
 def api_toggle_open(model_id: int, payload: ModelToggleOpen, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     return ok(toggle_open(db, model_id, payload.open))
+
+
+# ── 主智能体配置 ──────────────────────────────────
+
+@router.get("/master/config")
+def api_get_master_config(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(get_or_create_master_config(db))
+
+@router.put("/master/config")
+def api_update_master_config(payload: MasterConfigUpdate, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(update_master_config(db, payload))
+
+@router.get("/master/routes")
+def api_list_routes(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(list_routes(db))
+
+@router.post("/master/routes", status_code=201)
+def api_create_route(payload: RouteRuleCreate, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(create_route(db, payload))
+
+@router.put("/master/routes/{route_id}")
+def api_update_route(route_id: int, payload: RouteRuleUpdate, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(update_route(db, route_id, payload))
+
+@router.delete("/master/routes/{route_id}")
+def api_delete_route(route_id: int, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    delete_route(db, route_id); return ok(msg="已删除")
 
 
 # ── 系统设置 ─────────────────────────────────────

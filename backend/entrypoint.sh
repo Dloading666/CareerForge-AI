@@ -1,6 +1,38 @@
 #!/bin/sh
 set -e
 
+STAMP_REVISION="$(python - <<'PY'
+from sqlalchemy import create_engine, inspect
+
+from app.core.config import get_settings
+
+engine = create_engine(get_settings().database_url)
+tables = set(inspect(engine).get_table_names())
+
+if "alembic_version" in tables or not tables:
+    print("")
+elif "student_agent_attachment" in tables:
+    print("20260605_0006")
+elif {"student_agent_session", "student_agent_message", "student_agent_activity"}.issubset(tables):
+    print("20260605_0005")
+elif {"master_agent_config", "master_route_rule"}.issubset(tables):
+    print("20260604_0004")
+elif "system_config" in tables:
+    print("20260604_0003")
+elif "model_config" in tables:
+    print("20260604_0002")
+elif {"admin_user", "student_user"}.issubset(tables):
+    print("20260603_0001")
+else:
+    print("")
+PY
+)"
+
+if [ -n "$STAMP_REVISION" ]; then
+  echo "Existing database without alembic_version; stamping $STAMP_REVISION..."
+  alembic stamp "$STAMP_REVISION"
+fi
+
 echo "Running database migrations..."
 alembic upgrade head
 

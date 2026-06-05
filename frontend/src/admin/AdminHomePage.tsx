@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
+import { MasterAgentConfig } from './MasterAgentConfig'
 import { ModelPlaza } from './ModelPlaza'
 import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
@@ -216,11 +217,6 @@ const KNOWLEDGE_BASES = [
   },
 ]
 
-const ROUTES = [
-  { intent: '模拟面试 / 面试复盘', agent: 'AI 面试官', memory: '独立线程，仅回传结果摘要' },
-  { intent: '岗位匹配 / JD 分析', agent: '岗位匹配', memory: '独立线程，仅回传匹配报告' },
-  { intent: '简历建议 / 项目经历', agent: '简历优化', memory: '草稿期，暂不对学生开放' },
-]
 
 const pageMeta: Record<NavKey, { title: string; desc: string; action: string; drawer: DrawerMode }> = {
   agents: {
@@ -294,6 +290,54 @@ export function AdminHomePage() {
     () => (skillFilter === 'all' ? SKILLS : SKILLS.filter((skill) => skill.category === skillFilter)),
     [skillFilter],
   )
+  const skillNameOptions = useMemo(
+    () =>
+      skills.length > 0
+        ? skills.map((skill) => skill.name)
+        : Array.from(new Set(AGENTS.flatMap((agent) => agent.skills))),
+    [skills],
+  )
+  const filteredMcps = useMemo(() => {
+    const keyword = mcpSearch.trim().toLowerCase()
+    return MCP_SERVICES.filter((service) => {
+      const matchesKeyword =
+        !keyword ||
+        [service.name, service.desc, service.endpoint, service.owner, service.category, ...service.tools.map((tool) => tool.name)]
+          .join(' ')
+          .toLowerCase()
+          .includes(keyword)
+      const matchesStatus = mcpStatusFilter === 'all' || service.status === mcpStatusFilter
+      const matchesCategory = mcpCategoryFilter === 'all' || service.category === mcpCategoryFilter
+      return matchesKeyword && matchesStatus && matchesCategory
+    })
+  }, [mcpCategoryFilter, mcpSearch, mcpStatusFilter])
+
+  useEffect(() => {
+    if (!session?.access) {
+      return
+    }
+
+    let alive = true
+    const timer = window.setTimeout(() => {
+      setAgentOptionsLoading(true)
+      void fetchAgentOptions(session.access)
+        .then((options) => {
+          if (alive) {
+            setAgentOptions(options)
+          }
+        })
+        .finally(() => {
+          if (alive) {
+            setAgentOptionsLoading(false)
+          }
+        })
+    }, 0)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [session?.access])
 
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
     { key: 'agents', icon: <IconRobot />, label: '智能体管理' },
@@ -382,8 +426,19 @@ export function AdminHomePage() {
             </Button>
           </div>
 
+          {adminFeedback ? (
+            <Alert
+              className="admin-feedback"
+              type={adminFeedback.type}
+              content={adminFeedback.content}
+              closable
+              showIcon
+              onClose={() => setAdminFeedback(null)}
+            />
+          ) : null}
+
           {activeNav === 'agents' ? <AgentManagementPage /> : null}
-          {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
+          {activeNav === 'master' ? <MasterAgentConfig /> : null}
           {activeNav === 'models' ? <ModelPlaza /> : null}
           {activeNav === 'mcp' ? renderMcpPage(openDrawer) : null}
           {activeNav === 'skills' ? renderSkillsPage(skillFilter, setSkillFilter, filteredSkills, openDrawer) : null}
@@ -402,66 +457,7 @@ export function AdminHomePage() {
   )
 }
 
-function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
-  return (
-    <div className="master-grid">
-      <section className="master-config-panel">
-        <div className="admin-section-title">
-          <h3>全局编排者</h3>
-          <p>主智能体默认拥有全量能力，但可以在这里收窄访问范围。</p>
-        </div>
-        <div className="form-surface">
-          <label>
-            默认模型
-            <Select defaultValue="DeepSeek V3">
-              {MODELS.filter((model) => model.enabled).map((model) => (
-                <Select.Option key={model.name} value={model.name}>
-                  {model.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            系统提示词
-            <Input.TextArea
-              defaultValue="你是智培职联就业总助手，负责路由子智能体、调用工具和知识库，并以清晰、可执行的建议帮助学生完成求职准备。"
-              autoSize={{ minRows: 4, maxRows: 6 }}
-            />
-          </label>
-          <div className="switch-list">
-            <Switch defaultChecked />
-            <span>模型切换后同步传递给被调用的子智能体</span>
-          </div>
-          <div className="switch-list">
-            <Switch defaultChecked />
-            <span>子智能体记忆独立隔离，仅结果摘要回流主对话</span>
-          </div>
-          <Button type="primary" onClick={() => openDrawer('master')}>
-            保存编排配置
-          </Button>
-        </div>
-      </section>
 
-      <section className="route-panel">
-        <div className="admin-section-title">
-          <h3>路由策略</h3>
-          <p>当学生意图命中时，主智能体将派发给对应子智能体。</p>
-        </div>
-        <div className="route-list">
-          {ROUTES.map((route) => (
-            <div key={route.intent} className="route-row">
-              <div>
-                <strong>{route.intent}</strong>
-                <p>{route.memory}</p>
-              </div>
-              <Tag color={route.agent === '简历优化' ? 'orange' : 'arcoblue'}>{route.agent}</Tag>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  )
-}
 
 function renderMcpPage(openDrawer: (mode: DrawerMode) => void) {
   return (

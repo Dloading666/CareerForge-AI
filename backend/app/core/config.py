@@ -48,6 +48,8 @@ class Settings(BaseSettings):
 
     skill_storage_dir: str = Field(default="./data/skills", alias="SKILL_STORAGE_DIR")
     skill_max_content_bytes: int = Field(default=200_000, alias="SKILL_MAX_CONTENT_BYTES")
+    agent_upload_storage_dir: str = Field(default="./data/agent_uploads", alias="AGENT_UPLOAD_STORAGE_DIR")
+    agent_upload_max_bytes: int = Field(default=20_000_000, alias="AGENT_UPLOAD_MAX_BYTES")
 
     @property
     def is_development(self) -> bool:
