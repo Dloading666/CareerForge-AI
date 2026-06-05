@@ -134,6 +134,81 @@ async def test_batch(db: Session) -> list[ModelTestResponse]:
     return results
 
 
+# ── 种子数据 ────────────────────────────────────
+
+DEFAULT_MODELS = [
+    {
+        "display_name": "DeepSeek V4 Pro",
+        "provider": "DeepSeek",
+        "deploy_type": "cloud",
+        "capability": "chat",
+        "protocols": "openai",
+        "base_url": "https://api.deepseek.com/v1",
+        "model_identifier": "deepseek-v4-pro",
+        "context_length": 131072,
+        "default_temp": 0.7,
+        "max_output": 32768,
+        "timeout_sec": 120,
+        "open_to_student": False,
+    },
+    {
+        "display_name": "DeepSeek V4 Flash",
+        "provider": "DeepSeek",
+        "deploy_type": "cloud",
+        "capability": "chat",
+        "protocols": "openai",
+        "base_url": "https://api.deepseek.com/v1",
+        "model_identifier": "deepseek-v4-flash",
+        "context_length": 131072,
+        "default_temp": 0.7,
+        "max_output": 32768,
+        "timeout_sec": 120,
+        "open_to_student": False,
+    },
+    {
+        "display_name": "DeepSeek Chat (V3)",
+        "provider": "DeepSeek",
+        "deploy_type": "cloud",
+        "capability": "chat",
+        "protocols": "openai",
+        "base_url": "https://api.deepseek.com/v1",
+        "model_identifier": "deepseek-chat",
+        "context_length": 65536,
+        "default_temp": 0.7,
+        "max_output": 8192,
+        "timeout_sec": 120,
+        "open_to_student": True,
+    },
+]
+
+
+def seed_default_models(db: Session) -> None:
+    """首次启动时预置模型广场默认模型（仅当 model_config 表为空时执行）"""
+    existing = db.scalar(select(func.count()).select_from(ModelConfig).where(ModelConfig.is_deleted == False))
+    if existing and existing > 0:
+        return
+
+    for item in DEFAULT_MODELS:
+        model = ModelConfig(
+            display_name=item["display_name"],
+            provider=item["provider"],
+            deploy_type=item["deploy_type"],
+            capability=item["capability"],
+            protocols=item["protocols"],
+            base_url=item["base_url"],
+            api_key_cipher=None,  # API Key 需管理员手动配置
+            model_identifier=item["model_identifier"],
+            context_length=item["context_length"],
+            default_temp=item["default_temp"],
+            max_output=item["max_output"],
+            timeout_sec=item["timeout_sec"],
+            open_to_student=item["open_to_student"],
+            status="active",
+        )
+        db.add(model)
+    db.commit()
+
+
 # ── 系统配置 ────────────────────────────────────
 
 DEFAULT_CONFIG: dict[str, str] = {

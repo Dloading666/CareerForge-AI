@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infra.db import Base
 
@@ -55,3 +55,29 @@ class SystemConfig(Base):
     config_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class Agent(TimestampMixin, Base):
+    __tablename__ = "agent"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    icon_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default="smart_toy")
+    icon_color_from: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="#7C4DFF")
+    icon_color_to: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="#2962FF")
+    model_config_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model_config.id"), nullable=True)
+    model_config: Mapped[Optional[ModelConfig]] = relationship("ModelConfig", lazy="joined")
+    welcome_message: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    suggested_questions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_variables: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096)
+    top_p: Mapped[float] = mapped_column(Float, nullable=False, default=0.9)
+    frequency_penalty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    presence_penalty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    memory_window: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -5,8 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin.agent_router import router as agent_router
+from app.admin.agent_service import seed_default_agents
+from app.admin.model_service import seed_default_models
 from app.admin.router import router as admin_router
 from app.admin import models as admin_models  # noqa: F401
+from app.agent.router import router as public_agent_router
 from app.auth import models  # noqa: F401
 from app.auth.router import router as auth_router
 from app.auth.service import ensure_admin_bootstrap
@@ -24,6 +28,8 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)
+        seed_default_models(db)   # 先种子模型（智能体依赖模型）
+        seed_default_agents(db)
     finally:
         db.close()
     yield
@@ -56,6 +62,8 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
+app.include_router(agent_router, prefix=settings.api_v1_prefix)
+app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 
@@ -75,4 +83,3 @@ def healthz():
         "status": "ok",
         "redis": "ok" if ping_redis() else "unavailable",
     }
-
