@@ -8,8 +8,9 @@ import { apiRequest, ApiError } from '../shared/api'
 
 interface ModelItem { id: number; display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key_cipher: string | null; model_identifier: string; context_length: number | null; default_temp: number | null; max_output: number | null; timeout_sec: number | null; open_to_student: boolean; status: string }
 interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string | string[]; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
-const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'chat', protocols: ['openai'], base_url: '', api_key: '', model_identifier: '', open_to_student: false }
+const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: ['openai'], base_url: '', api_key: '', model_identifier: '', open_to_student: false }
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
+const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' } }
 
 export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
@@ -84,7 +85,7 @@ export function ModelPlaza() {
       <div className="admin-card-grid">
         {models.map(m => { const lat = latencyMap[m.id]; const dl = DEPLOY_LABELS[m.deploy_type] ?? { text: m.deploy_type, color: 'gray' }; return (
           <Card key={m.id} className="admin-card model-card" hoverable>
-            <div className="model-card-top"><Tag color={dl.color}>{dl.text}</Tag></div>
+            <div className="model-card-top"><Space size={6}><Tag color={dl.color}>{dl.text}</Tag>{(() => { const cl = CAPABILITY_LABELS[m.capability]; return cl ? <Tag color={cl.color}>{cl.text}</Tag> : null })()}</Space></div>
             <h3>{m.display_name}</h3>
             <div className="meta-list">
               <span>模型：{m.model_identifier}</span>
@@ -110,7 +111,7 @@ export function ModelPlaza() {
           <Form.Item label="展示名称" required><Input value={form.display_name} onChange={v => setForm(p => ({...p, display_name: v}))} placeholder="如 DeepSeek 对话-生产" /></Form.Item>
           <Form.Item label="供应商" required><Select value={form.provider} onChange={v => setForm(p => ({...p, provider: v}))} placeholder="选择供应商" allowCreate>{['OpenAI','DeepSeek','Anthropic','通义千问','智谱','月之暗面','Azure','Ollama'].map(v=><Select.Option key={v} value={v}>{v}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
-          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="chat">对话</Select.Option><Select.Option value="embedding">嵌入</Select.Option><Select.Option value="vision">视觉</Select.Option><Select.Option value="rerank">重排</Select.Option></Select></Form.Item>
+          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option></Select></Form.Item>
           <Form.Item label="协议"><Select mode="multiple" value={Array.isArray(form.protocols) ? form.protocols : form.protocols.split(',').filter(Boolean)} onChange={v => setForm(p => ({...p, protocols: v}))}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="Base URL" required><Input value={form.base_url} onChange={v => setForm(p => ({...p, base_url: v}))} placeholder="https://api.deepseek.com/v1" /></Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
