@@ -1,4 +1,4 @@
-﻿"""OpenAI-compatible LLM client"""
+"""OpenAI-compatible LLM client"""
 import httpx
 from app.admin.model_service import decrypt_api_key
 

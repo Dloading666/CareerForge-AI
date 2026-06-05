@@ -1,4 +1,4 @@
-﻿"""Agent API (admin)"""
+"""Agent API (admin)"""
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -11,16 +11,15 @@ from app.infra.db import get_db
 
 router = APIRouter(prefix="/admin/agents", tags=["admin-agents"])
 
-# ── 已知模型名称建议映射 ──────────────────────────
+# Known model name suggestions
 _MODEL_SUGGESTIONS = {
-    "deepseek-v4": "deepseek-v4-pro 或 deepseek-v4-flash",
+    "deepseek-v4": "deepseek-v4-pro or deepseek-v4-flash",
 }
 
 def _enhance_error(model_identifier: str, original_detail: str) -> str:
-    """为已知不支持的模型名称附加修复建议"""
     suggestion = _MODEL_SUGGESTIONS.get(model_identifier)
     if suggestion:
-        return f"{original_detail}。提示：请将模型名称 \"{model_identifier}\" 更新为 \"{suggestion}\"（在管理后台 > 模型广场 中修改）"
+        return f'{original_detail}. Hint: please update model name from [{model_identifier}] to [{suggestion}] in Admin > Model Plaza'
     return original_detail
 
 
@@ -43,7 +42,7 @@ def api_update_agent(agent_id: int, payload: AgentUpdate, db: Session = Depends(
 
 @router.delete("/{agent_id}")
 def api_delete_agent(agent_id: int, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
-    delete_agent(db, agent_id); return ok(msg="已删除")
+    delete_agent(db, agent_id); return ok(msg="Deleted")
 
 @router.patch("/{agent_id}/toggle")
 def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
@@ -53,9 +52,9 @@ def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     agent = get_agent(db, agent_id)
     if not agent.model_config_id or not agent.model_config:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该智能体尚未绑定模型")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This agent has no model bound")
     if not agent.model_config.api_key_cipher:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"模型「{agent.model_config.display_name}」未配置 API Key")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Model [{agent.model_config.display_name}] has no API Key configured")
     try:
         result = chat_completion(agent.model_config, system_prompt=agent.system_prompt, variables=payload.variables,
             memory=[], user_message=payload.message, temperature=agent.temperature, max_tokens=agent.max_tokens,
