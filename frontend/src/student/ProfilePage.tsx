@@ -1,9 +1,10 @@
 import { Form, Input, InputNumber, Message, Modal, Radio, Typography } from '@arco-design/web-react'
-import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook } from '@arco-design/web-react/icon'
+import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
+import { ResumeGallery } from './ResumeGallery'
 
 type Profile = {
   id: number; account: string; email: string; name: string | null
@@ -47,6 +48,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [uploading, setUploading] = useState(false)
   const [uploadingBanner, setUploadingBanner] = useState(false)
   const [calendarView, setCalendarView] = useState(false)
+  const [resumeView, setResumeView] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
@@ -96,6 +98,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   }
 
   if (loading) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',minHeight:300,color:'var(--text-subtle)'}}>加载中...</div>
+  if (resumeView) return <ResumeGallery onBack={() => setResumeView(false)} />
   if (calendarView) return <CalendarPage onBack={() => setCalendarView(false)} />
 
   const avatarUrl = profile?.avatar_url || ''
@@ -103,8 +106,11 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const subtitle = [profile?.gender && genderLabel[profile.gender], profile?.age && profile.age+'岁', profile?.college].filter(Boolean).join(' · ') || '完善资料，展示更好的自己'
 
   return (
-    <div style={{ width: '100%', padding: '0 28px 40px' }}>
-      <div style={{ margin: '20px -28px 24px', padding: '40px 36px 32px', borderRadius: 0, background: profile?.banner_url ? `url(${profile.banner_url}) top center/cover no-repeat` : 'linear-gradient(135deg, #165dff 0%, #7b61ff 50%, #a855f7 100%)', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ width: '100%', minHeight: '100vh', position: 'relative' }}>
+      <div style={{ position: 'absolute', inset: 0, background: profile?.banner_url ? `url(${profile.banner_url}) center/cover no-repeat` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', zIndex: 0 }} />
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(255,255,255,0.95) 70%, #fff 100%)', zIndex: 1 }} />
+      <div style={{ position: 'relative', zIndex: 2, padding: '0 28px 40px' }} >
+      <div style={{ margin: '20px -28px 24px', padding: '40px 36px 32px', borderRadius: 0, position: 'relative', overflow: 'hidden' }}>
         {!profile?.banner_url && (<><div style={{position:'absolute',top:-50,right:-30,width:180,height:180,borderRadius:'50%',background:'rgba(255,255,255,0.06)'}}/><div style={{position:'absolute',bottom:-40,left:'40%',width:120,height:120,borderRadius:'50%',background:'rgba(255,255,255,0.04)'}}/></>)}
         <div onClick={() => bannerInputRef.current?.click()} style={{ position:'absolute',top:14,right:14,display:'flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:8,background:'rgba(0,0,0,0.25)',color:'#fff',fontSize:13,cursor:'pointer',backdropFilter:'blur(4px)',transition:'background 0.2s' }}
           onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.4)' }} onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.25)' }}>
@@ -141,6 +147,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           desc={[profile?.name,profile?.gender&&genderLabel[profile.gender],profile?.age&&profile.age+'岁',profile?.college].filter(Boolean).join(' · ')||'完善你的个人信息'} accentColor="#165dff" onClick={openEdit}/>
         <MenuCard icon={<IconCalendar style={{fontSize:26,color:'#722ed1'}}/>} label="日程管理"
           desc="查看和管理日程安排" accentColor="#722ed1" onClick={() => setCalendarView(true)}/>
+        <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="查看已提交的简历和附件" accentColor="#f53f3f" onClick={() => setResumeView(true)}/>
         <MenuCard icon={<IconSafe style={{fontSize:26,color:'#00b42a'}}/>} label="账号安全"
           desc={profile?.email_verified_at?'邮箱已认证':'邮箱未认证'} accentColor="#00b42a"/>
         <MenuCard icon={<IconInfoCircle style={{fontSize:26,color:'#ff7d00'}}/>} label="关于智培职联"
@@ -159,6 +166,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           <Form.Item label="手机号" field="phone"><Input placeholder="请输入手机号" prefix={<IconPhone/>}/></Form.Item>
         </Form>
       </Modal>
+      </div>
     </div>
   )
 }

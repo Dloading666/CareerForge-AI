@@ -10,7 +10,7 @@ const { Text } = Typography
 const { TextArea } = Input
 
 interface ModelItem { id: number; display_name: string; provider: string; model_identifier: string; base_url: string; api_key_cipher: string | null; capability: string; protocols: string; status: string; open_to_student: boolean }
-interface AgentItem { id: number; name: string; description: string | null; category: string; icon_name: string | null; icon_color_from: string | null; icon_color_to: string | null; model_config_id: number | null; model_config: ModelItem | null; welcome_message: string | null; suggested_questions: string[] | null; prompt_variables: { name: string; label: string; required: boolean; default: string }[] | null; system_prompt: string | null; temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number; memory_window: number; use_dify: boolean; dify_api_key_cipher: string | null; dify_app_id: string | null; is_enabled: boolean; is_published: boolean }
+interface AgentItem { id: number; name: string; description: string | null; category: string; icon_name: string | null; icon_color_from: string | null; icon_color_to: string | null; model_config_id: number | null; model_config: ModelItem | null; welcome_message: string | null; suggested_questions: string[] | null; prompt_variables: { name: string; label: string; required: boolean; default: string }[] | null; system_prompt: string | null; temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number; memory_window: number; use_dify: boolean; dify_api_key_cipher: string | null; dify_api_base_url: string | null; dify_app_id: string | null; is_enabled: boolean; is_published: boolean }
 
 const CAT_META: Record<string, { label: string; color: string }> = {
   interview: { label: '面试', color: '#165DFF' }, job_search: { label: '求职', color: '#FF6D00' },
@@ -36,7 +36,7 @@ export function AgentManagementPage() {
   const [edit, setEdit] = useState<AgentItem | null>(null)
   const [form] = Form.useForm(); const [sub, setSub] = useState(false)
   const [tab, setTab] = useState('basic')
-  const [msgs, setMsgs] = useState<ChatMsg[]>([]); const [cIn, setCIn] = useState(''); const [cLoading, setCLoading] = useState(false)
+  const [msgs, setMsgs] = useState<ChatMsg[]>([]); const [cIn, setCIn] = useState(''); const [difyTestResult, setDifyTestResult] = useState<string | null>(null); const [cLoading, setCLoading] = useState(false)
   const [vVals, setVVals] = useState<Record<string, string>>({}); const cEnd = useRef<HTMLDivElement>(null)
 
   // ── fetch ──
@@ -75,12 +75,32 @@ export function AgentManagementPage() {
       name: a.name, desc: a.description || '', cat: a.category, icon: a.icon_name || 'smart_toy',
       cFrom: a.icon_color_from || '#7C4DFF', cTo: a.icon_color_to || '#2962FF',
       model_id: a.model_config_id || undefined, welcome: a.welcome_message || '',
-      use_dify: a.use_dify || false, dify_api_key: '', dify_app_id: a.dify_app_id || '',
+      use_dify: a.use_dify || false, dify_api_key: '', dify_api_base_url: a.dify_api_base_url || 'https://api.dify.ai/v1', dify_app_id: a.dify_app_id || '',
       sq: a.suggested_questions || [], pv: a.prompt_variables || [], sp: a.system_prompt || '',
       temp: a.temperature ?? 0.7, mt: a.max_tokens ?? 4096, tp: a.top_p ?? 0.9,
       fp: a.frequency_penalty ?? 0, pp: a.presence_penalty ?? 0, mw: a.memory_window ?? 10,
       enabled: a.is_enabled, pub: a.is_published,
     }); setTab('basic'); setDrawer(true)
+  }
+
+  const handleTestDify = async () => {
+    const vals = form.getFieldsValue?.() || {}
+    if (!vals.dify_api_base_url || !vals.dify_api_key) {
+      setDifyTestResult("???? Base URL ? API Key")
+      return
+    }
+    setDifyTestResult("???...")
+    try {
+      const r = await apiRequest<{ success: boolean; message: string }>("/api/v1/admin/agents/test-dify", {
+        method: "POST",
+        body: JSON.stringify({ api_base_url: vals.dify_api_base_url, api_key: vals.dify_api_key, app_id: vals.dify_app_id || "" }),
+      })
+      setDifyTestResult(r.success ? "OK ????" : "FAIL " + r.message)
+      setTimeout(() => setDifyTestResult(null), 5000)
+    } catch {
+      setDifyTestResult("FAIL ????")
+      setTimeout(() => setDifyTestResult(null), 5000)
+    }
   }
 
   const handleSubmit = async () => {
@@ -90,7 +110,7 @@ export function AgentManagementPage() {
         name: vals.name, description: vals.desc, category: vals.cat,
         icon_name: vals.icon, icon_color_from: vals.cFrom, icon_color_to: vals.cTo,
         model_config_id: vals.model_id || null, welcome_message: vals.welcome,
-      use_dify: vals.use_dify || false, dify_api_key: vals.dify_api_key || undefined, dify_app_id: vals.dify_app_id || undefined,
+      use_dify: vals.use_dify || false, dify_api_key: vals.dify_api_key || undefined, dify_api_base_url: vals.dify_api_base_url || undefined, dify_app_id: vals.dify_app_id || undefined,
         suggested_questions: (vals.sq || []).filter(Boolean),
         prompt_variables: (vals.pv || []).filter((v: { name: string }) => v.name?.trim()),
         system_prompt: vals.sp, temperature: vals.temp, max_tokens: vals.mt,
@@ -244,6 +264,42 @@ export function AgentManagementPage() {
                   </div>
                 })()}
               </Form.Item>
+            </Form>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="dify" title="Dify ??">
+            <Form form={form} layout="vertical">
+              <Form.Item label="?? Dify ???" field="use_dify" triggerPropName="checked">
+                <Switch />
+              </Form.Item>
+              {(() => {
+                const useDify = form.getFieldValue?.("use_dify")
+                if (!useDify) return null
+                return <>
+                  <Form.Item label="Dify API Base URL" field="dify_api_base_url" required>
+                    <Input placeholder="https://api.dify.ai/v1" />
+                  </Form.Item>
+                  <Form.Item label="Dify API Key" field="dify_api_key" required>
+                    <Input.Password placeholder="app-xxxxxxxxxxxxx" />
+                  </Form.Item>
+                  <Form.Item label="Dify App ID" field="dify_app_id">
+                    <Input placeholder="??????? Dify ??" />
+                  </Form.Item>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <Button size="small" onClick={handleTestDify}>????</Button>
+                    {difyTestResult && (
+                      <Tag size="small" color={difyTestResult.startsWith("OK") ? "green" : "red"}>
+                        {difyTestResult}
+                      </Tag>
+                    )}
+                  </div>
+                  <div style={{ padding: "10px 14px", background: "#f0f5ff", borderRadius: 6, fontSize: 12, color: "#4e5969", lineHeight: "18px", marginTop: 8 }}>
+                    <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>????</p>
+                    <p style={{ margin: 0 }}>1. ?????????? Dify chat-messages API</p>
+                    <p style={{ margin: 0 }}>2. ?????????????????</p>
+                    <p style={{ margin: 0, marginTop: 4, color: "#86909C" }}>????? Dify ????????? API ???</p>
+                  </div>
+                </>
+              })()}
             </Form>
           </Tabs.TabPane>
           <Tabs.TabPane key="model" title="模型与参数">

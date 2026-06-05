@@ -10,9 +10,9 @@ def dify_chat_completion(agent, *, user_message: str, variables: dict | None = N
     if not api_key:
         raise RuntimeError("Dify API Key not configured for this agent")
 
-    # Dify base URL: try agent custom, then env var, then default
+    # Dify base URL: agent config first, then env var, then default
     import os
-    base_url = os.getenv("DIFY_API_BASE_URL", "https://api.dify.ai/v1").rstrip("/")
+    base_url = (getattr(agent, "dify_api_base_url", None) or os.getenv("DIFY_API_BASE_URL", "") or "https://api.dify.ai/v1").rstrip("/")
 
     headers = {
         "Authorization": f"Bearer {api_key}",

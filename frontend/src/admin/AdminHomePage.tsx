@@ -35,6 +35,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest, ApiError } from '../shared/api'
 import { useAuth } from '../shared/auth'
 import { ModelPlaza } from './ModelPlaza'
+import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
 
 type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
@@ -345,7 +346,7 @@ const ROUTES = [
   { intent: '简历建议 / 项目经历', agent: '简历优化', memory: '草稿期，暂不对学生开放' },
 ]
 
-const pageMeta: Record<NavKey, { title: string; desc: string; action: string; drawer: DrawerMode }> = {
+const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; drawer: DrawerMode }> = {
   agents: {
     title: '智能体管理',
     desc: '组装子智能体的模型范围、Skills、MCP 与专属知识库，并控制是否允许被主智能体调用。',
@@ -355,7 +356,6 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action: string; dr
   master: {
     title: '主智能体配置',
     desc: '配置就业总助手的默认模型、系统提示词、全量能力范围、路由策略和记忆隔离规则。',
-    action: '编辑配置',
     drawer: 'master',
   },
   models: {
@@ -533,7 +533,7 @@ export function AdminHomePage() {
   const [avatarKey, setAvatarKey] = useState(0)
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
-  const [activeAgent, setActiveAgent] = useState(AGENTS[0].id)
+  
   const [skillFilter, setSkillFilter] = useState('all')
   const [skills, setSkills] = useState<SkillRecord[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
@@ -571,7 +571,7 @@ export function AdminHomePage() {
   const [drawerVisible, setDrawerVisible] = useState(false)
 
   const meta = pageMeta[activeNav]
-  const selectedAgent = AGENTS.find((agent) => agent.id === activeAgent) ?? AGENTS[0]
+  const selectedAgent = AGENTS[0]
   const skillCategories = useMemo(
     () => Array.from(new Set(skills.map((skill) => skill.category).filter(Boolean))),
     [skills],
@@ -1018,9 +1018,11 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
-              {meta.action}
-            </Button>
+            {activeNav !== 'master' && (
+              <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
+                {meta.action}
+              </Button>
+            )}
           </div>
 
           {adminFeedback ? (
@@ -1034,7 +1036,7 @@ export function AdminHomePage() {
             />
           ) : null}
 
-          {activeNav === 'agents' ? renderAgentsPage(selectedAgent, setActiveAgent, openDrawer) : null}
+          {activeNav === 'agents' ? <AgentManagementPage /> : null}
           {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
           {activeNav === 'models' ? <ModelPlaza /> : null}
           {activeNav === 'mcp'
@@ -1117,79 +1119,6 @@ export function AdminHomePage() {
   )
 }
 
-function renderAgentsPage(
-  selectedAgent: (typeof AGENTS)[number],
-  setActiveAgent: (id: string) => void,
-  openDrawer: (mode: DrawerMode) => void,
-) {
-  return (
-    <div className="admin-layout-grid">
-      <section className="admin-card-grid">
-        {AGENTS.map((agent) => (
-          <Card
-            key={agent.id}
-            className={`admin-card agent-card ${selectedAgent.id === agent.id ? 'is-selected' : ''}`}
-            hoverable
-            onClick={() => setActiveAgent(agent.id)}
-          >
-            <div className="agent-card-head">
-              <span className={`resource-icon ${agent.iconTone}`}>
-                <IconRobot />
-              </span>
-              <div>
-                <h3>{agent.name}</h3>
-                <Tag color={agent.status === '已发布' ? 'green' : 'orange'}>{agent.status}</Tag>
-              </div>
-            </div>
-            <p>{agent.desc}</p>
-            <div className="ability-summary">
-              <span>{agent.models.length} 模型</span>
-              <span>{agent.skills.length} Skills</span>
-              <span>{agent.mcps.length} MCP</span>
-              <span>{agent.kbs.length} 知识库</span>
-            </div>
-            <div className="admin-card-footer">
-              <Tag bordered color={agent.callable ? 'arcoblue' : 'gray'}>
-                {agent.callable ? '允许主智能体调用' : '仅草稿配置'}
-              </Tag>
-              <Button type="text" size="small" onClick={() => openDrawer('agent')}>
-                配置能力
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </section>
-
-      <aside className="admin-detail-panel">
-        <div className="detail-panel-head">
-          <span className={`resource-icon ${selectedAgent.iconTone}`}>
-            <IconRobot />
-          </span>
-          <div>
-            <h3>{selectedAgent.name}</h3>
-            <p>{selectedAgent.route}</p>
-          </div>
-        </div>
-        <div className="binding-block">
-          <h4>执行绑定</h4>
-          <div className="binding-row">
-            <span>Dify / LangGraph</span>
-            <strong>{selectedAgent.id === 'matching' ? 'job_match_graph_v1' : `${selectedAgent.id}_agent_v1`}</strong>
-          </div>
-          <div className="binding-row">
-            <span>默认模型</span>
-            <strong>{selectedAgent.models[0]}</strong>
-          </div>
-        </div>
-        <AbilityChips title="模型范围" items={selectedAgent.models} />
-        <AbilityChips title="编排的 Skills" items={selectedAgent.skills} />
-        <AbilityChips title="授权 MCP 工具" items={selectedAgent.mcps} />
-        <AbilityChips title="专属知识库" items={selectedAgent.kbs} />
-      </aside>
-    </div>
-  )
-}
-
 function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
   return (
     <div className="master-grid">
@@ -1199,16 +1128,6 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           <p>主智能体默认拥有全量能力，但可以在这里收窄访问范围。</p>
         </div>
         <div className="form-surface">
-          <label>
-            默认模型
-            <Select defaultValue="DeepSeek V3">
-              {MODELS.filter((model) => model.enabled).map((model) => (
-                <Select.Option key={model.name} value={model.name}>
-                  {model.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </label>
           <label>
             系统提示词
             <Input.TextArea
