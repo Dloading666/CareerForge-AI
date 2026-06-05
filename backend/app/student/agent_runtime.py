@@ -1012,43 +1012,52 @@ async def _call_dify_subagent(route: MasterRouteRule, task: str, user_key: str) 
         return {
             "status": "failed",
             "provider": "dify",
-            "summary": f"Dify 子智能体「{route.target_agent_name}」尚未配置 api_base_url/api_key。",
+            "summary": f"Dify sub-agent [{route.target_agent_name}] missing api_base_url/api_key",
         }
-    payload = {
-        "inputs": config.get("inputs") or {},
-        "query": task,
-        "response_mode": "blocking",
-        "user": user_key,
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    inputs = config.get("inputs") or {}
+    
+    # Try multiple endpoints to support different Dify app modes
+    endpoints = [
+        ("/chat-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
+        ("/completion-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
+        ("/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
+    ]
     if config.get("conversation_id"):
-        payload["conversation_id"] = config["conversation_id"]
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(float(config.get("timeout_sec", 45)))) as client:
-            response = await client.post(
-                f"{base_url}/chat-messages",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
-        response.raise_for_status()
-        data = response.json()
-        answer = str(data.get("answer") or data.get("data", {}).get("answer") or "").strip()
-        return {
-            "status": "completed",
-            "provider": "dify",
-            "summary": answer[:500] or f"Dify 子智能体「{route.target_agent_name}」已完成，但没有返回文本。",
-            "conversation_id": data.get("conversation_id"),
-            "message_id": data.get("message_id"),
-        }
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "provider": "dify",
-            "summary": f"Dify 子智能体「{route.target_agent_name}」调用失败：{str(exc)[:200]}",
-        }
-
-
-# ── Model selection ────────────────────────────────────────────────────────────
-
+        for _, body in endpoints:
+            body["conversation_id"] = config["conversation_id"]
+    
+    last_error = ""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(float(config.get("timeout_sec", 45)))) as client:
+        for path, body in endpoints:
+            try:
+                response = await client.post(f"{base_url}{path}", headers=headers, json=body)
+                if response.status_code == 200:
+                    data = response.json()
+                    answer = str(data.get("answer") or data.get("data", {}).get("answer") or data.get("data", {}).get("outputs", {}).get("text", "") or "").strip()
+                    return {
+                        "status": "completed",
+                        "provider": "dify",
+                        "summary": answer[:500] or f"Dify sub-agent [{route.target_agent_name}] completed (no text returned)",
+                        "conversation_id": data.get("conversation_id"),
+                        "message_id": data.get("message_id"),
+                    }
+                elif response.status_code == 401:
+                    return {"status": "failed", "provider": "dify", "summary": f"Dify sub-agent [{route.target_agent_name}] invalid API Secret (401)"}
+                else:
+                    try:
+                        detail = response.json()
+                        last_error = detail.get("message", "") or str(detail)[:100]
+                    except Exception:
+                        last_error = f"HTTP {response.status_code}"
+            except Exception as exc:
+                last_error = str(exc)[:100]
+    
+    return {
+        "status": "failed",
+        "provider": "dify",
+        "summary": f"Dify sub-agent [{route.target_agent_name}] failed: {last_error}",
+    }
 
 def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional[int]) -> Optional[ModelConfig]:
     if requested_model_id:
