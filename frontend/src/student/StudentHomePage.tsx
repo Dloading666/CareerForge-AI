@@ -7,6 +7,7 @@ import {
   IconCaretRight,
   IconClose,
   IconCloseCircle,
+  IconDelete,
   IconFile,
   IconHistory,
   IconLoading,
@@ -251,10 +252,12 @@ function SessionHistoryPanel({
   sessions,
   currentSessionId,
   onSelect,
+  onDelete,
 }: {
   sessions: AgentSession[]
   currentSessionId: number | null
   onSelect: (session: AgentSession) => void
+  onDelete: (session: AgentSession) => void
 }) {
   if (sessions.length === 0) {
     return <div className="side-nav-history-empty">暂无历史对话</div>
@@ -263,16 +266,31 @@ function SessionHistoryPanel({
   return (
     <div className="side-nav-history-list">
       {sessions.map((s) => (
-        <button
+        <div
           key={s.id}
-          type="button"
+          role="button"
+          tabIndex={0}
           className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
           onClick={() => onSelect(s)}
           title={s.title}
         >
           <IconHistory className="side-nav-history-item-icon" />
           <span className="side-nav-history-item-title">{s.title}</span>
-        </button>
+          <Popconfirm
+            title="删除这条对话记录？"
+            okText="删除"
+            cancelText="取消"
+            onOk={() => onDelete(s)}
+          >
+            <span
+              className="side-nav-history-del"
+              title="删除"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <IconDelete />
+            </span>
+          </Popconfirm>
+        </div>
       ))}
     </div>
   )
@@ -351,7 +369,7 @@ export function StudentHomePage() {
     setMessages([])
     setActivities([])
     setPendingAttachments([])
-    setAllSessions((prev) => [created, ...prev])
+    // 注意：不在此处加入 allSessions，空会话不进历史，等首次发送消息再加入
     return created
   }, [])
 
@@ -381,22 +399,16 @@ export function StudentHomePage() {
           setNotice('当前没有可用模型，请管理员先在模型广场开启「对学生开放」。')
         }
 
-        // 拉取历史会话列表
+        // 拉取历史会话列表（后端只返回有过对话的会话）
         const sessions = await apiRequest<AgentSession[]>('/api/v1/student/master/sessions')
         if (!alive) return
         setAllSessions(sessions)
 
-        // 始终创建一个新会话作为当前对话，旧会话保留在历史记录中
-        const created = await apiRequest<AgentSession>('/api/v1/student/master/sessions', {
-          method: 'POST',
-          body: JSON.stringify({ title: '新对话' }),
-        })
-        if (!alive) return
-        setAgentSession(created)
+        // 不再预创建空会话：登录后保持「新对话」空状态，首次发送消息时才真正创建会话
+        setAgentSession(null)
         setMessages([])
         setActivities([])
         setPendingAttachments([])
-        setAllSessions([created, ...sessions])
       } catch (error) {
         if (alive) {
           setNotice(error instanceof ApiError ? error.message : '主智能体会话初始化失败')
@@ -489,6 +501,19 @@ export function StudentHomePage() {
       },
     ])
 
+    // 首次发送后才把会话加入历史侧栏；继续对话则把它移到顶部
+    const sess = currentSession
+    const optimisticTitle = content.replace(/\n/g, ' ').slice(0, 32) || '新对话'
+    setAllSessions((prev) => {
+      const existing = prev.find((s) => s.id === sess.id)
+      const entry: AgentSession = {
+        ...sess,
+        title: existing ? existing.title : optimisticTitle,
+        updated_at: new Date().toISOString(),
+      }
+      return [entry, ...prev.filter((s) => s.id !== sess.id)]
+    })
+
     const controller = new AbortController()
     abortRef.current = controller
     try {
@@ -531,10 +556,6 @@ export function StudentHomePage() {
         const parsed = parseSseBlock(buffer)
         if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
       }
-      // Update session list title after reply
-      setAllSessions((prev) =>
-        prev.map((s) => (s.id === currentSession.id ? { ...s, updated_at: new Date().toISOString() } : s)),
-      )
     } catch (error) {
       if (!controller.signal.aborted) {
         setNotice(error instanceof Error ? error.message : '主智能体回复失败')
@@ -553,14 +574,32 @@ export function StudentHomePage() {
     }
   }
 
-  const handleNewChat = async () => {
+  const handleNewChat = () => {
     if (streaming) abortRef.current?.abort()
     setNotice(null)
+    // 仅重置为空的「新对话」状态，会话在首次发送消息时才创建
+    setAgentSession(null)
+    setMessages([])
+    setActivities([])
+    setPendingAttachments([])
+    setInputValue('')
+    setActiveNav('agent')
+  }
+
+  const handleDeleteSession = async (target: AgentSession) => {
     try {
-      await createAgentSession()
-      setActiveNav('agent')
+      await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
+      setAllSessions((prev) => prev.filter((s) => s.id !== target.id))
+      // 删除的是当前会话则回到空状态
+      if (agentSession?.id === target.id) {
+        if (streaming) abortRef.current?.abort()
+        setAgentSession(null)
+        setMessages([])
+        setActivities([])
+        setPendingAttachments([])
+      }
     } catch (error) {
-      setNotice(error instanceof ApiError ? error.message : '新建对话失败')
+      setNotice(error instanceof ApiError ? error.message : '删除对话失败')
     }
   }
 
@@ -690,6 +729,7 @@ export function StudentHomePage() {
             sessions={allSessions}
             currentSessionId={activeNav === 'agent' ? (agentSession?.id ?? null) : null}
             onSelect={handleSelectSession}
+            onDelete={handleDeleteSession}
           />
         </div>
 

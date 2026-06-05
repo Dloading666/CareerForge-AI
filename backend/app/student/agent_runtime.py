@@ -375,6 +375,12 @@ async def save_attachment(
 
 
 def list_sessions(db: Session, identity: AuthIdentity) -> list[StudentAgentSession]:
+    # 只返回「至少有一条消息」的会话，自动隐藏从未对话过的空会话
+    has_message = (
+        select(StudentAgentMessage.id)
+        .where(StudentAgentMessage.session_id == StudentAgentSession.id)
+        .exists()
+    )
     return list(
         db.scalars(
             select(StudentAgentSession)
@@ -382,10 +388,18 @@ def list_sessions(db: Session, identity: AuthIdentity) -> list[StudentAgentSessi
                 StudentAgentSession.tenant_id == identity.tenant_id,
                 StudentAgentSession.student_id == identity.user_id,
                 StudentAgentSession.status == "active",
+                has_message,
             )
             .order_by(StudentAgentSession.updated_at.desc())
         ).all()
     )
+
+
+def delete_session(db: Session, identity: AuthIdentity, session_id: int) -> None:
+    session = get_session_or_404(db, identity, session_id)
+    session.status = "deleted"
+    session.updated_at = utcnow()
+    db.commit()
 
 
 def get_session_or_404(db: Session, identity: AuthIdentity, session_id: int) -> StudentAgentSession:
