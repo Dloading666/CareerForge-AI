@@ -1,6 +1,7 @@
 """Agent API (admin)"""
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.admin.agent_service import (create_agent, delete_agent, get_agent, get_agent_dict, list_agents, toggle_agent, update_agent)
 from app.admin.agent_schemas import AgentChatRequest, AgentChatResponse, AgentCreate, AgentToggle, AgentUpdate
@@ -48,6 +49,39 @@ def api_delete_agent(agent_id: int, db: Session = Depends(get_db), _current=Depe
 @router.patch("/{agent_id}/toggle")
 def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     return ok(toggle_agent(db, agent_id, is_enabled=payload.is_enabled))
+
+class DifyTestRequest(BaseModel):
+    api_base_url: str
+    api_key: str
+    app_id: str = ""
+
+@router.post("/test-dify")
+async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
+    """Test Dify connection with provided credentials."""
+    import httpx
+    base_url = payload.api_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            resp = await client.post(
+                f"{base_url}/chat-messages",
+                headers={"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
+                json={"inputs": {}, "query": "ping", "response_mode": "blocking", "user": "admin-test"},
+            )
+        if resp.status_code == 200:
+            return ok({"success": True, "message": "Connection successful"})
+        elif resp.status_code == 401:
+            return ok({"success": False, "message": "Invalid API Key (401)"})
+        elif resp.status_code == 404:
+            return ok({"success": False, "message": "App not found (404) - check Base URL"})
+        else:
+            return ok({"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:100]}"})
+    except httpx.ConnectError:
+        return ok({"success": False, "message": "Cannot connect - check Base URL"})
+    except httpx.TimeoutException:
+        return ok({"success": False, "message": "Connection timed out"})
+    except Exception as exc:
+        return ok({"success": False, "message": str(exc)[:200]})
+
 
 @router.post("/{agent_id}/chat")
 def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):

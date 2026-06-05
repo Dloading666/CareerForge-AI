@@ -36,7 +36,7 @@ export function AgentManagementPage() {
   const [edit, setEdit] = useState<AgentItem | null>(null)
   const [form] = Form.useForm(); const [sub, setSub] = useState(false)
   const [tab, setTab] = useState('basic')
-  const [msgs, setMsgs] = useState<ChatMsg[]>([]); const [cIn, setCIn] = useState(''); const [cLoading, setCLoading] = useState(false)
+  const [msgs, setMsgs] = useState<ChatMsg[]>([]); const [cIn, setCIn] = useState(''); const [difyTestResult, setDifyTestResult] = useState<string | null>(null); const [cLoading, setCLoading] = useState(false)
   const [vVals, setVVals] = useState<Record<string, string>>({}); const cEnd = useRef<HTMLDivElement>(null)
 
   // ── fetch ──
@@ -81,6 +81,26 @@ export function AgentManagementPage() {
       fp: a.frequency_penalty ?? 0, pp: a.presence_penalty ?? 0, mw: a.memory_window ?? 10,
       enabled: a.is_enabled, pub: a.is_published,
     }); setTab('basic'); setDrawer(true)
+  }
+
+  const handleTestDify = async () => {
+    const vals = form.getFieldsValue?.() || {}
+    if (!vals.dify_api_base_url || !vals.dify_api_key) {
+      setDifyTestResult("???? Base URL ? API Key")
+      return
+    }
+    setDifyTestResult("???...")
+    try {
+      const r = await apiRequest<{ success: boolean; message: string }>("/api/v1/admin/agents/test-dify", {
+        method: "POST",
+        body: JSON.stringify({ api_base_url: vals.dify_api_base_url, api_key: vals.dify_api_key, app_id: vals.dify_app_id || "" }),
+      })
+      setDifyTestResult(r.success ? "OK ????" : "FAIL " + r.message)
+      setTimeout(() => setDifyTestResult(null), 5000)
+    } catch {
+      setDifyTestResult("FAIL ????")
+      setTimeout(() => setDifyTestResult(null), 5000)
+    }
   }
 
   const handleSubmit = async () => {
@@ -244,6 +264,42 @@ export function AgentManagementPage() {
                   </div>
                 })()}
               </Form.Item>
+            </Form>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="dify" title="Dify ??">
+            <Form form={form} layout="vertical">
+              <Form.Item label="?? Dify ???" field="use_dify" triggerPropName="checked">
+                <Switch />
+              </Form.Item>
+              {(() => {
+                const useDify = form.getFieldValue?.("use_dify")
+                if (!useDify) return null
+                return <>
+                  <Form.Item label="Dify API Base URL" field="dify_api_base_url" required>
+                    <Input placeholder="https://api.dify.ai/v1" />
+                  </Form.Item>
+                  <Form.Item label="Dify API Key" field="dify_api_key" required>
+                    <Input.Password placeholder="app-xxxxxxxxxxxxx" />
+                  </Form.Item>
+                  <Form.Item label="Dify App ID" field="dify_app_id">
+                    <Input placeholder="??????? Dify ??" />
+                  </Form.Item>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <Button size="small" onClick={handleTestDify}>????</Button>
+                    {difyTestResult && (
+                      <Tag size="small" color={difyTestResult.startsWith("OK") ? "green" : "red"}>
+                        {difyTestResult}
+                      </Tag>
+                    )}
+                  </div>
+                  <div style={{ padding: "10px 14px", background: "#f0f5ff", borderRadius: 6, fontSize: 12, color: "#4e5969", lineHeight: "18px", marginTop: 8 }}>
+                    <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>????</p>
+                    <p style={{ margin: 0 }}>1. ?????????? Dify chat-messages API</p>
+                    <p style={{ margin: 0 }}>2. ?????????????????</p>
+                    <p style={{ margin: 0, marginTop: 4, color: "#86909C" }}>????? Dify ????????? API ???</p>
+                  </div>
+                </>
+              })()}
             </Form>
           </Tabs.TabPane>
           <Tabs.TabPane key="model" title="模型与参数">
