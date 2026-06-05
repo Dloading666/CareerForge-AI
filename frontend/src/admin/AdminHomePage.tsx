@@ -340,7 +340,7 @@ const ROUTES = [
   { intent: '简历建议 / 项目经历', agent: '简历优化', memory: '草稿期，暂不对学生开放' },
 ]
 
-const pageMeta: Record<NavKey, { title: string; desc: string; action: string; drawer: DrawerMode }> = {
+const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; drawer: DrawerMode }> = {
   agents: {
     title: '智能体管理',
     desc: '组装子智能体的模型范围、Skills、MCP 与专属知识库，并控制是否允许被主智能体调用。',
@@ -350,7 +350,6 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action: string; dr
   master: {
     title: '主智能体配置',
     desc: '配置就业总助手的默认模型、系统提示词、全量能力范围、路由策略和记忆隔离规则。',
-    action: '编辑配置',
     drawer: 'master',
   },
   models: {
@@ -982,9 +981,11 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
-              {meta.action}
-            </Button>
+            {activeNav !== 'master' && (
+              <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
+                {meta.action}
+              </Button>
+            )}
           </div>
 
           {adminFeedback ? (
@@ -1163,16 +1164,6 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           <p>主智能体默认拥有全量能力，但可以在这里收窄访问范围。</p>
         </div>
         <div className="form-surface">
-          <label>
-            默认模型
-            <Select defaultValue="DeepSeek V3">
-              {MODELS.filter((model) => model.enabled).map((model) => (
-                <Select.Option key={model.name} value={model.name}>
-                  {model.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </label>
           <label>
             系统提示词
             <Input.TextArea
