@@ -222,6 +222,21 @@ textarea {
   color: var(--text-subtle);
 }
 
+.auth-link-btn {
+  border: none;
+  background: transparent;
+  color: var(--brand-blue);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.15s;
+}
+
+.auth-link-btn:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
 .auth-form-footer {
   margin-top: 18px;
   display: flex;
@@ -296,8 +311,92 @@ textarea {
   font-weight: 600;
 }
 
+/* ── Sidebar history (Doubao-style accumulated list) ───────────────── */
+.side-nav-history {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.side-nav-history-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  letter-spacing: 0.04em;
+  padding: 0 8px;
+}
+
+.side-nav-history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.side-nav-history-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.side-nav-history-list::-webkit-scrollbar-thumb {
+  background: rgba(120, 130, 160, 0.22);
+  border-radius: 3px;
+}
+
+.side-nav-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-main);
+  font-size: 13.5px;
+  transition: background 0.15s;
+}
+
+.side-nav-history-item:hover {
+  background: rgba(22, 93, 255, 0.07);
+}
+
+.side-nav-history-item.active {
+  background: rgba(22, 93, 255, 0.12);
+  color: var(--brand-blue);
+  font-weight: 600;
+}
+
+.side-nav-history-item-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.side-nav-history-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-nav-history-empty {
+  padding: 14px 10px;
+  font-size: 12.5px;
+  color: var(--text-subtle);
+  opacity: 0.7;
+}
+
 .side-nav-footer {
-  margin-top: auto;
   padding-top: 18px;
   border-top: 1px solid rgba(217, 222, 238, 0.8);
   color: var(--text-subtle);
@@ -346,6 +445,47 @@ textarea {
 
 .page-content {
   padding: 28px;
+}
+
+/* ── 学生端每个模块独立纵向滚动 + 可见滚动条 ──────────────────────── */
+.student-shell .page-content,
+.student-shell .profile-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.student-shell .page-content::-webkit-scrollbar,
+.student-shell .profile-scroll::-webkit-scrollbar,
+.agent-thread::-webkit-scrollbar,
+.agent-plaza::-webkit-scrollbar {
+  width: 9px;
+}
+
+.student-shell .page-content::-webkit-scrollbar-track,
+.student-shell .profile-scroll::-webkit-scrollbar-track,
+.agent-thread::-webkit-scrollbar-track,
+.agent-plaza::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.student-shell .page-content::-webkit-scrollbar-thumb,
+.student-shell .profile-scroll::-webkit-scrollbar-thumb,
+.agent-thread::-webkit-scrollbar-thumb,
+.agent-plaza::-webkit-scrollbar-thumb {
+  background: rgba(120, 130, 160, 0.3);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.student-shell .page-content::-webkit-scrollbar-thumb:hover,
+.student-shell .profile-scroll::-webkit-scrollbar-thumb:hover,
+.agent-thread::-webkit-scrollbar-thumb:hover,
+.agent-plaza::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 130, 160, 0.5);
+  background-clip: content-box;
 }
 
 .hero-panel {

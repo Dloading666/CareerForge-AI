@@ -24,8 +24,13 @@ class SMTPMailProvider(BaseMailProvider):
         self.settings = settings
 
     def send_code(self, email: str, scene: str, code: str) -> None:
+        scene_label = {
+            "register": "注册",
+            "login": "登录",
+            "reset": "重置密码",
+        }.get(scene, scene)
         message = EmailMessage()
-        message["Subject"] = f"智培职联 {scene} 验证码"
+        message["Subject"] = f"智培职联 {scene_label}验证码"
         message["From"] = self.settings.smtp_from_email
         message["To"] = email
         message.set_content(

@@ -9,6 +9,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.captcha import verify_captcha
 from app.auth.email import get_mail_provider
 from app.auth.models import (
     AdminLoginLog,
@@ -24,6 +25,7 @@ from app.auth.schemas import (
     StudentEmailCodeSendRequest,
     StudentLoginRequest,
     StudentRegisterRequest,
+    StudentResetPasswordRequest,
 )
 from app.core.config import Settings, get_settings
 from app.core.security import (
@@ -241,11 +243,17 @@ def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest) -
     email = normalize_email(payload.email)
     scene = payload.scene
 
+    # 重置密码场景：先校验图形验证码，通过后才发送邮箱验证码
+    if scene == "reset":
+        if not verify_captcha(payload.captcha_id or "", payload.captcha_code or ""):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="图形验证码错误或已失效")
+
     existing_user = db.scalar(select(StudentUser).where(StudentUser.email == email, StudentUser.is_deleted.is_(False)))
     if scene == "register" and existing_user:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已注册")
 
-    if scene == "login" and not existing_user:
+    # 对于 login / reset，邮箱未注册时静默返回，避免暴露邮箱是否存在
+    if scene in ("login", "reset") and not existing_user:
         return {"cooldown_sec": settings.email_code_cooldown_seconds}
 
     record = db.scalar(select(StudentEmailCode).where(StudentEmailCode.email == email, StudentEmailCode.scene == scene))
@@ -346,6 +354,51 @@ def register_student(
         user_agent=user_agent,
     )
     return {**tokens, "role": "student", "profile": build_profile(student, "student")["profile"]}
+
+
+def reset_student_password(
+    db: Session,
+    payload: StudentResetPasswordRequest,
+    *,
+    ip: Optional[str],
+    user_agent: Optional[str],
+) -> dict:
+    email = normalize_email(payload.email)
+    verify_student_email_code(db, email=email, scene="reset", code=payload.code)
+
+    student = db.scalar(
+        select(StudentUser).where(StudentUser.email == email, StudentUser.is_deleted.is_(False))
+    )
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="该邮箱未注册")
+
+    student.password_hash = hash_password(payload.password)
+    if student.email_verified_at is None:
+        student.email_verified_at = utcnow()
+
+    # 重置密码后吊销该学生所有未失效的刷新令牌，强制重新登录
+    tokens = db.scalars(
+        select(StudentRefreshToken).where(
+            StudentRefreshToken.student_id == student.id,
+            StudentRefreshToken.revoked.is_(False),
+        )
+    ).all()
+    for token in tokens:
+        token.revoked = True
+    db.commit()
+
+    # 清除登录失败计数，避免重置后仍被锁定
+    clear_login_failures(role="student", account=email, ip=ip)
+    record_student_login(
+        db,
+        email=email,
+        result="success",
+        reason="reset_password",
+        student=student,
+        ip=ip,
+        user_agent=user_agent,
+    )
+    return {"msg": "密码重置成功，请使用新密码登录"}
 
 
 def login_student(

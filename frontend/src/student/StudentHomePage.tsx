@@ -32,7 +32,7 @@ import { useAuth } from '../shared/auth'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type NavKey = 'agent' | 'plaza' | 'history' | 'profile'
+type NavKey = 'agent' | 'plaza' | 'profile'
 
 type AgentSession = {
   id: number
@@ -256,36 +256,22 @@ function SessionHistoryPanel({
   currentSessionId: number | null
   onSelect: (session: AgentSession) => void
 }) {
-  function relativeTime(iso: string) {
-    const diff = Date.now() - new Date(iso).getTime()
-    const m = Math.floor(diff / 60000)
-    if (m < 1) return '刚刚'
-    if (m < 60) return `${m} 分钟前`
-    const h = Math.floor(m / 60)
-    if (h < 24) return `${h} 小时前`
-    return `${Math.floor(h / 24)} 天前`
-  }
-
   if (sessions.length === 0) {
-    return (
-      <div className="history-empty">
-        <IconHistory style={{ fontSize: 28 }} />
-        <p>暂无历史对话</p>
-      </div>
-    )
+    return <div className="side-nav-history-empty">暂无历史对话</div>
   }
 
   return (
-    <div className="history-list">
+    <div className="side-nav-history-list">
       {sessions.map((s) => (
         <button
           key={s.id}
           type="button"
-          className={`history-item${s.id === currentSessionId ? ' active' : ''}`}
+          className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
           onClick={() => onSelect(s)}
+          title={s.title}
         >
-          <div className="history-item-title">{s.title}</div>
-          <div className="history-item-time">{relativeTime(s.updated_at)}</div>
+          <IconHistory className="side-nav-history-item-icon" />
+          <span className="side-nav-history-item-title">{s.title}</span>
         </button>
       ))}
     </div>
@@ -326,7 +312,6 @@ export function StudentHomePage() {
   const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
     { key: 'agent', icon: <IconRobot />, label: '主智能体' },
     { key: 'plaza', icon: <IconApps />, label: '智能体广场' },
-    { key: 'history', icon: <IconHistory />, label: '历史对话' },
     { key: 'profile', icon: <IconUser />, label: '个人中心' },
   ]
 
@@ -468,8 +453,11 @@ export function StudentHomePage() {
   }
 
   const submitMessage = async (preset?: string) => {
-    const content = (preset ?? inputValue).trim()
-    if (!content || streaming) return
+    const text = (preset ?? inputValue).trim()
+    const hasAttachments = pendingAttachments.length > 0
+    if ((!text && !hasAttachments) || streaming) return
+    // 仅有附件、无文字时，补一句默认指令让模型知道要做什么
+    const content = text || '请帮我分析上传的附件。'
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
       return
@@ -696,6 +684,15 @@ export function StudentHomePage() {
           ))}
         </div>
 
+        <div className="side-nav-history">
+          <div className="side-nav-history-label">历史对话</div>
+          <SessionHistoryPanel
+            sessions={allSessions}
+            currentSessionId={activeNav === 'agent' ? (agentSession?.id ?? null) : null}
+            onSelect={handleSelectSession}
+          />
+        </div>
+
         <div className="side-nav-footer">
           <div style={{ fontWeight: 600 }}>{studentName}</div>
           <div className="muted-text" style={{ fontSize: 12, marginBottom: 10 }}>
@@ -903,7 +900,7 @@ export function StudentHomePage() {
                     <button
                       type="button"
                       className="composer-send-btn"
-                      disabled={!inputValue.trim() || bootingAgent || !selectedModelId}
+                      disabled={(!inputValue.trim() && pendingAttachments.length === 0) || bootingAgent || !selectedModelId}
                       onClick={() => void submitMessage()}
                     >
                       <IconSend />
@@ -918,22 +915,6 @@ export function StudentHomePage() {
         {activeNav === 'plaza' && (
           <main className="page-content">
             <AgentPlaza />
-          </main>
-        )}
-
-        {activeNav === 'history' && (
-          <main className="page-content">
-            <div className="history-panel">
-              <div className="history-panel-header">
-                <h3>历史对话</h3>
-                <p>{allSessions.length} 条记录</p>
-              </div>
-              <SessionHistoryPanel
-                sessions={allSessions}
-                currentSessionId={agentSession?.id ?? null}
-                onSelect={handleSelectSession}
-              />
-            </div>
           </main>
         )}
 

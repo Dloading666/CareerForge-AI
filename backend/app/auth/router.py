@@ -13,6 +13,7 @@ from app.auth.schemas import (
     StudentEmailCodeSendRequest,
     StudentLoginRequest,
     StudentRegisterRequest,
+    StudentResetPasswordRequest,
 )
 from app.auth.service import (
     get_current_user,
@@ -21,12 +22,20 @@ from app.auth.service import (
     logout_refresh_token,
     refresh_access_token,
     register_student,
+    reset_student_password,
     send_student_email_code,
 )
 from app.core.response import ok
 from app.infra.db import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/captcha")
+def get_captcha():
+    from app.auth.captcha import generate_captcha
+
+    return ok(generate_captcha())
 
 
 @router.post("/student/email/send-code")
@@ -43,6 +52,17 @@ def student_register(
     user_agent: Optional[str] = Header(default=None),
 ):
     data = register_student(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    return ok(data)
+
+
+@router.post("/student/reset-password")
+def student_reset_password(
+    payload: StudentResetPasswordRequest,
+    db: Session = Depends(get_db),
+    x_forwarded_for: Optional[str] = Header(default=None),
+    user_agent: Optional[str] = Header(default=None),
+):
+    data = reset_student_password(db, payload, ip=x_forwarded_for, user_agent=user_agent)
     return ok(data)
 
 

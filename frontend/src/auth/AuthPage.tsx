@@ -14,7 +14,7 @@ import { Navigate } from 'react-router-dom'
 import { apiRequest, ApiError } from '../shared/api'
 import { useAuth } from '../shared/auth'
 
-type StudentMode = 'login' | 'register'
+type StudentMode = 'login' | 'register' | 'reset'
 type Role = 'student' | 'admin'
 
 type StudentAuthResponse = {
@@ -45,6 +45,9 @@ export function AuthPage() {
   const [submitting, setSubmitting] = useState(false)
   const [sendingCode, setSendingCode] = useState(false)
   const [debugCode, setDebugCode] = useState<string | null>(null)
+  const [captchaId, setCaptchaId] = useState('')
+  const [captchaImage, setCaptchaImage] = useState('')
+  const [studentCaptcha, setStudentCaptcha] = useState('')
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'warning' | 'info'
     content: string
@@ -70,21 +73,39 @@ export function AuthPage() {
     return <Navigate to={session.role === 'admin' ? '/admin' : '/student'} replace />
   }
 
+  async function loadCaptcha() {
+    try {
+      const data = await apiRequest<{ captcha_id: string; image: string }>('/api/v1/auth/captcha')
+      setCaptchaId(data.captcha_id)
+      setCaptchaImage(data.image)
+      setStudentCaptcha('')
+    } catch {
+      // 图形验证码加载失败时忽略，用户可点击图片重试
+    }
+  }
+
   async function handleSendCode() {
     if (!studentEmail.trim()) {
       notify.warning('请先输入邮箱地址')
       return
     }
+    const scene = studentMode === 'reset' ? 'reset' : 'register'
+    if (scene === 'reset' && !studentCaptcha.trim()) {
+      notify.warning('请先完成图形验证码')
+      return
+    }
     setSendingCode(true)
     try {
+      const body: Record<string, string> = { email: studentEmail.trim(), scene }
+      if (scene === 'reset') {
+        body.captcha_id = captchaId
+        body.captcha_code = studentCaptcha.trim()
+      }
       const data = await apiRequest<{ cooldown_sec: number; debug_code?: string }>(
         '/api/v1/auth/student/email/send-code',
         {
           method: 'POST',
-          body: JSON.stringify({
-            email: studentEmail.trim(),
-            scene: 'register',
-          }),
+          body: JSON.stringify(body),
         },
       )
       setCountdown(data.cooldown_sec)
@@ -93,6 +114,7 @@ export function AuthPage() {
     } catch (error) {
       const message = error instanceof ApiError ? error.message : '发送验证码失败'
       notify.error(message)
+      if (scene === 'reset') void loadCaptcha() // 失败后刷新图形验证码
     } finally {
       setSendingCode(false)
     }
@@ -147,6 +169,60 @@ export function AuthPage() {
       notify.success(studentMode === 'register' ? '注册成功，正在进入学生端' : '登录成功，正在进入学生端')
     } catch (error) {
       const message = error instanceof ApiError ? error.message : '学生登录失败'
+      notify.error(message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function backToLogin() {
+    setStudentMode('login')
+    setStudentCode('')
+    setStudentPassword('')
+    setStudentConfirmPassword('')
+    setDebugCode(null)
+    setCountdown(0)
+    setFeedback(null)
+  }
+
+  async function handleResetPassword() {
+    if (!studentEmail.trim()) {
+      notify.warning('请填写邮箱')
+      return
+    }
+    if (!studentCode.trim() || !studentPassword || !studentConfirmPassword) {
+      notify.warning('请完整填写验证码和新密码')
+      return
+    }
+    if (studentPassword !== studentConfirmPassword) {
+      notify.warning('两次输入的密码不一致')
+      return
+    }
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(studentPassword)) {
+      notify.warning('密码至少 8 位，且需包含大写字母、小写字母和数字')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await apiRequest('/api/v1/auth/student/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: studentEmail.trim(),
+          code: studentCode.trim(),
+          password: studentPassword,
+          confirm_password: studentConfirmPassword,
+        }),
+      })
+      notify.success('密码重置成功，请使用新密码登录')
+      setStudentMode('login')
+      setStudentCode('')
+      setStudentPassword('')
+      setStudentConfirmPassword('')
+      setDebugCode(null)
+      setCountdown(0)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '密码重置失败'
       notify.error(message)
     } finally {
       setSubmitting(false)
@@ -212,55 +288,168 @@ export function AuthPage() {
             }}
           >
             <Tabs.TabPane key="student" title="学生">
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Tabs
-                  activeTab={studentMode}
-                  onChange={(value) => {
-                    setStudentMode(value as StudentMode)
-                    setFeedback(null)
-                  }}
-                  size="small"
-                >
-                  <Tabs.TabPane key="login" title="邮箱登录" />
-                  <Tabs.TabPane key="register" title="邮箱注册" />
-                </Tabs>
+              {studentMode === 'reset' ? (
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <button type="button" className="auth-link-btn" onClick={backToLogin}>
+                    ← 返回登录
+                  </button>
+                  <Typography.Title heading={6} style={{ margin: 0 }}>
+                    重置密码
+                  </Typography.Title>
+                  <Typography.Text type="secondary">
+                    输入绑定的邮箱，获取验证码后设置新密码。
+                  </Typography.Text>
 
-                {debugCode ? (
-                  <Alert
-                    className="debug-code-banner"
-                    type="info"
-                    content={`开发环境验证码：${debugCode}`}
-                    showIcon
+                  {debugCode ? (
+                    <Alert
+                      className="debug-code-banner"
+                      type="info"
+                      content={`开发环境验证码：${debugCode}`}
+                      showIcon
+                    />
+                  ) : null}
+
+                  <Input
+                    size="large"
+                    prefix={<IconEmail />}
+                    placeholder="输入绑定的邮箱"
+                    value={studentEmail}
+                    onChange={setStudentEmail}
                   />
-                ) : null}
-
-                <Input
-                  size="large"
-                  prefix={<IconEmail />}
-                  placeholder="输入学生邮箱"
-                  value={studentEmail}
-                  onChange={setStudentEmail}
-                />
-                {studentMode === 'register' ? (
-                  <>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <Input
                       size="large"
                       prefix={<IconSafe />}
-                      placeholder="输入验证码"
-                      value={studentCode}
-                      onChange={setStudentCode}
-                      addAfter={
-                        <Button
-                          type="text"
-                          size="small"
-                          disabled={countdown > 0}
-                          loading={sendingCode}
-                          onClick={handleSendCode}
-                        >
-                          {countdown > 0 ? `${countdown}s` : '发送验证码'}
-                        </Button>
-                      }
+                      placeholder="输入图形验证码"
+                      value={studentCaptcha}
+                      onChange={setStudentCaptcha}
+                      style={{ flex: 1 }}
                     />
+                    <img
+                      src={captchaImage || undefined}
+                      alt="图形验证码"
+                      title="点击刷新"
+                      onClick={() => void loadCaptcha()}
+                      style={{
+                        height: 40,
+                        width: 112,
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        border: '1px solid var(--surface-border)',
+                        objectFit: 'cover',
+                        flexShrink: 0,
+                        background: '#f5f7fc',
+                      }}
+                    />
+                  </div>
+                  <Input
+                    size="large"
+                    prefix={<IconSafe />}
+                    placeholder="输入邮箱验证码"
+                    value={studentCode}
+                    onChange={setStudentCode}
+                    addAfter={
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={countdown > 0}
+                        loading={sendingCode}
+                        onClick={handleSendCode}
+                      >
+                        {countdown > 0 ? `${countdown}s` : '发送验证码'}
+                      </Button>
+                    }
+                  />
+                  <Input.Password
+                    size="large"
+                    prefix={<IconLock />}
+                    placeholder="输入新密码"
+                    value={studentPassword}
+                    onChange={setStudentPassword}
+                  />
+                  <Input.Password
+                    size="large"
+                    prefix={<IconUser />}
+                    placeholder="再次输入新密码"
+                    value={studentConfirmPassword}
+                    onChange={setStudentConfirmPassword}
+                  />
+                  <Typography.Text type="secondary">
+                    密码至少 8 位，且需包含大写字母、小写字母和数字。
+                  </Typography.Text>
+                  <Button type="primary" size="large" long loading={submitting} onClick={handleResetPassword}>
+                    重置密码
+                  </Button>
+                </Space>
+              ) : (
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <Tabs
+                    activeTab={studentMode}
+                    onChange={(value) => {
+                      setStudentMode(value as StudentMode)
+                      setFeedback(null)
+                    }}
+                    size="small"
+                  >
+                    <Tabs.TabPane key="login" title="邮箱登录" />
+                    <Tabs.TabPane key="register" title="邮箱注册" />
+                  </Tabs>
+
+                  {debugCode ? (
+                    <Alert
+                      className="debug-code-banner"
+                      type="info"
+                      content={`开发环境验证码：${debugCode}`}
+                      showIcon
+                    />
+                  ) : null}
+
+                  <Input
+                    size="large"
+                    prefix={<IconEmail />}
+                    placeholder="输入学生邮箱"
+                    value={studentEmail}
+                    onChange={setStudentEmail}
+                  />
+                  {studentMode === 'register' ? (
+                    <>
+                      <Input
+                        size="large"
+                        prefix={<IconSafe />}
+                        placeholder="输入验证码"
+                        value={studentCode}
+                        onChange={setStudentCode}
+                        addAfter={
+                          <Button
+                            type="text"
+                            size="small"
+                            disabled={countdown > 0}
+                            loading={sendingCode}
+                            onClick={handleSendCode}
+                          >
+                            {countdown > 0 ? `${countdown}s` : '发送验证码'}
+                          </Button>
+                        }
+                      />
+                      <Input.Password
+                        size="large"
+                        prefix={<IconLock />}
+                        placeholder="输入登录密码"
+                        value={studentPassword}
+                        onChange={setStudentPassword}
+                      />
+                      <Input.Password
+                        size="large"
+                        prefix={<IconUser />}
+                        placeholder="再次输入密码"
+                        value={studentConfirmPassword}
+                        onChange={setStudentConfirmPassword}
+                      />
+                      <Typography.Text type="secondary">
+                        密码至少 8 位，且需包含大写字母、小写字母和数字。
+                      </Typography.Text>
+                    </>
+                  ) : (
                     <Input.Password
                       size="large"
                       prefix={<IconLock />}
@@ -268,30 +457,32 @@ export function AuthPage() {
                       value={studentPassword}
                       onChange={setStudentPassword}
                     />
-                    <Input.Password
-                      size="large"
-                      prefix={<IconUser />}
-                      placeholder="再次输入密码"
-                      value={studentConfirmPassword}
-                      onChange={setStudentConfirmPassword}
-                    />
-                    <Typography.Text type="secondary">
-                      密码至少 8 位，且需包含大写字母、小写字母和数字。
-                    </Typography.Text>
-                  </>
-                ) : (
-                  <Input.Password
-                    size="large"
-                    prefix={<IconLock />}
-                    placeholder="输入登录密码"
-                    value={studentPassword}
-                    onChange={setStudentPassword}
-                  />
-                )}
-                <Button type="primary" size="large" long loading={submitting} onClick={handleStudentSubmit}>
-                  {studentMode === 'register' ? '注册并进入学生端' : '登录学生端'}
-                </Button>
-              </Space>
+                  )}
+                  <Button type="primary" size="large" long loading={submitting} onClick={handleStudentSubmit}>
+                    {studentMode === 'register' ? '注册并进入学生端' : '登录学生端'}
+                  </Button>
+                  {studentMode === 'login' ? (
+                    <div style={{ textAlign: 'right', marginTop: -6 }}>
+                      <button
+                        type="button"
+                        className="auth-link-btn"
+                        onClick={() => {
+                          setStudentMode('reset')
+                          setStudentPassword('')
+                          setStudentConfirmPassword('')
+                          setStudentCode('')
+                          setDebugCode(null)
+                          setCountdown(0)
+                          setFeedback(null)
+                          void loadCaptcha()
+                        }}
+                      >
+                        忘记密码？
+                      </button>
+                    </div>
+                  ) : null}
+                </Space>
+              )}
             </Tabs.TabPane>
 
             <Tabs.TabPane key="admin" title="管理员">

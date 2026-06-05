@@ -1,4 +1,4 @@
-import { Form, Input, InputNumber, Message, Modal, Radio, Typography } from '@arco-design/web-react'
+import { Button, Form, Input, InputNumber, Message, Modal, Radio, Typography } from '@arco-design/web-react'
 import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../shared/auth'
@@ -51,6 +51,16 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [resumeView, setResumeView] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [securityVisible, setSecurityVisible] = useState(false)
+  const [pwdCode, setPwdCode] = useState('')
+  const [pwdNew, setPwdNew] = useState('')
+  const [pwdConfirm, setPwdConfirm] = useState('')
+  const [pwdCountdown, setPwdCountdown] = useState(0)
+  const [sendingPwdCode, setSendingPwdCode] = useState(false)
+  const [resettingPwd, setResettingPwd] = useState(false)
+  const [pwdCaptchaId, setPwdCaptchaId] = useState('')
+  const [pwdCaptchaImage, setPwdCaptchaImage] = useState('')
+  const [pwdCaptcha, setPwdCaptcha] = useState('')
   const [form] = Form.useForm()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const bannerInputRef = useRef<HTMLInputElement>(null)
@@ -74,6 +84,70 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       await apiRequest('/api/v1/student/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access}` }, body: JSON.stringify(values) })
       Message.success('保存成功'); setEditVisible(false); fetchProfile()
     } catch { Message.error('保存失败') } finally { setSaving(false) }
+  }
+
+  useEffect(() => {
+    if (pwdCountdown <= 0) return
+    const t = window.setTimeout(() => setPwdCountdown((c) => c - 1), 1000)
+    return () => window.clearTimeout(t)
+  }, [pwdCountdown])
+
+  const loadPwdCaptcha = async () => {
+    try {
+      const data = await apiRequest<{ captcha_id: string; image: string }>('/api/v1/auth/captcha')
+      setPwdCaptchaId(data.captcha_id)
+      setPwdCaptchaImage(data.image)
+      setPwdCaptcha('')
+    } catch {
+      // 忽略，可点击图片重试
+    }
+  }
+
+  const openSecurity = () => {
+    setPwdCode(''); setPwdNew(''); setPwdConfirm(''); setPwdCountdown(0); setPwdCaptcha('')
+    setSecurityVisible(true)
+    void loadPwdCaptcha()
+  }
+
+  const handleSendPwdCode = async () => {
+    if (!profile?.email) return
+    if (!pwdCaptcha.trim()) { Message.warning('请先完成图形验证码'); return }
+    setSendingPwdCode(true)
+    try {
+      const res = await apiRequest<{ cooldown_sec: number; debug_code?: string }>('/api/v1/auth/student/email/send-code', {
+        method: 'POST',
+        body: JSON.stringify({ email: profile.email, scene: 'reset', captcha_id: pwdCaptchaId, captcha_code: pwdCaptcha.trim() }),
+      })
+      setPwdCountdown(res.cooldown_sec || 60)
+      if (res.debug_code) Message.info(`开发环境验证码：${res.debug_code}`)
+      else Message.success('验证码已发送至邮箱，请查收')
+    } catch (e) {
+      Message.error(e instanceof Error ? e.message : '验证码发送失败')
+      void loadPwdCaptcha() // 失败后刷新图形验证码
+    } finally {
+      setSendingPwdCode(false)
+    }
+  }
+
+  const handleResetPwd = async () => {
+    if (!profile?.email) return
+    if (!pwdCode.trim() || !pwdNew || !pwdConfirm) { Message.warning('请完整填写验证码和新密码'); return }
+    if (pwdNew !== pwdConfirm) { Message.warning('两次输入的密码不一致'); return }
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(pwdNew)) { Message.warning('密码至少 8 位，且需包含大写字母、小写字母和数字'); return }
+    setResettingPwd(true)
+    try {
+      await apiRequest('/api/v1/auth/student/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: profile.email, code: pwdCode.trim(), password: pwdNew, confirm_password: pwdConfirm }),
+      })
+      Message.success('密码修改成功，下次登录请使用新密码')
+      setSecurityVisible(false)
+      setPwdCode(''); setPwdNew(''); setPwdConfirm(''); setPwdCountdown(0)
+    } catch (e) {
+      Message.error(e instanceof Error ? e.message : '密码修改失败')
+    } finally {
+      setResettingPwd(false)
+    }
   }
 
   const uploadFile = async (file: File, endpoint: string, onSuccess: (url: string) => void, fn: (v: boolean) => void) => {
@@ -106,7 +180,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const subtitle = [profile?.gender && genderLabel[profile.gender], profile?.age && profile.age+'岁', profile?.college].filter(Boolean).join(' · ') || '完善资料，展示更好的自己'
 
   return (
-    <div style={{ width: '100%', minHeight: '100vh', position: 'relative' }}>
+    <div className="profile-scroll" style={{ width: '100%', position: 'relative' }}>
       <div style={{ position: 'absolute', inset: 0, background: profile?.banner_url ? `url(${profile.banner_url}) center/cover no-repeat` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', zIndex: 0 }} />
       <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(255,255,255,0.95) 70%, #fff 100%)', zIndex: 1 }} />
       <div style={{ position: 'relative', zIndex: 2, padding: '0 28px 40px' }} >
@@ -149,10 +223,41 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           desc="查看和管理日程安排" accentColor="#722ed1" onClick={() => setCalendarView(true)}/>
         <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="查看已提交的简历和附件" accentColor="#f53f3f" onClick={() => setResumeView(true)}/>
         <MenuCard icon={<IconSafe style={{fontSize:26,color:'#00b42a'}}/>} label="账号安全"
-          desc={profile?.email_verified_at?'邮箱已认证':'邮箱未认证'} accentColor="#00b42a"/>
+          desc={(profile?.email_verified_at?'邮箱已认证':'邮箱未认证') + ' · 修改登录密码'} accentColor="#00b42a" onClick={openSecurity}/>
         <MenuCard icon={<IconInfoCircle style={{fontSize:26,color:'#ff7d00'}}/>} label="关于智培职联"
           desc={'注册于 '+(profile?.created_at?new Date(profile.created_at).toLocaleDateString('zh-CN'):'-')} accentColor="#ff7d00"/>
       </div>
+
+      <Modal title="账号安全 · 修改登录密码" visible={securityVisible} onCancel={()=>setSecurityVisible(false)} onOk={handleResetPwd} confirmLoading={resettingPwd} okText="确认修改" cancelText="取消" unmountOnExit>
+        <div style={{display:'flex',flexDirection:'column',gap:14,marginTop:8}}>
+          <Typography.Text type="secondary">通过绑定邮箱接收验证码，验证后即可设置新的登录密码。</Typography.Text>
+          <Input size="large" value={profile?.email || ''} disabled prefix={<IconSafe/>}/>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            <Input size="large" placeholder="输入图形验证码" value={pwdCaptcha} onChange={setPwdCaptcha} style={{flex:1}}/>
+            <img
+              src={pwdCaptchaImage || undefined}
+              alt="图形验证码"
+              title="点击刷新"
+              onClick={() => void loadPwdCaptcha()}
+              style={{height:40,width:112,borderRadius:8,cursor:'pointer',border:'1px solid var(--surface-border)',objectFit:'cover',flexShrink:0,background:'#f5f7fc'}}
+            />
+          </div>
+          <Input
+            size="large"
+            placeholder="输入邮箱验证码"
+            value={pwdCode}
+            onChange={setPwdCode}
+            addAfter={
+              <Button type="text" size="small" loading={sendingPwdCode} disabled={pwdCountdown>0} onClick={handleSendPwdCode}>
+                {pwdCountdown>0?`${pwdCountdown}s`:'发送验证码'}
+              </Button>
+            }
+          />
+          <Input.Password size="large" placeholder="输入新密码" value={pwdNew} onChange={setPwdNew}/>
+          <Input.Password size="large" placeholder="再次输入新密码" value={pwdConfirm} onChange={setPwdConfirm}/>
+          <Typography.Text type="secondary" style={{fontSize:12}}>密码至少 8 位，且需包含大写字母、小写字母和数字。</Typography.Text>
+        </div>
+      </Modal>
 
       <Modal title="编辑个人信息" visible={editVisible} onCancel={()=>setEditVisible(false)} onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消" unmountOnExit>
         <Form form={form} layout="vertical" style={{marginTop:16}}>
