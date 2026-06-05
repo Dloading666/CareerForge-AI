@@ -10,7 +10,7 @@ const { Text } = Typography
 const { TextArea } = Input
 
 interface ModelItem { id: number; display_name: string; provider: string; model_identifier: string; base_url: string; api_key_cipher: string | null; capability: string; protocols: string; status: string; open_to_student: boolean }
-interface AgentItem { id: number; name: string; description: string | null; category: string; icon_name: string | null; icon_color_from: string | null; icon_color_to: string | null; model_config_id: number | null; model_config: ModelItem | null; welcome_message: string | null; suggested_questions: string[] | null; prompt_variables: { name: string; label: string; required: boolean; default: string }[] | null; system_prompt: string | null; temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number; memory_window: number; use_dify: boolean; dify_api_key_cipher: string | null; dify_app_id: string | null; is_enabled: boolean; is_published: boolean }
+interface AgentItem { id: number; name: string; description: string | null; category: string; icon_name: string | null; icon_color_from: string | null; icon_color_to: string | null; model_config_id: number | null; model_config: ModelItem | null; welcome_message: string | null; suggested_questions: string[] | null; prompt_variables: { name: string; label: string; required: boolean; default: string }[] | null; system_prompt: string | null; temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number; memory_window: number; use_dify: boolean; dify_api_key_cipher: string | null; dify_api_base_url: string | null; dify_app_id: string | null; is_enabled: boolean; is_published: boolean }
 
 const CAT_META: Record<string, { label: string; color: string }> = {
   interview: { label: '面试', color: '#165DFF' }, job_search: { label: '求职', color: '#FF6D00' },
@@ -75,7 +75,7 @@ export function AgentManagementPage() {
       name: a.name, desc: a.description || '', cat: a.category, icon: a.icon_name || 'smart_toy',
       cFrom: a.icon_color_from || '#7C4DFF', cTo: a.icon_color_to || '#2962FF',
       model_id: a.model_config_id || undefined, welcome: a.welcome_message || '',
-      use_dify: a.use_dify || false, dify_api_key: '', dify_app_id: a.dify_app_id || '',
+      use_dify: a.use_dify || false, dify_api_key: '', dify_api_base_url: a.dify_api_base_url || 'https://api.dify.ai/v1', dify_app_id: a.dify_app_id || '',
       sq: a.suggested_questions || [], pv: a.prompt_variables || [], sp: a.system_prompt || '',
       temp: a.temperature ?? 0.7, mt: a.max_tokens ?? 4096, tp: a.top_p ?? 0.9,
       fp: a.frequency_penalty ?? 0, pp: a.presence_penalty ?? 0, mw: a.memory_window ?? 10,
@@ -90,7 +90,7 @@ export function AgentManagementPage() {
         name: vals.name, description: vals.desc, category: vals.cat,
         icon_name: vals.icon, icon_color_from: vals.cFrom, icon_color_to: vals.cTo,
         model_config_id: vals.model_id || null, welcome_message: vals.welcome,
-      use_dify: vals.use_dify || false, dify_api_key: vals.dify_api_key || undefined, dify_app_id: vals.dify_app_id || undefined,
+      use_dify: vals.use_dify || false, dify_api_key: vals.dify_api_key || undefined, dify_api_base_url: vals.dify_api_base_url || undefined, dify_app_id: vals.dify_app_id || undefined,
         suggested_questions: (vals.sq || []).filter(Boolean),
         prompt_variables: (vals.pv || []).filter((v: { name: string }) => v.name?.trim()),
         system_prompt: vals.sp, temperature: vals.temp, max_tokens: vals.mt,

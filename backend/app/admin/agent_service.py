@@ -59,12 +59,61 @@ def get_agent(db: Session, agent_id: int) -> Agent:
 
 def get_agent_dict(db: Session, agent_id: int) -> dict: return _agent_to_dict(get_agent(db, agent_id))
 def create_agent(db: Session, payload: AgentCreate) -> dict:
-    a = Agent(); _build_agent(a, payload); db.add(a); db.commit(); db.refresh(a); return _agent_to_dict(a)
+    a = Agent(); _build_agent(a, payload); db.add(a); db.commit(); db.refresh(a);
+    _sync_dify_route(db, a)
+    return _agent_to_dict(a)
 def update_agent(db: Session, agent_id: int, payload: AgentUpdate) -> dict:
-    a = get_agent(db, agent_id); _build_agent(a, payload); db.commit(); db.refresh(a); return _agent_to_dict(a)
+    a = get_agent(db, agent_id); _build_agent(a, payload); db.commit(); db.refresh(a);
+    _sync_dify_route(db, a)
+    return _agent_to_dict(a)
 def delete_agent(db: Session, agent_id: int) -> None: get_agent(db, agent_id).is_deleted = True; db.commit()
 def toggle_agent(db: Session, agent_id: int, *, is_enabled: bool) -> dict:
     a = get_agent(db, agent_id); a.is_enabled = is_enabled; db.commit(); db.refresh(a); return _agent_to_dict(a)
+
+
+def _sync_dify_route(db: Session, agent: Agent) -> None:
+    """Sync agent Dify config to MasterRouteRule so master agent can call it."""
+    if not agent.use_dify or not agent.dify_api_key_cipher or not agent.dify_app_id:
+        return
+    from app.admin.master_models import MasterRouteRule
+    from app.admin.model_service import decrypt_api_key
+    
+    agent_key = f"dify-{agent.id}"
+    existing = db.scalar(
+        select(MasterRouteRule).where(
+            MasterRouteRule.target_agent_key == agent_key,
+            MasterRouteRule.tenant_id == 0,
+        )
+    )
+    
+    api_key = decrypt_api_key(agent.dify_api_key_cipher) if agent.dify_api_key_cipher else ""
+    base_url = (agent.dify_api_base_url or "https://api.dify.ai/v1").rstrip("/")
+    
+    import json
+    provider_config = json.dumps({
+        "api_base_url": base_url,
+        "api_key": api_key,
+        "app_id": agent.dify_app_id or "",
+    }, ensure_ascii=False)
+    
+    if existing:
+        existing.intent = f"??Dify????{agent.name}???????"
+        existing.target_agent_name = agent.name
+        existing.provider_config_json = provider_config
+        existing.enabled = agent.is_enabled
+    else:
+        db.add(MasterRouteRule(
+            tenant_id=0,
+            intent=f"??Dify????{agent.name}???????",
+            target_agent_key=agent_key,
+            target_agent_name=agent.name,
+            target_provider="dify",
+            provider_config_json=provider_config,
+            memory_strategy="isolated",
+            priority=10,
+            enabled=agent.is_enabled,
+        ))
+    db.commit()
 
 def seed_default_agents(db: Session) -> None:
     if db.scalar(select(Agent).where(Agent.is_deleted.is_(False))): return
