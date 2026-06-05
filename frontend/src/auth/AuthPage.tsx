@@ -183,7 +183,8 @@ export function AuthPage() {
     <div className="auth-shell">
       <section className="auth-brand">
         <div className="auth-brand-content">
-          <h1 className="auth-brand-title">智培职联 AI 智能体平台</h1>
+          <img className="auth-brand-logo" src="/baidi.png" alt="CareerForge" />
+          <h1 className="auth-brand-title">CareerForge AI</h1>
         </div>
       </section>
 

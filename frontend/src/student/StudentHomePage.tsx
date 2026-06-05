@@ -38,9 +38,9 @@ export function StudentHomePage() {
     <div className="app-shell">
       <aside className="side-nav">
         <div className="brand-mark">
-          <span className="brand-mark-badge">智</span>
+          <img className="brand-logo" src="/baidi.png" alt="CareerForge" />
           <div>
-            <h1>智培职联</h1>
+            <h1>CareerForge</h1>
             <p>学生端</p>
           </div>
         </div>

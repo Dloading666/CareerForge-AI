@@ -70,6 +70,88 @@ type AgentOption = {
   kind?: string
 }
 type AgentOptionsResponse = AgentOption[] | { items?: AgentOption[]; records?: AgentOption[]; list?: AgentOption[] }
+type McpCallDraft = {
+  serviceId: number | null
+  toolName: string
+  agentId: string
+  input: string
+  result: string
+}
+
+type McpToolRecord = {
+  id?: number
+  name: string
+  description: string
+  risk: string
+  input_schema?: Record<string, unknown>
+  enabled: boolean
+}
+
+type McpServiceRecord = {
+  id: number
+  slug: string
+  name: string
+  description: string
+  category: string
+  transport: string
+  endpoint: string
+  auth_type: string
+  auth_config: string
+  owner: string
+  version: string
+  status: 'enabled' | 'disabled' | 'error'
+  agent_ids: string[]
+  auto_disable_on_error: boolean
+  latency_ms: number | null
+  success_rate: number | null
+  last_checked_at: string | null
+  tools: McpToolRecord[]
+  created_at: string
+  updated_at: string
+}
+
+type McpDraft = {
+  name: string
+  description: string
+  category: string
+  transport: string
+  endpoint: string
+  authType: string
+  authConfig: string
+  owner: string
+  version: string
+  status: 'enabled' | 'disabled' | 'error'
+  agentIds: string[]
+  autoDisableOnError: boolean
+  tools: McpToolRecord[]
+}
+
+type McpCallLogRecord = {
+  id: number
+  service_id: number | null
+  service_name: string
+  tool_name: string
+  agent_id: string
+  agent_name: string
+  request_text: string
+  response: Record<string, unknown>
+  success: boolean
+  latency_ms: number | null
+  error_message: string
+  created_at: string
+}
+
+type ToolPoolItem = {
+  name: string
+  source: 'builtin' | 'skill' | 'mcp'
+  provider: string
+  priority: number
+}
+
+type ToolPoolResponse = {
+  tools: ToolPoolItem[]
+  collisions: Array<{ name: string; kept: string; removed: string }>
+}
 
 const MODELS = [
   {
@@ -115,7 +197,7 @@ const AGENTS = [
     status: '已发布',
     iconTone: 'blue',
     skills: ['面试全流程分析', '能力画像'],
-    mcps: ['就业日历 MCP'],
+    mcps: [],
     kbs: ['面试题库'],
     models: ['DeepSeek V3', 'GPT-4o Mini'],
     callable: true,
@@ -128,7 +210,7 @@ const AGENTS = [
     status: '已发布',
     iconTone: 'green',
     skills: ['岗位匹配打分', '简历解析'],
-    mcps: ['岗位检索 MCP'],
+    mcps: [],
     kbs: ['岗位库', '企业资料库'],
     models: ['DeepSeek V3'],
     callable: true,
@@ -141,7 +223,7 @@ const AGENTS = [
     status: '草稿',
     iconTone: 'orange',
     skills: ['简历全生命周期处理'],
-    mcps: ['网页抓取 MCP'],
+    mcps: [],
     kbs: ['简历范例库'],
     models: ['GPT-4o Mini'],
     callable: false,
@@ -192,76 +274,6 @@ async function fetchAgentOptions(access: string): Promise<AgentOption[]> {
 
   return FALLBACK_AGENT_OPTIONS
 }
-
-const MCP_SERVICES = [
-  {
-    id: 'jobs-search',
-    name: '岗位数据检索 MCP',
-    category: '招聘数据',
-    desc: '聚合校招、社招与企业岗位详情，为岗位匹配和职业规划提供实时数据。',
-    transport: 'Streamable HTTP',
-    endpoint: 'https://jobs-api.local/mcp',
-    status: '已连接',
-    auth: 'Bearer Token',
-    tools: [
-      { name: 'search_jobs', desc: '按城市、薪资、技能检索岗位', risk: '低风险' },
-      { name: 'read_job_detail', desc: '读取岗位详情与任职要求', risk: '低风险' },
-      { name: 'compare_salary', desc: '对比岗位薪资区间', risk: '中风险' },
-    ],
-    agents: ['岗位匹配', '主智能体'],
-    usedBy: 2,
-    latency: '146ms',
-    successRate: '99.2%',
-    owner: '就业数据组',
-    version: 'v1.8.2',
-    visibility: '全平台可用',
-    lastCheck: '今天 10:28',
-  },
-  {
-    id: 'career-calendar',
-    name: '就业日历 MCP',
-    category: '学生服务',
-    desc: '同步宣讲会、网申截止、双选会与面试提醒，支持学生侧待办生成。',
-    transport: 'SSE',
-    endpoint: 'https://calendar.local/events',
-    status: '已连接',
-    auth: 'OAuth 2.0',
-    tools: [
-      { name: 'get_events', desc: '读取就业日历事件', risk: '低风险' },
-      { name: 'create_reminder', desc: '创建个人提醒', risk: '中风险' },
-    ],
-    agents: ['AI 面试官'],
-    usedBy: 1,
-    latency: '98ms',
-    successRate: '99.8%',
-    owner: '学生运营组',
-    version: 'v1.3.0',
-    visibility: '授权智能体可用',
-    lastCheck: '今天 09:42',
-  },
-  {
-    id: 'web-crawler',
-    name: '网页抓取 MCP',
-    category: '内容采集',
-    desc: '抓取公开网页并抽取正文、链接与元信息，供简历优化和企业资料补全使用。',
-    transport: 'stdio',
-    endpoint: 'node crawler-mcp/server.js',
-    status: '异常',
-    auth: '本地沙箱',
-    tools: [
-      { name: 'fetch_page', desc: '拉取公开网页内容', risk: '中风险' },
-      { name: 'extract_links', desc: '提取页面链接', risk: '低风险' },
-    ],
-    agents: ['简历优化'],
-    usedBy: 1,
-    latency: '超时',
-    successRate: '76.4%',
-    owner: '平台工程组',
-    version: 'v0.9.4',
-    visibility: '管理员调试',
-    lastCheck: '昨天 18:21',
-  },
-]
 
 const DEFAULT_SKILL_CONTENT = `---
 name: 简历亮点提炼
@@ -419,6 +431,96 @@ function skillDraftPayload(draft: SkillDraft) {
   }
 }
 
+function createEmptyMcpDraft(): McpDraft {
+  return {
+    name: '',
+    description: '',
+    category: '',
+    transport: 'Streamable HTTP',
+    endpoint: '',
+    authType: '无鉴权',
+    authConfig: '',
+    owner: '',
+    version: 'v1.0.0',
+    status: 'enabled',
+    agentIds: [],
+    autoDisableOnError: true,
+    tools: [],
+  }
+}
+
+function mcpToDraft(service: McpServiceRecord): McpDraft {
+  return {
+    name: service.name,
+    description: service.description,
+    category: service.category,
+    transport: service.transport,
+    endpoint: service.endpoint,
+    authType: service.auth_type,
+    authConfig: service.auth_config,
+    owner: service.owner,
+    version: service.version,
+    status: service.status,
+    agentIds: service.agent_ids,
+    autoDisableOnError: service.auto_disable_on_error,
+    tools: service.tools.length > 0 ? service.tools : [],
+  }
+}
+
+function mcpDraftPayload(draft: McpDraft) {
+  return {
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    category: draft.category.trim() || '通用',
+    transport: draft.transport,
+    endpoint: draft.endpoint.trim(),
+    auth_type: draft.authType,
+    auth_config: draft.authConfig.trim(),
+    owner: draft.owner.trim(),
+    version: draft.version.trim() || 'v1.0.0',
+    status: draft.status,
+    agent_ids: draft.agentIds,
+    auto_disable_on_error: draft.autoDisableOnError,
+    tools: draft.tools
+      .filter((tool) => tool.name.trim())
+      .map((tool) => ({
+        name: tool.name.trim(),
+        description: tool.description.trim(),
+        risk: tool.risk || '低风险',
+        input_schema: tool.input_schema ?? {},
+        enabled: tool.enabled,
+      })),
+  }
+}
+
+function statusLabel(status: McpServiceRecord['status']) {
+  const labels = { enabled: '已启用', disabled: '已停用', error: '异常' }
+  return labels[status]
+}
+
+function statusColor(status: McpServiceRecord['status']) {
+  if (status === 'enabled') return 'green'
+  if (status === 'error') return 'red'
+  return 'gray'
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return '未检测'
+  return new Date(value).toLocaleString('zh-CN', {
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function detailOwnerLabel(service: McpServiceRecord) {
+  return service.owner ? `开发者：${service.owner}` : '未设置开发者'
+}
+
 export function AdminHomePage() {
   const { session, logout } = useAuth()
   const displayName = (session?.profile.display_name as string) || '平台管理员'
@@ -438,8 +540,26 @@ export function AdminHomePage() {
   const [mcpSearch, setMcpSearch] = useState('')
   const [mcpStatusFilter, setMcpStatusFilter] = useState('all')
   const [mcpCategoryFilter, setMcpCategoryFilter] = useState('all')
+  const [mcpServiceTypeFilter, setMcpServiceTypeFilter] = useState<'all' | 'hosted' | 'local'>('all')
+  const [mcps, setMcps] = useState<McpServiceRecord[]>([])
+  const [mcpLogs, setMcpLogs] = useState<McpCallLogRecord[]>([])
+  const [mcpToolPool, setMcpToolPool] = useState<ToolPoolResponse>({ tools: [], collisions: [] })
+  const [mcpLoading, setMcpLoading] = useState(false)
+  const [mcpSaving, setMcpSaving] = useState(false)
+  const [editingMcpId, setEditingMcpId] = useState<number | null>(null)
+  const [showMcpLogs, setShowMcpLogs] = useState(false)
+  const [mcpDetailId, setMcpDetailId] = useState<number | null>(null)
+  const [mcpDetailTab, setMcpDetailTab] = useState('detail')
+  const [mcpDraft, setMcpDraft] = useState<McpDraft>(() => createEmptyMcpDraft())
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>(FALLBACK_AGENT_OPTIONS)
   const [agentOptionsLoading, setAgentOptionsLoading] = useState(false)
+  const [mcpCallDraft, setMcpCallDraft] = useState<McpCallDraft>({
+    serviceId: null,
+    toolName: '',
+    agentId: 'matching',
+    input: '',
+    result: '',
+  })
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('agent')
   const [drawerVisible, setDrawerVisible] = useState(false)
 
@@ -462,18 +582,65 @@ export function AdminHomePage() {
   )
   const filteredMcps = useMemo(() => {
     const keyword = mcpSearch.trim().toLowerCase()
-    return MCP_SERVICES.filter((service) => {
+    return mcps.filter((service) => {
       const matchesKeyword =
         !keyword ||
-        [service.name, service.desc, service.endpoint, service.owner, service.category, ...service.tools.map((tool) => tool.name)]
+        [
+          service.name,
+          service.description,
+          service.endpoint,
+          service.owner,
+          service.category,
+          ...service.tools.map((tool) => tool.name),
+        ]
           .join(' ')
           .toLowerCase()
           .includes(keyword)
       const matchesStatus = mcpStatusFilter === 'all' || service.status === mcpStatusFilter
       const matchesCategory = mcpCategoryFilter === 'all' || service.category === mcpCategoryFilter
-      return matchesKeyword && matchesStatus && matchesCategory
+      const serviceType = service.transport === 'stdio' ? 'local' : 'hosted'
+      const matchesServiceType = mcpServiceTypeFilter === 'all' || serviceType === mcpServiceTypeFilter
+      return matchesKeyword && matchesStatus && matchesCategory && matchesServiceType
     })
-  }, [mcpCategoryFilter, mcpSearch, mcpStatusFilter])
+  }, [mcpCategoryFilter, mcpSearch, mcpServiceTypeFilter, mcpStatusFilter, mcps])
+
+  function patchMcpCallDraft(patch: Partial<McpCallDraft>) {
+    setMcpCallDraft((current) => {
+      const next = { ...current, ...patch }
+      if (patch.serviceId) {
+        const service = mcps.find((item) => item.id === patch.serviceId)
+        next.toolName = service?.tools[0]?.name ?? ''
+      }
+      return { ...next, result: patch.result ?? '' }
+    })
+  }
+
+  async function runMcpCall() {
+    if (!mcpCallDraft.serviceId || !mcpCallDraft.toolName) {
+      setAdminFeedback({ type: 'warning', content: '请先选择 MCP 服务和工具' })
+      return
+    }
+    const agent = agentOptions.find((item) => item.id === mcpCallDraft.agentId)
+    try {
+      const log = await apiRequest<McpCallLogRecord>('/api/v1/admin/mcp-call', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          service_id: mcpCallDraft.serviceId,
+          tool_name: mcpCallDraft.toolName,
+          agent_id: mcpCallDraft.agentId,
+          agent_name: agent?.name ?? mcpCallDraft.agentId,
+          input: mcpCallDraft.input,
+        }),
+      })
+      setMcpCallDraft((current) => ({ ...current, result: JSON.stringify(log.response, null, 2) }))
+      setMcpLogs((current) => [log, ...current])
+      setAdminFeedback({ type: 'success', content: 'MCP 调用已完成并写入日志' })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '调用 MCP 失败'
+      setAdminFeedback({ type: 'error', content: message })
+    }
+  }
 
   useEffect(() => {
     if (!session?.access) {
@@ -515,6 +682,10 @@ export function AdminHomePage() {
       setEditingSkillId(null)
       setSkillDraft(createEmptySkillDraft())
     }
+    if (mode === 'mcp') {
+      openNewMcpDrawer()
+      return
+    }
     setDrawerMode(mode)
     setDrawerVisible(true)
   }
@@ -554,9 +725,141 @@ export function AdminHomePage() {
     }
   }, [session?.access, session?.role])
 
+  useEffect(() => {
+    if (session?.role !== 'admin' || !session.access) {
+      return
+    }
+    loadMcpData()
+  }, [session?.access, session?.role])
+
   function authHeaders() {
     return {
       Authorization: `Bearer ${session?.access ?? ''}`,
+    }
+  }
+
+  async function loadMcpData() {
+    setMcpLoading(true)
+    try {
+      const [serviceData, logData, poolData] = await Promise.all([
+        apiRequest<McpServiceRecord[]>('/api/v1/admin/mcp-services', { headers: authHeaders() }),
+        apiRequest<McpCallLogRecord[]>('/api/v1/admin/mcp-call-logs?limit=50', { headers: authHeaders() }),
+        apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers: authHeaders() }),
+      ])
+      setMcps(serviceData)
+      setMcpLogs(logData)
+      setMcpToolPool(poolData)
+      setMcpCallDraft((current) => {
+        if (current.serviceId && serviceData.some((item) => item.id === current.serviceId)) {
+          return current
+        }
+        const first = serviceData[0]
+        return {
+          ...current,
+          serviceId: first?.id ?? null,
+          toolName: first?.tools[0]?.name ?? '',
+          result: '',
+        }
+      })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '加载 MCP 数据失败'
+      setAdminFeedback({ type: 'error', content: message })
+    } finally {
+      setMcpLoading(false)
+    }
+  }
+
+  function openNewMcpDrawer() {
+    setEditingMcpId(null)
+    setMcpDraft(createEmptyMcpDraft())
+    setDrawerMode('mcp')
+    setDrawerVisible(true)
+  }
+
+  function editMcp(service: McpServiceRecord) {
+    setEditingMcpId(service.id)
+    setMcpDraft(mcpToDraft(service))
+    setDrawerMode('mcp')
+    setDrawerVisible(true)
+  }
+
+  async function saveMcp() {
+    if (!mcpDraft.name.trim() || !mcpDraft.endpoint.trim()) {
+      setAdminFeedback({ type: 'warning', content: '请填写 MCP 名称和命令或 URL' })
+      return
+    }
+    setMcpSaving(true)
+    try {
+      const path = editingMcpId ? `/api/v1/admin/mcp-services/${editingMcpId}` : '/api/v1/admin/mcp-services'
+      const saved = await apiRequest<McpServiceRecord>(path, {
+        method: editingMcpId ? 'PUT' : 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(mcpDraftPayload(mcpDraft)),
+      })
+      setMcps((current) =>
+        editingMcpId ? current.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...current],
+      )
+      const pool = await apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers: authHeaders() })
+      setMcpToolPool(pool)
+      setMcpCallDraft((current) => ({
+        ...current,
+        serviceId: saved.id,
+        toolName: saved.tools[0]?.name ?? '',
+        result: '',
+      }))
+      setAdminFeedback({ type: 'success', content: editingMcpId ? 'MCP 服务已更新' : 'MCP 服务已添加' })
+      setDrawerVisible(false)
+      setEditingMcpId(null)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '保存 MCP 服务失败'
+      setAdminFeedback({ type: 'error', content: message })
+    } finally {
+      setMcpSaving(false)
+    }
+  }
+
+  async function deleteMcp(service: McpServiceRecord) {
+    try {
+      await apiRequest(`/api/v1/admin/mcp-services/${service.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      })
+      setMcps((current) => current.filter((item) => item.id !== service.id))
+      setAdminFeedback({ type: 'success', content: 'MCP 服务已下架' })
+      loadMcpData()
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '下架 MCP 服务失败'
+      setAdminFeedback({ type: 'error', content: message })
+    }
+  }
+
+  async function testMcp(service: McpServiceRecord) {
+    try {
+      const saved = await apiRequest<McpServiceRecord>(`/api/v1/admin/mcp-services/${service.id}/test`, {
+        method: 'POST',
+        headers: authHeaders(),
+      })
+      setMcps((current) => current.map((item) => (item.id === saved.id ? saved : item)))
+      setAdminFeedback({ type: 'success', content: '连接测试已完成' })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '连接测试失败'
+      setAdminFeedback({ type: 'error', content: message })
+    }
+  }
+
+  async function discoverMcp(service: McpServiceRecord) {
+    try {
+      const saved = await apiRequest<McpServiceRecord>(`/api/v1/admin/mcp-services/${service.id}/discover`, {
+        method: 'POST',
+        headers: authHeaders(),
+      })
+      setMcps((current) => current.map((item) => (item.id === saved.id ? saved : item)))
+      const pool = await apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers: authHeaders() })
+      setMcpToolPool(pool)
+      setAdminFeedback({ type: 'success', content: '工具发现已写入数据库' })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '工具发现失败'
+      setAdminFeedback({ type: 'error', content: message })
     }
   }
 
@@ -632,9 +935,9 @@ export function AdminHomePage() {
     <div className="app-shell admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <span className="admin-brand-badge">管</span>
+          <img className="admin-brand-logo" src="/baidi.png" alt="CareerForge" />
           <div>
-            <h1>智培职联</h1>
+            <h1>CareerForge</h1>
             <p>Admin Console</p>
           </div>
         </div>
@@ -661,7 +964,7 @@ export function AdminHomePage() {
 
       <section className="admin-main">
         <header className="admin-topbar">
-          <strong>智培职联 AI Platform</strong>
+          <strong>CareerForge AI Platform</strong>
           <div className="admin-topbar-actions">
             <Input className="admin-search" placeholder="Search..." allowClear />
             <Button icon={<IconNotification />} type="text" />
@@ -699,7 +1002,7 @@ export function AdminHomePage() {
           {activeNav === 'master' ? renderMasterPage(openDrawer) : null}
           {activeNav === 'models' ? <ModelPlaza /> : null}
           {activeNav === 'mcp'
-            ? renderMcpPage(
+            ? renderMcpPage({
                 openDrawer,
                 mcpSearch,
                 setMcpSearch,
@@ -707,8 +1010,28 @@ export function AdminHomePage() {
                 setMcpStatusFilter,
                 mcpCategoryFilter,
                 setMcpCategoryFilter,
+                mcpServiceTypeFilter,
+                setMcpServiceTypeFilter,
                 filteredMcps,
-              )
+                mcps,
+                mcpLogs,
+                mcpToolPool,
+                mcpLoading,
+                showMcpLogs,
+                setShowMcpLogs,
+                mcpDetailId,
+                setMcpDetailId,
+                mcpDetailTab,
+                setMcpDetailTab,
+                agentOptions,
+                mcpCallDraft,
+                patchMcpCallDraft,
+                runMcpCall,
+                onEdit: editMcp,
+                onDelete: deleteMcp,
+                onTest: testMcp,
+                onDiscover: discoverMcp,
+              })
             : null}
           {activeNav === 'skills'
             ? renderSkillsPage({
@@ -745,6 +1068,11 @@ export function AdminHomePage() {
           }))
         }
         onSaveSkill={saveSkill}
+        mcpDraft={mcpDraft}
+        editingMcpId={editingMcpId}
+        mcpSaving={mcpSaving}
+        onMcpDraftChange={(patch) => setMcpDraft((current) => ({ ...current, ...patch }))}
+        onSaveMcp={saveMcp}
         agentOptions={agentOptions}
         agentOptionsLoading={agentOptionsLoading}
         onClose={() => setDrawerVisible(false)}
@@ -848,7 +1176,7 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           <label>
             系统提示词
             <Input.TextArea
-              defaultValue="你是智培职联就业总助手，负责路由子智能体、调用工具和知识库，并以清晰、可执行的建议帮助学生完成求职准备。"
+              defaultValue="你是 CareerForge 就业总助手，负责路由子智能体、调用工具和知识库，并以清晰、可执行的建议帮助学生完成求职准备。"
               autoSize={{ minRows: 4, maxRows: 6 }}
             />
           </label>
@@ -887,178 +1215,391 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderMcpPage(
-  openDrawer: (mode: DrawerMode) => void,
-  mcpSearch: string,
-  setMcpSearch: (value: string) => void,
-  mcpStatusFilter: string,
-  setMcpStatusFilter: (value: string) => void,
-  mcpCategoryFilter: string,
-  setMcpCategoryFilter: (value: string) => void,
-  filteredMcps: typeof MCP_SERVICES,
-) {
-  const connectedCount = MCP_SERVICES.filter((service) => service.status === '已连接').length
-  const abnormalCount = MCP_SERVICES.filter((service) => service.status !== '已连接').length
-  const totalTools = MCP_SERVICES.reduce((sum, service) => sum + service.tools.length, 0)
-  const totalReferences = MCP_SERVICES.reduce((sum, service) => sum + service.usedBy, 0)
-  const categoryOptions = Array.from(new Set(MCP_SERVICES.map((service) => service.category)))
+function renderMcpPage({
+  openDrawer,
+  mcpSearch,
+  setMcpSearch,
+  mcpStatusFilter,
+  setMcpStatusFilter,
+  mcpCategoryFilter,
+  setMcpCategoryFilter,
+  mcpServiceTypeFilter,
+  setMcpServiceTypeFilter,
+  filteredMcps,
+  mcps,
+  mcpLogs,
+  mcpToolPool,
+  mcpLoading,
+  showMcpLogs,
+  setShowMcpLogs,
+  mcpDetailId,
+  setMcpDetailId,
+  mcpDetailTab,
+  setMcpDetailTab,
+  agentOptions,
+  mcpCallDraft,
+  patchMcpCallDraft,
+  runMcpCall,
+  onEdit,
+  onDelete,
+  onTest,
+  onDiscover,
+}: {
+  openDrawer: (mode: DrawerMode) => void
+  mcpSearch: string
+  setMcpSearch: (value: string) => void
+  mcpStatusFilter: string
+  setMcpStatusFilter: (value: string) => void
+  mcpCategoryFilter: string
+  setMcpCategoryFilter: (value: string) => void
+  mcpServiceTypeFilter: 'all' | 'hosted' | 'local'
+  setMcpServiceTypeFilter: (value: 'all' | 'hosted' | 'local') => void
+  filteredMcps: McpServiceRecord[]
+  mcps: McpServiceRecord[]
+  mcpLogs: McpCallLogRecord[]
+  mcpToolPool: ToolPoolResponse
+  mcpLoading: boolean
+  showMcpLogs: boolean
+  setShowMcpLogs: (value: boolean) => void
+  mcpDetailId: number | null
+  setMcpDetailId: (value: number | null) => void
+  mcpDetailTab: string
+  setMcpDetailTab: (value: string) => void
+  agentOptions: AgentOption[]
+  mcpCallDraft: McpCallDraft
+  patchMcpCallDraft: (patch: Partial<McpCallDraft>) => void
+  runMcpCall: () => void
+  onEdit: (service: McpServiceRecord) => void
+  onDelete: (service: McpServiceRecord) => void
+  onTest: (service: McpServiceRecord) => void
+  onDiscover: (service: McpServiceRecord) => void
+}) {
+  const categoryOptions = Array.from(new Set(mcps.map((service) => service.category || '通用').filter(Boolean)))
+  const detailService = mcps.find((service) => service.id === mcpDetailId) ?? null
+  const serviceLogs = detailService ? mcpLogs.filter((log) => log.service_id === detailService.id) : mcpLogs
+
+  function openDetail(service: McpServiceRecord) {
+    setMcpDetailId(service.id)
+    setMcpDetailTab('detail')
+    patchMcpCallDraft({ serviceId: service.id })
+  }
+
+  if (detailService) {
+    return (
+      <div className="mcp-workspace mcp-detail-page">
+        <section className="mcp-detail-hero">
+          <div className="mcp-detail-topline">
+            <div className="mcp-detail-title">
+              <span className="resource-icon blue">
+                <IconSafe />
+              </span>
+              <div>
+                <h2>{detailService.name}</h2>
+                <p>{detailService.description || '管理员尚未填写服务介绍。'}</p>
+                <div className="mcp-detail-tags">
+                  <Tag color={statusColor(detailService.status)}>{statusLabel(detailService.status)}</Tag>
+                  <Tag color={detailService.transport === 'Streamable HTTP' ? 'arcoblue' : 'green'}>{detailService.transport}</Tag>
+                  <Tag bordered>{detailService.category || '通用'}</Tag>
+                  <Tag bordered>{detailService.owner || '未设置负责人'}</Tag>
+                </div>
+              </div>
+            </div>
+            <Button className="mcp-back-button" type="outline" onClick={() => setMcpDetailId(null)}>
+              ← 返回 MCP 广场
+            </Button>
+          </div>
+          <div className="mcp-detail-actions">
+            <Button type="outline" icon={<IconSettings />} onClick={() => onEdit(detailService)}>
+              编辑配置
+            </Button>
+            <Popconfirm title={`确定下架 ${detailService.name} 吗？`} okText="下架" cancelText="取消" onOk={() => onDelete(detailService)}>
+              <Button type="outline" status="danger" icon={<IconPoweroff />}>
+                下架
+              </Button>
+            </Popconfirm>
+            <Button type="primary" icon={<IconRobot />} onClick={() => setMcpDetailTab('test')}>
+              工具测试
+            </Button>
+          </div>
+        </section>
+
+        <Tabs className="mcp-detail-tabs" activeTab={mcpDetailTab} onChange={setMcpDetailTab}>
+          <Tabs.TabPane key="detail" title="服务详情">
+            <section className="mcp-detail-layout">
+              <article className="mcp-doc-panel">
+                <h3>获取 MCP 服务器</h3>
+                <p>{detailService.description || '该 MCP 服务已接入数据库，可被授权智能体按工具清单调用。'}</p>
+                <h3>可用工具</h3>
+                {detailService.tools.length > 0 ? (
+                  <div className="mcp-doc-tool-list">
+                    {detailService.tools.map((tool) => (
+                      <div key={tool.name}>
+                        <strong>{tool.name}</strong>
+                        <span>{tool.description || '暂无工具说明'}</span>
+                        <Tag color={tool.risk === '高风险' ? 'red' : tool.risk === '中风险' ? 'orange' : 'green'}>{tool.risk}</Tag>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mcp-empty-mini">还没有工具。管理员可以点击“发现”或“编辑配置”维护工具清单。</div>
+                )}
+                <h3>Agent 调用边界</h3>
+                <p>只有下方服务配置中授权的主 Agent 或子智能体可以调用该 MCP。保存后，工具会进入统一工具池，由主 Agent 编排时注入模型。</p>
+              </article>
+
+              <aside className="mcp-config-panel">
+                <div className="mcp-config-head">
+                  <strong>服务配置</strong>
+                  <Tag color="green">可部署</Tag>
+                </div>
+                <div className="mcp-config-card">
+                  <span>传输类型</span>
+                  <strong>{detailService.transport}</strong>
+                </div>
+                <div className="mcp-config-card">
+                  <span>连接地址</span>
+                  <strong>{detailService.endpoint}</strong>
+                </div>
+                <div className="mcp-config-grid">
+                  <div>
+                    <span>鉴权类型</span>
+                    <strong>{detailService.auth_type}</strong>
+                  </div>
+                  <div>
+                    <span>最近检测</span>
+                    <strong>{formatDateTime(detailService.last_checked_at)}</strong>
+                  </div>
+                </div>
+                <Button type="primary" long onClick={() => onTest(detailService)}>
+                  连接测试
+                </Button>
+                <Button long type="outline" onClick={() => onDiscover(detailService)}>
+                  工具发现
+                </Button>
+              </aside>
+            </section>
+          </Tabs.TabPane>
+
+          <Tabs.TabPane key="test" title="工具测试">
+            <section className="mcp-detail-layout">
+              <article className="mcp-doc-panel">
+                <div className="mcp-call-form is-horizontal">
+                  <Select value={mcpCallDraft.agentId} placeholder="调用智能体" onChange={(value) => patchMcpCallDraft({ agentId: value })}>
+                    {agentOptions.map((agent) => (
+                      <Select.Option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                  <Select value={mcpCallDraft.toolName || undefined} placeholder="工具" onChange={(value) => patchMcpCallDraft({ toolName: value })}>
+                    {detailService.tools.map((tool) => (
+                      <Select.Option key={tool.name} value={tool.name}>
+                        {tool.name}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </div>
+                <Input.TextArea
+                  value={mcpCallDraft.input}
+                  autoSize={{ minRows: 5, maxRows: 8 }}
+                  placeholder="输入工具参数，例如岗位关键词、城市、薪资范围"
+                  onChange={(value) => patchMcpCallDraft({ input: value })}
+                />
+                <Button type="primary" icon={<IconRobot />} disabled={!detailService.tools.length} onClick={runMcpCall}>
+                  执行调用
+                </Button>
+                <pre className="mcp-call-result is-detail">
+                  {mcpCallDraft.result || '执行结果会显示智能体、工具、请求参数、结构化响应和 trace。'}
+                </pre>
+              </article>
+              <aside className="mcp-config-panel">
+                <div className="mcp-config-head">
+                  <strong>已授权智能体</strong>
+                </div>
+                <div className="mcp-agent-chip-list">
+                  {detailService.agent_ids.length ? (
+                    detailService.agent_ids.map((agentId) => {
+                      const agent = agentOptions.find((item) => item.id === agentId)
+                      return <Tag key={agentId} color="arcoblue">{agent?.name ?? agentId}</Tag>
+                    })
+                  ) : (
+                    <Tag color="orange">未授权</Tag>
+                  )}
+                </div>
+                <div className="mcp-tool-pool">
+                  <div className="mcp-tool-pool-head">
+                    <strong>Agent 工具池</strong>
+                    <span>内置工具优先，其次 Skill，最后合并已启用 MCP 工具。</span>
+                  </div>
+                  {mcpToolPool.tools.map((tool) => (
+                    <div key={`${tool.source}-${tool.name}`} className="mcp-tool-pool-row">
+                      <div>
+                        <strong>{tool.name}</strong>
+                        <span>{tool.provider}</span>
+                      </div>
+                      <Tag color={tool.source === 'builtin' ? 'green' : tool.source === 'skill' ? 'arcoblue' : 'orange'} bordered>
+                        {tool.source === 'builtin' ? '内置' : tool.source === 'skill' ? 'Skill' : 'MCP'}
+                      </Tag>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+            </section>
+          </Tabs.TabPane>
+
+          <Tabs.TabPane key="logs" title={`调用日志 ${serviceLogs.length}`}>
+            <section className="mcp-doc-panel">
+              {serviceLogs.length > 0 ? (
+                serviceLogs.map((log) => (
+                  <div key={log.id} className="mcp-log-row">
+                    <div>
+                      <strong>{log.agent_name}</strong>
+                      <span>
+                        {log.service_name} / {log.tool_name} · {formatDateTime(log.created_at)}
+                      </span>
+                    </div>
+                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '失败'}</Tag>
+                  </div>
+                ))
+              ) : (
+                <div className="mcp-empty-mini">暂无调用日志</div>
+              )}
+            </section>
+          </Tabs.TabPane>
+        </Tabs>
+      </div>
+    )
+  }
 
   return (
     <div className="mcp-workspace">
-      <section className="mcp-metric-grid">
-        {[
-          { label: '已连接服务', value: connectedCount, tone: 'green' },
-          { label: '异常待处理', value: abnormalCount, tone: 'orange' },
-          { label: '可调用工具', value: totalTools, tone: 'blue' },
-          { label: '智能体引用', value: totalReferences, tone: 'purple' },
-        ].map((item) => (
-          <div key={item.label} className="mcp-metric-card">
-            <span className={`resource-icon ${item.tone}`}>
-              <IconSafe />
-            </span>
-            <div>
-              <strong>{item.value}</strong>
-              <p>{item.label}</p>
-            </div>
-          </div>
-        ))}
-      </section>
-
-      <section className="mcp-toolbar">
+      <section className="mcp-market-top">
+        <div className="mcp-market-title">
+          <strong>MCP 服务</strong>
+          <Tag bordered>MCP 体验</Tag>
+        </div>
         <Input
-          className="mcp-toolbar-search"
+          className="mcp-market-search"
           allowClear
-          placeholder="搜索服务、工具、Endpoint 或负责人"
+          placeholder={`搜索 MCP 服务（共 ${mcps.length} 个）`}
           value={mcpSearch}
           onChange={setMcpSearch}
         />
-        <Select value={mcpStatusFilter} onChange={setMcpStatusFilter} className="mcp-toolbar-select">
-          <Select.Option value="all">全部状态</Select.Option>
-          <Select.Option value="已连接">已连接</Select.Option>
-          <Select.Option value="异常">异常</Select.Option>
-        </Select>
-        <Select value={mcpCategoryFilter} onChange={setMcpCategoryFilter} className="mcp-toolbar-select">
-          <Select.Option value="all">全部分类</Select.Option>
-          {categoryOptions.map((category) => (
-            <Select.Option key={category} value={category}>
-              {category}
-            </Select.Option>
-          ))}
-        </Select>
-        <Button type="outline" icon={<IconHistory />}>
-          审计日志
-        </Button>
-        <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
-          添加服务
-        </Button>
+        <div className="mcp-type-filter">
+          <span>服务类型：</span>
+          <Button type={mcpServiceTypeFilter === 'hosted' ? 'primary' : 'outline'} onClick={() => setMcpServiceTypeFilter(mcpServiceTypeFilter === 'hosted' ? 'all' : 'hosted')}>
+            Hosted
+          </Button>
+          <Button type={mcpServiceTypeFilter === 'local' ? 'primary' : 'outline'} onClick={() => setMcpServiceTypeFilter(mcpServiceTypeFilter === 'local' ? 'all' : 'local')}>
+            Local
+          </Button>
+        </div>
       </section>
 
-      <section className="mcp-management-grid">
-        <div className="mcp-service-list">
-          {filteredMcps.map((service) => (
-            <article key={service.id} className="mcp-service-row">
-              <div className="mcp-service-main">
-                <span className={`resource-icon ${service.status === '已连接' ? 'green' : 'orange'}`}>
-                  <IconSafe />
-                </span>
-                <div>
-                  <div className="mcp-service-title">
-                    <h3>{service.name}</h3>
-                    <Tag color={service.status === '已连接' ? 'green' : 'red'}>{service.status}</Tag>
-                    <Tag bordered>{service.category}</Tag>
-                  </div>
-                  <p>{service.desc}</p>
-                  <div className="mcp-service-meta">
-                    <span>{service.transport}</span>
-                    <span>{service.endpoint}</span>
-                    <span>{service.owner}</span>
-                    <span>{service.version}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mcp-service-health">
-                <div>
-                  <span>延迟</span>
-                  <strong>{service.latency}</strong>
-                </div>
-                <div>
-                  <span>成功率</span>
-                  <strong>{service.successRate}</strong>
-                </div>
-                <div>
-                  <span>最近检测</span>
-                  <strong>{service.lastCheck}</strong>
-                </div>
-              </div>
-
-              <div className="mcp-tool-preview">
-                {service.tools.map((tool) => (
-                  <Tag key={tool.name} bordered>
-                    {tool.name}
-                  </Tag>
-                ))}
-              </div>
-
-              <div className="mcp-row-actions">
-                <Button type="text" size="small" icon={<IconHistory />}>
-                  测试
-                </Button>
-                <Button type="text" size="small" icon={<IconSettings />} onClick={() => openDrawer('mcp')}>
-                  编辑
-                </Button>
-                <Popconfirm title={`确定下架 ${service.name} 吗？`} okText="下架" cancelText="取消">
-                  <Button type="text" status="danger" size="small" icon={<IconPoweroff />}>
-                    下架
-                  </Button>
-                </Popconfirm>
-              </div>
-            </article>
+      <section className="mcp-market-shell">
+        <aside className="mcp-category-rail">
+          <button className={mcpCategoryFilter === 'all' ? 'active' : ''} type="button" onClick={() => setMcpCategoryFilter('all')}>
+            <span>全部服务</span>
+            <b>{mcps.length}</b>
+          </button>
+          {categoryOptions.map((category) => (
+            <button
+              key={category}
+              className={mcpCategoryFilter === category ? 'active' : ''}
+              type="button"
+              onClick={() => setMcpCategoryFilter(category)}
+            >
+              <span>{category}</span>
+              <b>{mcps.filter((service) => (service.category || '通用') === category).length}</b>
+            </button>
           ))}
-
-          {filteredMcps.length === 0 ? (
-            <div className="mcp-empty-state">
-              <IconSafe />
-              <strong>没有匹配的 MCP 服务</strong>
-              <span>调整筛选条件或新建一个服务接入配置。</span>
-            </div>
-          ) : null}
-        </div>
-
-        <aside className="mcp-governance-panel">
-          <div className="admin-section-title">
-            <h3>商业化治理设计</h3>
-            <p>MCP 服务上线前必须完成鉴权、工具暴露、授权范围、审计与降级策略配置。</p>
-          </div>
-          <div className="mcp-governance-list">
-            {[
-              ['接入协议', '支持 stdio / SSE / Streamable HTTP，统一连接测试与工具发现。'],
-              ['权限边界', '按租户、角色、智能体三层授权，敏感工具需二次确认。'],
-              ['运行保障', '记录延迟、成功率、最近检测时间，异常时自动从主智能体路由中摘除。'],
-              ['CRUD 管理', '新增、编辑、下架、复制配置、审计日志都集中在当前工作台完成。'],
-            ].map(([title, desc]) => (
-              <div key={title} className="mcp-governance-item">
-                <strong>{title}</strong>
-                <span>{desc}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mcp-tool-table">
-            <h4>工具暴露清单</h4>
-            {MCP_SERVICES.flatMap((service) =>
-              service.tools.map((tool) => (
-                <div key={`${service.id}-${tool.name}`} className="mcp-tool-row">
-                  <div>
-                    <strong>{tool.name}</strong>
-                    <span>{service.name}</span>
-                  </div>
-                  <Tag color={tool.risk === '中风险' ? 'orange' : 'green'}>{tool.risk}</Tag>
-                </div>
-              )),
-            )}
-          </div>
         </aside>
+
+        <div className="mcp-market-main">
+          <div className="mcp-market-toolbar">
+            <div className="mcp-result-line">
+              <span>
+                共找到 <b>{filteredMcps.length}</b> 个结果
+              </span>
+              {mcpCategoryFilter !== 'all' ? (
+                <Tag closable onClose={() => setMcpCategoryFilter('all')}>
+                  {mcpCategoryFilter}
+                </Tag>
+              ) : null}
+            </div>
+            <Select value={mcpStatusFilter} onChange={setMcpStatusFilter}>
+              <Select.Option value="all">全部状态</Select.Option>
+              <Select.Option value="enabled">已启用</Select.Option>
+              <Select.Option value="disabled">已停用</Select.Option>
+              <Select.Option value="error">异常</Select.Option>
+            </Select>
+            <Button type="outline" icon={<IconHistory />} onClick={() => setShowMcpLogs(!showMcpLogs)}>
+              {showMcpLogs ? '回到服务' : '审计记录'}
+            </Button>
+            <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
+              添加服务
+            </Button>
+          </div>
+
+          {showMcpLogs ? (
+            <section className="mcp-doc-panel">
+              {mcpLogs.length > 0 ? (
+                mcpLogs.map((log) => (
+                  <div key={log.id} className="mcp-log-row">
+                    <div>
+                      <strong>{log.agent_name}</strong>
+                      <span>
+                        {log.service_name} / {log.tool_name} · {formatDateTime(log.created_at)}
+                      </span>
+                    </div>
+                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '失败'}</Tag>
+                  </div>
+                ))
+              ) : (
+                <div className="mcp-empty-mini">暂无调用日志</div>
+              )}
+            </section>
+          ) : (
+            <section className="mcp-card-grid">
+              {mcpLoading ? <div className="mcp-empty-state">正在读取数据库 MCP 服务...</div> : null}
+              {!mcpLoading && filteredMcps.map((service) => (
+                <article key={service.id} className="mcp-market-card" onClick={() => openDetail(service)}>
+                  <div className="mcp-market-card-head">
+                    <div>
+                      <h3>{service.name}</h3>
+                      <div>
+                        <Tag color={service.transport === 'Streamable HTTP' ? 'arcoblue' : 'green'}>{service.transport}</Tag>
+                        <Tag color={statusColor(service.status)}>{statusLabel(service.status)}</Tag>
+                      </div>
+                    </div>
+                    <span className="mcp-card-logo">{service.name.slice(0, 1).toUpperCase()}</span>
+                  </div>
+                  <p>{service.description || '管理员尚未填写服务介绍。'}</p>
+                  <div className="mcp-market-card-tags">
+                    <Tag bordered>{service.category || '通用'}</Tag>
+                    <Tag bordered>{detailOwnerLabel(service)}</Tag>
+                    <Tag bordered>{service.tools.length} 工具</Tag>
+                  </div>
+                  <div className="mcp-market-card-foot">
+                    <span>@{service.slug}</span>
+                    <span>{service.latency_ms ? `${service.latency_ms}ms` : '未测试'}</span>
+                    <span>{formatDateTime(service.last_checked_at)}</span>
+                  </div>
+                </article>
+              ))}
+              {!mcpLoading && filteredMcps.length === 0 ? (
+                <div className="mcp-empty-state">
+                  <IconSafe />
+                  <strong>{mcps.length === 0 ? '还没有 MCP 服务' : '没有匹配的 MCP 服务'}</strong>
+                  <span>{mcps.length === 0 ? '数据库中暂无记录，请手动添加第一个 MCP 服务。' : '调整筛选条件或新建一个服务接入配置。'}</span>
+                  <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
+                    添加 MCP 服务
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+          )}
+        </div>
       </section>
     </div>
   )
@@ -1275,9 +1816,14 @@ function AdminConfigDrawer({
   skillDraft,
   editingSkillId,
   skillSaving,
+  mcpDraft,
+  editingMcpId,
+  mcpSaving,
   onSkillDraftChange,
   onSkillFileUpload,
   onSaveSkill,
+  onMcpDraftChange,
+  onSaveMcp,
   agentOptions,
   agentOptionsLoading,
   onClose,
@@ -1289,9 +1835,14 @@ function AdminConfigDrawer({
   skillDraft: SkillDraft
   editingSkillId: number | null
   skillSaving: boolean
+  mcpDraft: McpDraft
+  editingMcpId: number | null
+  mcpSaving: boolean
   onSkillDraftChange: (patch: Partial<SkillDraft>) => void
   onSkillFileUpload: (fileName: string, content: string) => void
   onSaveSkill: () => void
+  onMcpDraftChange: (patch: Partial<McpDraft>) => void
+  onSaveMcp: () => void
   agentOptions: AgentOption[]
   agentOptionsLoading: boolean
   onClose: () => void
@@ -1300,10 +1851,12 @@ function AdminConfigDrawer({
     agent: `配置智能体 · ${selectedAgent.name}`,
     master: '编辑主智能体配置',
     model: '添加模型',
-    mcp: '添加 MCP 服务',
+    mcp: editingMcpId ? '编辑 MCP 服务' : '添加 MCP 服务',
     skill: editingSkillId ? '编辑 Skill 文件' : '添加 Skill 文件',
     knowledge: '新建知识库',
   }
+  const isSaving = mode === 'skill' ? skillSaving : mode === 'mcp' ? mcpSaving : false
+  const onSave = mode === 'skill' ? onSaveSkill : mode === 'mcp' ? onSaveMcp : onClose
 
   return (
     <Drawer
@@ -1315,7 +1868,7 @@ function AdminConfigDrawer({
       footer={
         <div className="drawer-footer">
           <Button onClick={onClose}>取消</Button>
-          <Button type="primary" loading={mode === 'skill' ? skillSaving : false} onClick={mode === 'skill' ? onSaveSkill : onClose}>
+          <Button type="primary" loading={isSaving} onClick={onSave}>
             保存
           </Button>
         </div>
@@ -1324,7 +1877,14 @@ function AdminConfigDrawer({
       {mode === 'agent' ? <AgentDrawerContent agent={selectedAgent} skillNames={skillNames} /> : null}
       {mode === 'master' ? <MasterDrawerContent /> : null}
       {mode === 'model' ? <ModelDrawerContent /> : null}
-      {mode === 'mcp' ? <McpDrawerContent agentOptions={agentOptions} agentOptionsLoading={agentOptionsLoading} /> : null}
+      {mode === 'mcp' ? (
+        <McpDrawerContent
+          draft={mcpDraft}
+          onChange={onMcpDraftChange}
+          agentOptions={agentOptions}
+          agentOptionsLoading={agentOptionsLoading}
+        />
+      ) : null}
       {mode === 'skill' ? (
         <SkillDrawerContent draft={skillDraft} onChange={onSkillDraftChange} onFileUpload={onSkillFileUpload} />
       ) : null}
@@ -1346,7 +1906,7 @@ function AgentDrawerContent({ agent, skillNames }: { agent: (typeof AGENTS)[numb
         ))}
       </Select>
       <Checkbox.Group defaultValue={agent.skills} options={skillNames} />
-      <Checkbox.Group defaultValue={agent.mcps} options={MCP_SERVICES.map((service) => service.name)} />
+      <Checkbox.Group defaultValue={agent.mcps} options={Array.from(new Set(AGENTS.flatMap((item) => item.mcps)))} />
       <Checkbox.Group defaultValue={agent.kbs} options={KNOWLEDGE_BASES.map((kb) => kb.name)} />
       <div className="switch-list">
         <Switch defaultChecked={agent.callable} />
@@ -1406,78 +1966,172 @@ function ModelDrawerContent() {
 }
 
 function McpDrawerContent({
+  draft,
+  onChange,
   agentOptions,
   agentOptionsLoading,
 }: {
+  draft: McpDraft
+  onChange: (patch: Partial<McpDraft>) => void
   agentOptions: AgentOption[]
   agentOptionsLoading: boolean
 }) {
+  function updateTool(index: number, patch: Partial<McpToolRecord>) {
+    onChange({
+      tools: draft.tools.map((tool, itemIndex) => (itemIndex === index ? { ...tool, ...patch } : tool)),
+    })
+  }
+
+  function addTool() {
+    onChange({
+      tools: [...draft.tools, { name: '', description: '', risk: '低风险', enabled: true, input_schema: {} }],
+    })
+  }
+
+  function removeTool(index: number) {
+    onChange({ tools: draft.tools.filter((_, itemIndex) => itemIndex !== index) })
+  }
+
   return (
-    <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Input defaultValue="岗位数据检索 MCP" addBefore="名称" />
-      <Input.TextArea
-        defaultValue="聚合校招、社招与企业岗位详情，为岗位匹配和职业规划提供实时数据。"
-        autoSize={{ minRows: 3, maxRows: 4 }}
-      />
-      <Select defaultValue="招聘数据" placeholder="服务分类">
-        {['招聘数据', '学生服务', '内容采集', '企业资料', '平台治理'].map((item) => (
-          <Select.Option key={item} value={item}>
-            {item}
-          </Select.Option>
-        ))}
-      </Select>
-      <Select defaultValue="Streamable HTTP" placeholder="传输方式">
-        {['stdio', 'SSE', 'Streamable HTTP'].map((item) => (
-          <Select.Option key={item} value={item}>
-            {item}
-          </Select.Option>
-        ))}
-      </Select>
-      <Input defaultValue="https://jobs-api.local/mcp" addBefore="命令或 URL" />
-      <Select defaultValue="Bearer Token" placeholder="鉴权方式">
-        {['无鉴权', 'Bearer Token', 'API Key', 'OAuth 2.0', '本地沙箱'].map((item) => (
-          <Select.Option key={item} value={item}>
-            {item}
-          </Select.Option>
-        ))}
-      </Select>
-      <Input defaultValue="Authorization: Bearer ${JOB_MCP_TOKEN}" addBefore="鉴权配置" />
-      <Input defaultValue="就业数据组" addBefore="负责人" />
-      <Select
-        mode="multiple"
-        defaultValue={['matching', 'master']}
-        loading={agentOptionsLoading}
-        placeholder="选择可调用该 MCP 的智能体"
-        showSearch
-      >
-        {agentOptions.map((agent) => (
-          <Select.Option key={agent.id} value={agent.id}>
-            {agent.name}
-          </Select.Option>
-        ))}
-      </Select>
-      <div className="mcp-form-section">
-        <strong>工具发现结果</strong>
-        {MCP_SERVICES[0].tools.map((tool) => (
-          <div key={tool.name} className="mcp-drawer-tool">
-            <div>
-              <span>{tool.name}</span>
-              <small>{tool.desc}</small>
+    <div className="mcp-apple-form">
+      <div className="mcp-apple-hero">
+        <div>
+          <span>MCP Service</span>
+          <h3>添加可被智能体调用的工具服务</h3>
+        </div>
+        <Tag color="arcoblue" bordered>
+          Database
+        </Tag>
+      </div>
+
+      <section className="mcp-apple-card">
+        <div className="mcp-apple-card-head">
+          <strong>服务身份</strong>
+          <span>手动录入后保存到数据库，用于广场检索和智能体路由</span>
+        </div>
+        <Input value={draft.name} placeholder="MCP 服务名称" addBefore="名称" onChange={(value) => onChange({ name: value })} />
+        <Input.TextArea
+          value={draft.description}
+          placeholder="描述这个 MCP 可以提供哪些业务能力"
+          autoSize={{ minRows: 3, maxRows: 4 }}
+          onChange={(value) => onChange({ description: value })}
+        />
+        <div className="mcp-apple-grid">
+          <Select value={draft.category || undefined} placeholder="服务分类" onChange={(value) => onChange({ category: value })}>
+            {['招聘数据', '学生服务', '搜索工具', '企业资料', '内容采集', '文档处理', '日程协同', '平台治理', '通用'].map((item) => (
+              <Select.Option key={item} value={item}>
+                {item}
+              </Select.Option>
+            ))}
+          </Select>
+          <Input value={draft.owner} placeholder="负责人或团队" addBefore="负责人" onChange={(value) => onChange({ owner: value })} />
+        </div>
+      </section>
+
+      <section className="mcp-apple-card">
+        <div className="mcp-apple-card-head">
+          <strong>连接协议</strong>
+          <span>支持 stdio / SSE / Streamable HTTP，保存后可进行连接测试</span>
+        </div>
+        <Select value={draft.transport} placeholder="传输方式" onChange={(value) => onChange({ transport: value })}>
+          {['stdio', 'SSE', 'Streamable HTTP'].map((item) => (
+            <Select.Option key={item} value={item}>
+              {item}
+            </Select.Option>
+          ))}
+        </Select>
+        <Input value={draft.endpoint} placeholder="命令或 URL" addBefore="地址" onChange={(value) => onChange({ endpoint: value })} />
+        <div className="mcp-apple-grid">
+          <Select value={draft.authType} placeholder="鉴权方式" onChange={(value) => onChange({ authType: value })}>
+            {['无鉴权', 'Bearer Token', 'API Key', 'OAuth 2.0', '本地沙箱'].map((item) => (
+              <Select.Option key={item} value={item}>
+                {item}
+              </Select.Option>
+            ))}
+          </Select>
+          <Input value={draft.authConfig} placeholder="鉴权配置" addBefore="鉴权" onChange={(value) => onChange({ authConfig: value })} />
+        </div>
+      </section>
+
+      <section className="mcp-apple-card">
+        <div className="mcp-apple-card-head">
+          <strong>智能体授权</strong>
+          <span>这里读取真实智能体接口；只有被授权的智能体才能调用</span>
+        </div>
+        <Select
+          mode="multiple"
+          value={draft.agentIds}
+          loading={agentOptionsLoading}
+          placeholder="选择可调用该 MCP 的智能体"
+          showSearch
+          onChange={(value) => onChange({ agentIds: value })}
+        >
+          {agentOptions.map((agent) => (
+            <Select.Option key={agent.id} value={agent.id}>
+              {agent.name}
+            </Select.Option>
+          ))}
+        </Select>
+      </section>
+
+      <section className="mcp-apple-card">
+        <div className="mcp-apple-card-head">
+          <strong>工具暴露</strong>
+          <span>手动维护 MCP 暴露的工具；保存后进入 Agent 工具池</span>
+        </div>
+        <div className="mcp-tool-editor">
+          {draft.tools.map((tool, index) => (
+            <div key={index} className="mcp-tool-editor-row">
+              <Input value={tool.name} placeholder="工具名，如 web_search" onChange={(value) => updateTool(index, { name: value })} />
+              <Input value={tool.description} placeholder="工具说明" onChange={(value) => updateTool(index, { description: value })} />
+              <Select value={tool.risk} onChange={(value) => updateTool(index, { risk: value })}>
+                <Select.Option value="低风险">低风险</Select.Option>
+                <Select.Option value="中风险">中风险</Select.Option>
+                <Select.Option value="高风险">高风险</Select.Option>
+              </Select>
+              <Button type="text" status="danger" onClick={() => removeTool(index)}>
+                删除
+              </Button>
             </div>
-            <Tag color={tool.risk === '中风险' ? 'orange' : 'green'}>{tool.risk}</Tag>
-          </div>
-        ))}
+          ))}
+          {draft.tools.length === 0 ? <div className="mcp-empty-mini">还没有工具，保存服务后也可以稍后发现或编辑。</div> : null}
+          <Button type="outline" icon={<IconPlus />} onClick={addTool}>
+            添加工具
+          </Button>
+        </div>
+      </section>
+
+      <section className="mcp-apple-card">
+        <div className="mcp-apple-card-head">
+          <strong>工具池策略</strong>
+          <span>发布后按优先级注入给模型，避免同名工具冲突</span>
+        </div>
+        <div className="mcp-priority-flow">
+          {[
+            ['1', '内置工具', '硬编码能力，最高优先级'],
+            ['2', 'Skill 工具', '从数据库动态加载'],
+            ['3', 'MCP 工具', '运行时发现并合并'],
+          ].map(([step, title, desc]) => (
+            <div key={title}>
+              <b>{step}</b>
+              <strong>{title}</strong>
+              <span>{desc}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="mcp-apple-switches">
+        <div className="switch-list">
+          <Switch checked={draft.status === 'enabled'} onChange={(checked) => onChange({ status: checked ? 'enabled' : 'disabled' })} />
+          <span>启用服务</span>
+        </div>
+        <div className="switch-list">
+          <Switch checked={draft.autoDisableOnError} onChange={(checked) => onChange({ autoDisableOnError: checked })} />
+          <span>异常时自动从智能体路由中摘除</span>
+        </div>
       </div>
-      <div className="test-result success">发现 3 个工具：search_jobs / read_job_detail / compare_salary</div>
-      <div className="switch-list">
-        <Switch defaultChecked />
-        <span>启用服务</span>
-      </div>
-      <div className="switch-list">
-        <Switch defaultChecked />
-        <span>异常时自动从主智能体路由中摘除</span>
-      </div>
-    </Space>
+    </div>
   )
 }
 
