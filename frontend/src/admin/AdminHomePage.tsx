@@ -1018,7 +1018,7 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            {activeNav !== 'master' && (
+            {activeNav !== 'master' && activeNav !== 'models' && (
               <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
                 {meta.action}
               </Button>
