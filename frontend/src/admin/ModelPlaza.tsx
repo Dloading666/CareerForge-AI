@@ -85,7 +85,7 @@ export function ModelPlaza() {
       <div className="admin-card-grid">
         {models.map(m => { const lat = latencyMap[m.id]; const dl = DEPLOY_LABELS[m.deploy_type] ?? { text: m.deploy_type, color: 'gray' }; return (
           <Card key={m.id} className="admin-card model-card" hoverable>
-            <div className="model-card-top"><Space size={6}><Tag color={dl.color}>{dl.text}</Tag>{(() => { const cl = CAPABILITY_LABELS[m.capability]; return cl ? <Tag color={cl.color}>{cl.text}</Tag> : null })()}</Space></div>
+            <div className="model-card-top"><Space size={6}><Tag color={dl.color}>{dl.text}</Tag>{(() => { const cl = CAPABILITY_LABELS[m.capability]; return cl ? <Tag color={cl.color}>{cl.text}</Tag> : <Tag color='gray'>{m.capability}</Tag> })()}</Space></div>
             <h3>{m.display_name}</h3>
             <div className="meta-list">
               <span>模型：{m.model_identifier}</span>
