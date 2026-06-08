@@ -14,6 +14,7 @@ from app.core.response import ok, error
 from app.infra.db import get_db
 from app.student.agent_runtime import (
     create_session,
+    delete_session,
     get_history,
     list_available_models,
     list_sessions,
@@ -92,6 +93,17 @@ def list_master_models(
 ):
     identity, _ = current
     return ok([item.model_dump(mode="json") for item in list_available_models(db, identity)])
+
+
+@router.delete("/master/sessions/{session_id}")
+def delete_master_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    delete_session(db, identity, session_id)
+    return ok({"id": session_id}, msg="deleted")
 
 
 @router.get("/master/sessions/{session_id}/messages")
