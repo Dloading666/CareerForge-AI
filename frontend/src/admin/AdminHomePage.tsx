@@ -19,6 +19,7 @@
 } from '@arco-design/web-react'
 import {
   IconApps,
+  IconBug,
   IconDashboard,
   IconExperiment,
   IconHistory,
@@ -37,8 +38,9 @@ import { useAuth } from '../shared/auth'
 import { ModelPlaza } from './ModelPlaza'
 import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
+import { FeedbackPage } from './FeedbackPage'
 
-type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
+type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings' | 'feedback'
 type DrawerMode = 'agent' | 'master' | 'model' | 'mcp' | 'skill' | 'knowledge'
 type SkillStatus = 'enabled' | 'disabled'
 
@@ -382,6 +384,12 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; d
     action: '新建知识库',
     drawer: 'knowledge',
   },
+  feedback: {
+    title: '用户反馈',
+    desc: '查看和处理学生提交的Bug反馈与功能建议。',
+    action: '',
+    drawer: '' as DrawerMode,
+  },
   settings: {
     title: '系统设置',
     desc: '管理账号、权限和平台运行偏好。',
@@ -681,6 +689,7 @@ export function AdminHomePage() {
     { key: 'mcp', icon: <IconSafe />, label: 'MCP 广场' },
     { key: 'skills', icon: <IconApps />, label: 'Skills 广场' },
     { key: 'knowledge', icon: <IconHistory />, label: '知识库' },
+    { key: 'feedback', icon: <IconBug />, label: '用户反馈' },
     { key: 'settings', icon: <IconSettings />, label: '系统设置' },
   ]
 
@@ -1081,6 +1090,7 @@ export function AdminHomePage() {
               })
             : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
+          {activeNav === 'feedback' ? <FeedbackPage /> : null}
           {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout) : null}
         </main>
       </section>

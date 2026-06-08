@@ -36,5 +36,8 @@ fi
 echo "Running database migrations..."
 alembic upgrade head
 
-echo "Starting server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+# High-concurrency: multiple workers with tuned timeouts
+# WEB_CONCURRENCY env overrides worker count; defaults to 4
+WORKERS=${WEB_CONCURRENCY:-4}
+echo "Starting server with $WORKERS workers..."
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "$WORKERS" --limit-concurrency 1000 --backlog 2048 --timeout-keep-alive 30
