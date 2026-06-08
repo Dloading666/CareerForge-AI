@@ -368,7 +368,7 @@ export function AgentManagementPage() {
             </Form>
           </Tabs.TabPane>
 
-          <Tabs.TabPane key='model' title='⚙️ 模型参数'> style={{ display: difyOn ? 'none' : undefined }}>
+          <Tabs.TabPane key='model' title='⚙️ 模型参数' style={{ display: difyOn ? 'none' : undefined }}>
               <Form form={form} layout='vertical'>
                 <Form.Item label='绑定模型' field='model_id'>
                   <Select options={mOpts} placeholder='选择模型（先在模型广场配 API Key）' allowClear />
