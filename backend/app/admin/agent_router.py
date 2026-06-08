@@ -54,6 +54,18 @@ class DifyTestRequest(BaseModel):
     api_base_url: str
     api_key: str
 
+@router.get("/options")
+def api_list_agent_options(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    """Return lightweight agent list for dropdowns (id, name, status, kind)."""
+    agents = list_agents(db)
+    return ok([{
+        "id": str(a["id"]),
+        "name": a["name"],
+        "status": "enabled" if a["is_enabled"] else "disabled",
+        "kind": "dify" if a["use_dify"] else "builtin",
+    } for a in agents])
+
+
 @router.post("/test-dify")
 async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
     """Test Dify connection - probes app info + parameters, then tests matched endpoint."""
