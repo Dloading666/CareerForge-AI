@@ -99,10 +99,10 @@ export function ModelPlaza() {
             </div>
             <div className="admin-card-footer">
               <Space size={6}>{m.protocols.split(',').filter(Boolean).map(p => <Tag key={p}>{p.trim()}</Tag>)}<Tag>{m.provider}</Tag></Space>
-              <div style={{ display: 'flex', gap: 4 }}>
-                <Button type="text" size="mini" icon={<IconPlayArrow />} loading={testingIds.has(m.id)} onClick={() => handleTest(m.id)} />
-                <Button type="text" size="mini" icon={<IconEdit />} onClick={() => openForm(m)} />
-                <Popconfirm title="确定删除？" onOk={() => handleDelete(m.id)}><Button type="text" size="mini" status="danger" icon={<IconDelete />} /></Popconfirm>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Button type="text" size="small" icon={<IconPlayArrow />} loading={testingIds.has(m.id)} onClick={() => handleTest(m.id)} />
+                <Button type="text" size="small" icon={<IconEdit />} onClick={() => openForm(m)} />
+                <Popconfirm title="确定删除？" onOk={() => handleDelete(m.id)}><Button type="text" size="small" status="danger" icon={<IconDelete />} /></Popconfirm>
               </div>
             </div>
             <div className="student-open-switch"><span>对学生开放</span><Switch checked={m.open_to_student} onChange={v => handleToggleOpen(m.id, v)} /></div>

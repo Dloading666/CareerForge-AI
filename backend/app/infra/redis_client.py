@@ -9,13 +9,23 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _client: _redis.Redis | None = None
+_pool: _redis.ConnectionPool | None = None
 
 
 def get_redis() -> _redis.Redis:
-    global _client
+    global _client, _pool
     if _client is None:
         settings = get_settings()
-        _client = _redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        _pool = _redis.ConnectionPool.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            max_connections=50,
+            socket_timeout=5,
+            socket_connect_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
+        _client = _redis.Redis(connection_pool=_pool)
     return _client
 
 

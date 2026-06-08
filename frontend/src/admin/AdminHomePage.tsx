@@ -19,7 +19,7 @@
 } from '@arco-design/web-react'
 import {
   IconApps,
-  IconArrowLeft,
+  IconBug,
   IconDashboard,
   IconExperiment,
   IconHistory,
@@ -38,8 +38,9 @@ import { useAuth } from '../shared/auth'
 import { ModelPlaza } from './ModelPlaza'
 import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
+import { FeedbackPage } from './FeedbackPage'
 
-type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
+type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings' | 'feedback'
 type DrawerMode = 'agent' | 'master' | 'model' | 'mcp' | 'skill' | 'knowledge'
 type SkillStatus = 'enabled' | 'disabled'
 
@@ -383,6 +384,12 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; d
     action: '新建知识库',
     drawer: 'knowledge',
   },
+  feedback: {
+    title: '用户反馈',
+    desc: '查看和处理学生提交的Bug反馈与功能建议。',
+    action: '',
+    drawer: '' as DrawerMode,
+  },
   settings: {
     title: '系统设置',
     desc: '管理账号、权限和平台运行偏好。',
@@ -532,7 +539,6 @@ export function AdminHomePage() {
   const displayName = (session?.profile.display_name as string) || '平台管理员'
   const avatarUrl = (session?.profile.avatar_url as string) || ''
   const [avatarKey, setAvatarKey] = useState(0)
-  const [settingsTab, setSettingsTab] = useState<string>('')
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
   
@@ -683,6 +689,7 @@ export function AdminHomePage() {
     { key: 'mcp', icon: <IconSafe />, label: 'MCP 广场' },
     { key: 'skills', icon: <IconApps />, label: 'Skills 广场' },
     { key: 'knowledge', icon: <IconHistory />, label: '知识库' },
+    { key: 'feedback', icon: <IconBug />, label: '用户反馈' },
     { key: 'settings', icon: <IconSettings />, label: '系统设置' },
   ]
 
@@ -1083,7 +1090,8 @@ export function AdminHomePage() {
               })
             : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
-          {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, settingsTab, setSettingsTab, logout) : null}
+          {activeNav === 'feedback' ? <FeedbackPage /> : null}
+          {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout) : null}
         </main>
       </section>
 
@@ -1705,138 +1713,81 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
   )
 }
 
-function renderSettingsPage(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, settingsTab: string, setSettingsTab: (v: string | ((prev: string) => string)) => void, logout: () => void) {
-
-  if (settingsTab === 'account') return renderAccountSection(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout, () => setSettingsTab(''))
-  if (settingsTab === 'system') return <><div style={{ marginBottom: 16 }}><Button type="text" onClick={() => setSettingsTab('')} style={{ padding: 0, color: "#165dff" }}>← 返回</Button></div><SystemSettings /></>
-
+function renderSettingsPage(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, logout: () => void) {
   return (
-    <div>
-      <div className="admin-section-title" style={{ marginBottom: 24 }}>
-        <h3>系统设置</h3>
-        <p>管理账号、系统配置与应用偏好。</p>
-      </div>
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        {/* 账号信息卡片 */}
-        <div
-          onClick={() => setSettingsTab('account')}
-          style={{
-            flex: '1 1 180px', minWidth: 160, maxWidth: 220,
-            padding: '24px 20px', borderRadius: 16, cursor: 'pointer',
-            background: '#fff', border: '1px solid #e5e6eb',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#165dff'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(22,93,255,0.12)' }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e6eb'; e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.04)' }}
-        >
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #e8f0ff, #d0e0ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-            <IconUser style={{ fontSize: 24, color: '#165dff' }} />
-          </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>账号信息</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>头像、昵称、邮箱与退出</p>
-        </div>
-
-        {/* 系统配置卡片 */}
-        <div
-          onClick={() => setSettingsTab('system')}
-          style={{
-            flex: '1 1 180px', minWidth: 160, maxWidth: 220,
-            padding: '24px 20px', borderRadius: 16, cursor: 'pointer',
-            background: '#fff', border: '1px solid #e5e6eb',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#165dff'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(22,93,255,0.12)' }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e6eb'; e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.04)' }}
-        >
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #e8fff0, #d0ffe0)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-            <IconSettings style={{ fontSize: 24, color: '#00b42a' }} />
-          </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>系统配置</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>公告、维护模式、平台名称</p>
-        </div>
-
-        {/* 运行偏好卡片 */}
-        <div
-          style={{
-            flex: '1 1 180px', minWidth: 160, maxWidth: 220,
-            padding: '24px 20px', borderRadius: 16,
-            background: '#fff', border: '1px solid #e5e6eb',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
-            opacity: 0.5,
-          }}
-        >
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #fff0e8, #ffe0d0)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-            <IconSafe style={{ fontSize: 24, color: '#ff7d00' }} />
-          </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>运行偏好</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>即将推出 · 审计与通知策略</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function renderAccountSection(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, logout: () => void, onBack: () => void) {
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-        <Button type="text" icon={<IconArrowLeft />} onClick={onBack} />
-        <h3 style={{ margin: 0 }}>账号信息</h3>
-      </div>
-      <section className="form-surface">
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <Avatar size={80} style={{ marginBottom: 12 }}>
+    <div style={{ display: "flex", gap: 24, height: "100%", overflow: "hidden" }}>
+      {/* Left: Account Info */}
+      <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{
+          background: "#fff", borderRadius: 16, padding: "28px 24px",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.03)", border: "1px solid transparent",
+          textAlign: "center",
+        }}>
+          <Avatar size={88} style={{ marginBottom: 16, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
             {avatarUrl ? (
               <img key={avatarKey} src={avatarUrl} alt="avatar" />
             ) : (
-              <IconUser />
+              <IconUser style={{ fontSize: 36 }} />
             )}
           </Avatar>
-          <div style={{ marginTop: 12 }}>
-            <Upload
-              showUploadList={false}
-              accept=".png,.jpg,.jpeg,.gif,.webp"
-              customRequest={async (option) => {
-                const formData = new FormData()
-                formData.append('file', option.file)
-                try {
-                  await apiRequest<{ avatar_url: string }>('/api/v1/auth/avatar', {
-                    method: 'POST',
-                    body: formData,
-                  })
-                  setAvatarKey(k => k + 1)
-                  Message.success('头像上传成功')
-                  setTimeout(() => window.location.reload(), 500)
-                } catch (err) {
-                  Message.error(err instanceof ApiError ? err.message : '上传失败')
-                }
-              }}
-            >
-              <Button size="small" type="outline">上传头像</Button>
-            </Upload>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--color-text-1)", marginBottom: 4 }}>
+            {displayName}
           </div>
+          <div style={{ fontSize: 13, color: "var(--color-text-3)", marginBottom: 16 }}>
+            {email || "未绑定邮箱"}
+          </div>
+          <Upload
+            showUploadList={false}
+            accept=".png,.jpg,.jpeg,.gif,.webp"
+            customRequest={async (option) => {
+              const formData = new FormData()
+              formData.append("file", option.file)
+              try {
+                await apiRequest<{ avatar_url: string }>("/api/v1/auth/avatar", {
+                  method: "POST",
+                  body: formData,
+                })
+                setAvatarKey(k => k + 1)
+                Message.success("头像上传成功")
+                setTimeout(() => window.location.reload(), 500)
+              } catch (err) {
+                Message.error(err instanceof ApiError ? err.message : "上传失败")
+              }
+            }}
+          >
+            <Button size="small" type="outline" long>更换头像</Button>
+          </Upload>
         </div>
-        <div className="setting-field">
-          <span>当前账号</span>
-          <strong>{displayName}</strong>
+
+        <div style={{
+          background: "#fff", borderRadius: 16, padding: "16px 24px",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.03)", border: "1px solid transparent",
+        }}>
+          <div style={{ fontSize: 13, color: "var(--color-text-3)", marginBottom: 8 }}>运行偏好</div>
+          <div className="switch-list" style={{ marginBottom: 10 }}>
+            <Switch defaultChecked size="small" />
+            <span style={{ fontSize: 13 }}>操作审计</span>
+          </div>
+          <div className="switch-list" style={{ marginBottom: 16 }}>
+            <Switch defaultChecked size="small" />
+            <span style={{ fontSize: 13 }}>异常通知</span>
+          </div>
+          <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
+            <Button type="outline" status="danger" icon={<IconPoweroff />} long>
+              退出登录
+            </Button>
+          </Popconfirm>
         </div>
-        <div className="setting-field">
-          <span>邮箱</span>
-          <strong>{email || '未绑定'}</strong>
-        </div>
-      </section>
-      <section className="form-surface" style={{ marginTop: 16 }}>
-        <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-          <Button type="outline" status="danger" icon={<IconPoweroff />} long>
-            退出登录
-          </Button>
-        </Popconfirm>
-      </section>
+      </div>
+
+      {/* Right: Settings Cards */}
+      <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
+        <SystemSettings />
+      </div>
     </div>
   )
 }
+
 
 function AbilityChips({ title, items, compact = false }: { title: string; items: string[]; compact?: boolean }) {
   return (

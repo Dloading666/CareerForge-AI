@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import uuid
@@ -31,6 +31,9 @@ from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student.router import router as student_router
 from app.student.event_router import router as event_router
+from app.student.announcement_router import router as announcement_router
+from app.student.feedback_router import router as feedback_router
+from app.admin.feedback_router import router as admin_feedback_router
 from app.student.attachment_router import router as attachment_router
 
 AVATAR_DIR = Path("/app/data/avatars")
@@ -42,10 +45,27 @@ BANNER_DIR.mkdir(parents=True, exist_ok=True)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # Ensure user_feedback table exists
+    from sqlalchemy import text as _text
+    with engine.connect() as _conn:
+        _conn.execute(_text(
+            "CREATE TABLE IF NOT EXISTS user_feedback ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  student_id INT NOT NULL,"
+            "  student_name VARCHAR(100),"
+            "  student_email VARCHAR(200),"
+            "  description TEXT NOT NULL,"
+            "  category VARCHAR(50) DEFAULT 'bug',"
+            "  screenshot_path VARCHAR(500),"
+            "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  status VARCHAR(20) DEFAULT 'open'"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        ))
+        _conn.commit()
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)
-        seed_default_models(db)   # 先种子模型（智能体依赖模型）
+        seed_default_models(db)   # 鍏堢瀛愭ā鍨嬶紙鏅鸿兘浣撲緷璧栨ā鍨嬶級
         seed_default_agents(db)
     finally:
         db.close()
@@ -70,6 +90,8 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_frontend_origins,
     allow_methods=["*"], allow_headers=["*"])
 
 os.makedirs("data/avatars", exist_ok=True)
+os.makedirs("/app/data/feedbacks", exist_ok=True)
+app.mount("/feedback-images", StaticFiles(directory="/app/data/feedbacks"), name="feedback-images")
 app.mount("/data", StaticFiles(directory="data"), name="data")
 
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
@@ -79,6 +101,9 @@ app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
 app.include_router(mcp_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(event_router, prefix=settings.api_v1_prefix)
+app.include_router(announcement_router, prefix=settings.api_v1_prefix)
+app.include_router(feedback_router, prefix=settings.api_v1_prefix)
+app.include_router(admin_feedback_router, prefix=settings.api_v1_prefix)
 app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 
