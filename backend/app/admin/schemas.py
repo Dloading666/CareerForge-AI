@@ -71,6 +71,49 @@ class ModelTestResponse(BaseModel):
     model_id: int; tested_at: datetime
 
 
+
+# ── 公告管理 ─────────────────────────────────────
+
+class AnnouncementCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    content: str = Field(min_length=1)
+    announcement_type: str = Field(default="info", pattern=r"^(info|warning|success|error)$")
+    priority: int = Field(default=0, ge=0, le=99)
+    is_active: bool = True
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+
+
+class AnnouncementUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    content: Optional[str] = None
+    announcement_type: Optional[str] = Field(default=None, pattern=r"^(info|warning|success|error)$")
+    priority: Optional[int] = Field(default=None, ge=0, le=99)
+    is_active: Optional[bool] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+
+
+class AnnouncementResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+    announcement_type: str
+    priority: int
+    is_active: bool
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class AnnouncementListResponse(BaseModel):
+    list: list[AnnouncementResponse]
+    total: int
+
+
 class SystemConfigItem(BaseModel):
     config_key: str; config_value: str | None = None
 

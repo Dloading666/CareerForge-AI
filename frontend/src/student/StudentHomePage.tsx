@@ -31,6 +31,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 import { ApiError, apiRequest } from '../shared/api'
+import { AnnouncementBellDropdown, AnnouncementBanner } from './StudentAnnouncementBar'
 import { AgentPlaza } from './AgentPlaza'
 import { ProfilePage } from './ProfilePage'
 import { useAuth } from '../shared/auth'
@@ -964,6 +965,7 @@ export function StudentHomePage() {
             <h2>就业助手</h2>
           </div>
           <div className="topbar-actions">
+            <AnnouncementBellDropdown />
             <Dropdown
               droplist={
                 <Menu>
@@ -1004,6 +1006,7 @@ export function StudentHomePage() {
             <div ref={threadRef} className="agent-thread">
               {bootingAgent && <div className="agent-system-line">正在连接主智能体会话…</div>}
               {notice && <div className="agent-error-line">{notice}</div>}
+              <AnnouncementBanner />
 
               {!bootingAgent && messages.length === 0 && (
                 <section className="agent-empty-state">

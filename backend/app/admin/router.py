@@ -11,9 +11,11 @@ from app.admin.master_service import (
 from app.admin.model_service import (
     create_model, delete_model, get_all_config, get_model_detail,
     list_models, test_batch, test_model_connection, toggle_open, update_config, update_model,
+    list_announcements, create_announcement, get_announcement, update_announcement, delete_announcement,
 )
 from app.admin.schemas import (
     ModelCreate, ModelListQuery, ModelToggleOpen, ModelUpdate, SystemConfigUpdate,
+    AnnouncementCreate, AnnouncementUpdate,
 )
 from app.auth.service import require_role
 from app.core.response import ok
@@ -90,6 +92,28 @@ def api_delete_route(route_id: int, db: Session = Depends(get_db), _current=Depe
     delete_route(db, route_id); return ok(msg="已删除")
 
 
+# ── 公告管理 ─────────────────────────────────────
+
+@router.get("/announcements")
+def api_list_announcements(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), active_only: bool = Query(False), db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(list_announcements(db, page, size, active_only).model_dump())
+
+@router.post("/announcements", status_code=201)
+def api_create_announcement(payload: AnnouncementCreate, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    user_id = _current[1].id
+    return ok(create_announcement(db, payload, user_id).model_dump())
+
+@router.get("/announcements/{ann_id}")
+def api_get_announcement(ann_id: int, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(get_announcement(db, ann_id).model_dump())
+
+@router.put("/announcements/{ann_id}")
+def api_update_announcement(ann_id: int, payload: AnnouncementUpdate, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    return ok(update_announcement(db, ann_id, payload).model_dump())
+
+@router.delete("/announcements/{ann_id}")
+def api_delete_announcement(ann_id: int, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    delete_announcement(db, ann_id); return ok(msg="已删除")
 # ── 系统设置 ─────────────────────────────────────
 
 @router.get("/system/config")

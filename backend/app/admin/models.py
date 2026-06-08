@@ -1,4 +1,4 @@
-"""模型广场 + 系统设置 — SQLAlchemy 模型"""
+﻿"""妯″瀷骞垮満 + 绯荤粺璁剧疆 鈥?SQLAlchemy 妯″瀷"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -57,6 +57,19 @@ class SystemConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+
+class Announcement(TimestampMixin, Base):
+    """公告"""
+    __tablename__ = "announcements"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    announcement_type: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 class Agent(TimestampMixin, Base):
     __tablename__ = "agent"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

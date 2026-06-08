@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import uuid
@@ -31,6 +31,7 @@ from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student.router import router as student_router
 from app.student.event_router import router as event_router
+from app.student.announcement_router import router as announcement_router
 from app.student.attachment_router import router as attachment_router
 
 AVATAR_DIR = Path("/app/data/avatars")
@@ -45,7 +46,7 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)
-        seed_default_models(db)   # 先种子模型（智能体依赖模型）
+        seed_default_models(db)   # 鍏堢瀛愭ā鍨嬶紙鏅鸿兘浣撲緷璧栨ā鍨嬶級
         seed_default_agents(db)
     finally:
         db.close()
@@ -79,6 +80,7 @@ app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
 app.include_router(mcp_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(event_router, prefix=settings.api_v1_prefix)
+app.include_router(announcement_router, prefix=settings.api_v1_prefix)
 app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 

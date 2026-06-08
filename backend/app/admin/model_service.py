@@ -220,6 +220,65 @@ DEFAULT_CONFIG: dict[str, str] = {
 }
 
 
+
+# ── 公告管理 ─────────────────────────────────────
+
+from app.admin.models import Announcement
+from app.admin.schemas import AnnouncementCreate, AnnouncementUpdate, AnnouncementResponse, AnnouncementListResponse
+
+
+def list_announcements(db: Session, page: int = 1, size: int = 20, active_only: bool = False) -> AnnouncementListResponse:
+    stmt = select(Announcement)
+    if active_only:
+        stmt = stmt.where(Announcement.is_active == True)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.scalars(stmt.order_by(Announcement.priority.desc(), Announcement.created_at.desc()).offset((page - 1) * size).limit(size)).all()
+    return AnnouncementListResponse(
+        list=[AnnouncementResponse.model_validate(r) for r in rows],
+        total=total or 0,
+    )
+
+
+def create_announcement(db: Session, payload: AnnouncementCreate, user_id: int | None = None) -> AnnouncementResponse:
+    ann = Announcement(
+        title=payload.title,
+        content=payload.content,
+        announcement_type=payload.announcement_type,
+        priority=payload.priority,
+        is_active=payload.is_active,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        created_by=user_id,
+    )
+    db.add(ann); db.commit(); db.refresh(ann)
+    return AnnouncementResponse.model_validate(ann)
+
+
+def get_announcement(db: Session, ann_id: int) -> AnnouncementResponse:
+    ann = db.scalar(select(Announcement).where(Announcement.id == ann_id))
+    if not ann:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Announcement not found")
+    return AnnouncementResponse.model_validate(ann)
+
+
+def update_announcement(db: Session, ann_id: int, payload: AnnouncementUpdate) -> AnnouncementResponse:
+    ann = db.scalar(select(Announcement).where(Announcement.id == ann_id))
+    if not ann:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Announcement not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(ann, field, value)
+    db.commit(); db.refresh(ann)
+    return AnnouncementResponse.model_validate(ann)
+
+
+def delete_announcement(db: Session, ann_id: int) -> None:
+    ann = db.scalar(select(Announcement).where(Announcement.id == ann_id))
+    if not ann:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Announcement not found")
+    db.delete(ann)
+    db.commit()
+
 def get_all_config(db: Session) -> dict[str, str | None]:
     rows = db.scalars(select(SystemConfig)).all()
     config = {r.config_key: r.config_value for r in rows}
