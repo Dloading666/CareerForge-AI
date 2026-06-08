@@ -71,6 +71,7 @@ export function AgentManagementPage() {
   const [cIn, setCIn] = useState('')
   const [difyTestResult, setDifyTestResult] = useState<string | null>(null)
   const [difyTesting, setDifyTesting] = useState(false)
+  const [difyOn, setDifyOn] = useState(false)
   const [cLoading, setCLoading] = useState(false)
   const [vVals, setVVals] = useState<Record<string, string>>({})
   const cEnd = useRef<HTMLDivElement>(null)
@@ -92,7 +93,7 @@ export function AgentManagementPage() {
   useEffect(() => { fetchAgents() }, [fetchAgents])
   useEffect(() => { fetchModels() }, [fetchModels])
   useEffect(() => {
-    const h = () => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true) }
+    const h = () => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true); setDifyOn(false) }
     window.addEventListener('agent-create', h); return () => window.removeEventListener('agent-create', h)
   }, [])
   useEffect(() => { cEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
@@ -113,6 +114,7 @@ export function AgentManagementPage() {
       fp: a.frequency_penalty ?? 0, pp: a.presence_penalty ?? 0, mw: a.memory_window ?? 10,
       enabled: a.is_enabled, pub: a.is_published,
     })
+    setDifyOn(a.use_dify || false)
     setTab('basic')
     setDrawer(true)
   }
@@ -221,7 +223,7 @@ export function AgentManagementPage() {
           <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 4, display: 'block' }}>创建和管理 AI 智能体，支持内置模型和 Dify 平台接入</Text>
         </div>
         <Button type='primary' icon={<IconPlus />} shape='round' size='large'
-          onClick={() => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true) }}
+          onClick={() => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true); setDifyOn(false) }}
           style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', border: 'none', fontWeight: 600, borderRadius: 24, height: 40, padding: '0 24px' }}>
           创建智能体
         </Button>
@@ -340,9 +342,9 @@ export function AgentManagementPage() {
           <Tabs.TabPane key='dify' title='🔗 Dify'>
             <Form form={form} layout='vertical'>
               <Form.Item label='启用 Dify' field='use_dify' triggerPropName='checked'>
-                <Switch />
+                <Switch onChange={(v) => setDifyOn(v)} />
               </Form.Item>
-              {form.getFieldValue?.('use_dify') && (
+              {difyOn && (
                 <div style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)', borderRadius: 12, padding: 16, border: '1px solid #C7D2FE' }}>
                   <Form.Item label='API Base URL' field='dify_api_base_url' rules={[{ required: true, message: '请输入' }]}>
                     <Input placeholder='https://api.dify.ai/v1' />
@@ -366,7 +368,7 @@ export function AgentManagementPage() {
             </Form>
           </Tabs.TabPane>
 
-          {!form.getFieldValue?.('use_dify') && (
+          {!difyOn && (
             <Tabs.TabPane key='model' title='⚙️ 模型参数'>
               <Form form={form} layout='vertical'>
                 <Form.Item label='绑定模型' field='model_id'>
