@@ -1,4 +1,4 @@
-import {
+﻿import {
   Alert,
   Avatar,
   Button,
@@ -1020,11 +1020,7 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            {activeNav !== 'master' && activeNav !== 'models' && (
-              <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
-                {meta.action}
-              </Button>
-            )}
+
           </div>
 
           {adminFeedback ? (
@@ -1145,7 +1141,7 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
             <Switch defaultChecked />
             <span>子智能体记忆独立隔离，仅结果摘要回流主对话</span>
           </div>
-          <Button type="primary" onClick={() => openDrawer('master')}>
+          <Button type="primary" onClick={() => openDrawer('master')} style={{ alignSelf: 'flex-start' }}>
             保存编排配置
           </Button>
         </div>
@@ -1493,7 +1489,7 @@ function renderMcpPage({
             <Button type="outline" icon={<IconHistory />} onClick={() => setShowMcpLogs(!showMcpLogs)}>
               {showMcpLogs ? '回到服务' : '审计记录'}
             </Button>
-            <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
+            <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer("mcp")} style={{ background: "linear-gradient(135deg, #165dff, #2c73ff)", border: "none", borderRadius: 8, boxShadow: "0 4px 14px rgba(22,93,255,0.3)", fontWeight: 500 }}>
               添加服务
             </Button>
           </div>
