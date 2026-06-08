@@ -29,6 +29,7 @@ from app.student.agent_models import (
     StudentAgentSession,
 )
 from app.student.agent_schemas import AgentActivityResponse, AgentAttachmentResponse, AgentModelOptionResponse
+from app.student.tool_validation import parse_tool_arguments
 
 
 # ── Value objects ──────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ class PlannedToolCall:
 # "chat" option in the admin form), so the student side must accept those — plus
 # "chat" for backward compatibility. Embedding / rerank models are excluded.
 CHAT_CAPABLE_CAPABILITIES = ("text", "multimodal", "chat")
+AUTO_ATTACHMENT_PROMPT = "请帮我分析上传的附件。"
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -564,6 +566,14 @@ async def stream_master_reply(
     session = get_session_or_404(db, identity, session_id)
     user_message = _save_message(db, session, "user", content.strip())
     attachments = _claim_message_attachments(db, identity, session, user_message, attachment_ids)
+    if (
+        content.strip() == AUTO_ATTACHMENT_PROMPT
+        and attachments
+        and all(attachment.content_type.startswith("image/") for attachment in attachments)
+        and session.title == AUTO_ATTACHMENT_PROMPT
+    ):
+        session.title = "图片分析"
+        db.commit()
     yield dumps_event("message.saved", {"message_id": user_message.id})
 
     model = _select_chat_model(db, identity.tenant_id, model_id)
@@ -612,14 +622,14 @@ async def stream_master_reply(
     async for event_name, data in run_agent_loop(
         db, identity, session, user_message, assistant_message,
         model, messages, openai_tools, registry, attachments, reasoning_effort,
-        max_iterations, permission_mode,
+        max_iterations, permission_mode, config.temperature, config.max_tokens,
     ):
         if event_name == "message.delta":
             full_content += str(data.get("delta", ""))
         yield dumps_event(event_name, data)
 
     if not full_content.strip():
-        full_content = _fallback_answer(content, [])
+        full_content = _configured_fallback_answer(config, content)
         yield dumps_event("message.delta", {"message_id": assistant_message.id, "delta": full_content})
 
     assistant_message.content = full_content
@@ -1355,6 +1365,19 @@ def _fallback_answer(user_text: str, observations: list[RuntimeObservation]) -> 
     )
 
 
+def _configured_fallback_answer(config: Any, user_text: str) -> str:
+    mode = str(getattr(config, "fallback_mode", "") or "direct_answer").lower()
+    custom_message = str(getattr(config, "fallback_message", "") or "").strip()
+    if mode == "guide_message":
+        return custom_message or (
+            "这次我没能完成处理。你可以补充目标岗位、简历或具体问题后重试，"
+            "我会重新选择合适的工具继续处理。"
+        )
+    if mode == "error":
+        return custom_message or "主智能体暂时无法完成本次请求，请稍后重试。"
+    return _fallback_answer(user_text, [])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Agentic Loop（Model + Harness）—— Model 只提议工具，Harness 负责执行/校验/审计
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1540,6 +1563,8 @@ async def run_agent_loop(
     reasoning_effort: str,
     max_iterations: int,
     permission_mode: str = "ask",
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """The harness-owned ReAct loop. Yields (sse_event_name, data) tuples."""
     assistant_id = assistant_message.id
@@ -1549,7 +1574,9 @@ async def run_agent_loop(
         turn_tool_calls: list[dict[str, Any]] = []
         turn_error = False
 
-        async for kind, value in _stream_llm_turn(model, messages, openai_tools, reasoning_effort):
+        async for kind, value in _stream_llm_turn(
+            model, messages, openai_tools, reasoning_effort, temperature, max_tokens
+        ):
             if kind == "delta":
                 yield "message.delta", {"message_id": assistant_id, "delta": value}
             elif kind == "error":
@@ -1560,7 +1587,9 @@ async def run_agent_loop(
 
         # 模型不支持 tools（请求报错）→ 降级：去掉 tools 再要一次纯文本回答。
         if turn_error and not turn_tool_calls:
-            async for kind, value in _stream_llm_turn(model, messages, [], reasoning_effort):
+            async for kind, value in _stream_llm_turn(
+                model, messages, [], reasoning_effort, temperature, max_tokens
+            ):
                 if kind == "delta":
                     yield "message.delta", {"message_id": assistant_id, "delta": value}
             return
@@ -1591,16 +1620,17 @@ async def run_agent_loop(
         for tc in turn_tool_calls:
             name = tc.get("name") or ""
             call_id = tc["id"]
-            try:
-                args = json.loads(tc.get("arguments") or "{}")
-                if not isinstance(args, dict):
-                    args = {"value": args}
-            except json.JSONDecodeError:
-                args = {}
-
             td = registry.get(name)
+            args, argument_errors = parse_tool_arguments(
+                tc.get("arguments"),
+                td.input_schema if td else None,
+            )
             activity_kind = (td.metadata.get("kind") if td else None) or (td.source if td else None) or "context"
-            start_label = _tool_start_label(td, args) if td else f"正在处理未知工具 {name}…"
+            start_label = (
+                f"工具「{name}」参数校验失败"
+                if argument_errors
+                else (_tool_start_label(td, args) if td else f"正在处理未知工具 {name}…")
+            )
 
             # 四态权限裁决（Harness 管控）：未通过则不执行，回结构化结果让模型转而向学生说明。
             decision, deny_reason = _permission_decision(permission_mode, name, td)
@@ -1610,21 +1640,41 @@ async def run_agent_loop(
                 kind=str(activity_kind), name=name or "unknown",
                 status_value="started",
                 summary=deny_reason if decision != "allow" else start_label,
-                detail={"arguments": args, "permission_mode": permission_mode, "decision": decision},
+                detail={
+                    "iteration": iteration + 1,
+                    "tool_call_id": call_id,
+                    "arguments": args,
+                    "argument_errors": argument_errors,
+                    "permission_mode": permission_mode,
+                    "decision": decision,
+                },
             )
             yield "activity.started", serialize_activity(started).model_dump(mode="json")
 
-            if decision == "allow":
+            if argument_errors:
+                result = {
+                    "status": "failed",
+                    "tool": name,
+                    "summary": "；".join(argument_errors),
+                    "error_code": "invalid_tool_arguments",
+                }
+            elif decision == "allow":
                 result = await _dispatch_tool(
                     db, identity, session, assistant_message, user_message.content, attachments, name, args, td
                 )
             else:
                 result = {"status": "failed", "tool": name, "summary": deny_reason, "permission": decision}
+            result_detail = {
+                **result,
+                "iteration": iteration + 1,
+                "tool_call_id": call_id,
+                "arguments": args,
+            }
             completed = _complete_activity(
                 db, started,
                 status_value=result.get("status", "completed"),
                 summary=result.get("summary", ""),
-                detail=result,
+                detail=result_detail,
             )
             event_name = "activity.completed" if result.get("status") == "completed" else "activity.failed"
             yield event_name, serialize_activity(completed).model_dump(mode="json")
@@ -1641,7 +1691,9 @@ async def run_agent_loop(
             messages.append({"role": "tool", "tool_call_id": call_id, "content": _tool_result_for_model(result)})
 
     # 触顶 max_iterations —— 强制一次无工具的收尾回答，避免无限循环。
-    async for kind, value in _stream_llm_turn(model, messages, [], reasoning_effort):
+    async for kind, value in _stream_llm_turn(
+        model, messages, [], reasoning_effort, temperature, max_tokens
+    ):
         if kind == "delta":
             yield "message.delta", {"message_id": assistant_id, "delta": value}
 
@@ -1651,6 +1703,8 @@ async def _stream_llm_turn(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     reasoning_effort: str,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """Single streaming turn. Yields ("delta", text) / ("error", msg) / ("final", dict)."""
     try:
@@ -1658,8 +1712,10 @@ async def _stream_llm_turn(
         payload: dict[str, Any] = {
             "model": model.model_identifier,
             "messages": messages,
-            "temperature": model.default_temp if model.default_temp is not None else 0.7,
-            "max_tokens": model.max_output or 4096,
+            "temperature": temperature if temperature is not None else (
+                model.default_temp if model.default_temp is not None else 0.7
+            ),
+            "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
             "stream": True,
         }
         if tools:
