@@ -399,6 +399,8 @@ export function AgentManagementPage() {
                   </Form.Item>
                 </div>
               </Form>
+            </Tabs.TabPane>
+          
           <Tabs.TabPane key='test' title='💬 测试对话' disabled={!edit}>
             <div style={{ display: 'flex', flexDirection: 'column', height: 460 }}>
               {edit?.prompt_variables && edit.prompt_variables.length > 0 && (
