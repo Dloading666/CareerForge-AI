@@ -30,6 +30,20 @@ def api_list_agents(category: Optional[str] = Query(None), search: Optional[str]
                     db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     return ok(list_agents(db, category=category, search=search))
 
+@router.get("/options")
+def api_list_agent_options(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
+    """Return lightweight agent list for dropdowns (id, name, status, kind)."""
+    agents = list_agents(db)
+    return ok([{
+        "id": str(a["id"]),
+        "name": a["name"],
+        "status": "enabled" if a["is_enabled"] else "disabled",
+        "kind": "dify" if a["use_dify"] else "builtin",
+    } for a in agents])
+
+
+
+
 @router.get("/{agent_id}")
 def api_get_agent(agent_id: int, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     return ok(get_agent_dict(db, agent_id))
@@ -53,18 +67,6 @@ def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(
 class DifyTestRequest(BaseModel):
     api_base_url: str
     api_key: str
-
-@router.get("/options")
-def api_list_agent_options(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
-    """Return lightweight agent list for dropdowns (id, name, status, kind)."""
-    agents = list_agents(db)
-    return ok([{
-        "id": str(a["id"]),
-        "name": a["name"],
-        "status": "enabled" if a["is_enabled"] else "disabled",
-        "kind": "dify" if a["use_dify"] else "builtin",
-    } for a in agents])
-
 
 @router.post("/test-dify")
 async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
