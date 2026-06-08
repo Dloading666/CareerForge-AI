@@ -1,16 +1,20 @@
-import { Button, Dropdown, Input, Menu, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
+import { Button, Dropdown, Input, Menu, Popconfirm, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
   IconBook,
   IconCaretDown,
   IconCaretRight,
+  IconCheck,
   IconClose,
   IconCloseCircle,
+  IconDashboard,
   IconDelete,
+  IconDownload,
   IconFile,
   IconHistory,
   IconLoading,
+  IconMindMapping,
   IconNotification,
   IconPlus,
   IconPoweroff,
@@ -74,7 +78,11 @@ type AgentAttachment = {
   file_size: number
   status: string
   created_at: string
+  download_url?: string | null
 }
+
+// 主智能体生成的可下载文件（如 export_resume_pdf 产出的简历 PDF），按 assistant 消息 id 归集
+type GeneratedFile = { attachment_id: number; download_url: string; filename: string }
 
 type AgentHistory = {
   session: AgentSession
@@ -120,6 +128,130 @@ const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
 ]
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
+
+function ModelReasoningPicker({
+  modelOptions,
+  selectedModelId,
+  reasoningEffort,
+  disabled,
+  onModelChange,
+  onReasoningChange,
+}: {
+  modelOptions: AgentModelOption[]
+  selectedModelId: number | null
+  reasoningEffort: ReasoningEffort
+  disabled: boolean
+  onModelChange: (modelId: number) => void
+  onReasoningChange: (effort: ReasoningEffort) => void
+}) {
+  const [popupVisible, setPopupVisible] = useState(false)
+  const [modelMenuVisible, setModelMenuVisible] = useState(false)
+  const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
+  const selectedReasoning = reasoningOptions.find((option) => option.value === reasoningEffort)
+
+  const closePicker = () => {
+    setPopupVisible(false)
+    setModelMenuVisible(false)
+  }
+
+  return (
+    <Dropdown
+      trigger="click"
+      position="tr"
+      disabled={disabled}
+      popupVisible={popupVisible}
+      onVisibleChange={(visible) => {
+        setPopupVisible(visible)
+        if (!visible) setModelMenuVisible(false)
+      }}
+      triggerProps={{ popupAlign: { bottom: 8 } }}
+      droplist={
+        <div className="composer-settings-menu" onClick={(event) => event.stopPropagation()}>
+          <div className="composer-settings-heading">
+            <IconMindMapping />
+            <span>推理</span>
+          </div>
+          <div className="composer-settings-options">
+            {reasoningOptions.map((option) => {
+              const selected = option.value === reasoningEffort
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`composer-settings-option${selected ? ' selected' : ''}`}
+                  onClick={() => {
+                    onReasoningChange(option.value)
+                    closePicker()
+                  }}
+                >
+                  <span>{option.label}</span>
+                  {selected && <IconCheck />}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="composer-settings-divider" />
+
+          <div className="composer-settings-heading">
+            <IconDashboard />
+            <span>模型</span>
+          </div>
+          <div className="composer-model-menu-anchor">
+            <button
+              type="button"
+              className={`composer-settings-option model-entry${modelMenuVisible ? ' selected' : ''}`}
+              aria-expanded={modelMenuVisible}
+              onClick={() => setModelMenuVisible(true)}
+              onFocus={() => setModelMenuVisible(true)}
+            >
+              <span>{selectedModel?.display_name ?? '选择模型'}</span>
+              <IconCaretRight />
+            </button>
+
+            <div className={`composer-model-submenu${modelMenuVisible ? ' visible' : ''}`}>
+              <div className="composer-settings-heading">
+                <IconDashboard />
+                <span>可用模型</span>
+              </div>
+              <div className="composer-settings-options model-options">
+                {modelOptions.map((model) => {
+                  const selected = model.id === selectedModelId
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      className={`composer-settings-option${selected ? ' selected' : ''}`}
+                      title={`${model.provider} · ${model.model_identifier}`}
+                      onClick={() => {
+                        onModelChange(model.id)
+                        closePicker()
+                      }}
+                    >
+                      <span>{model.display_name}</span>
+                      {selected && <IconCheck />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <button
+        type="button"
+        className={`composer-settings-button${popupVisible ? ' active' : ''}`}
+        disabled={disabled}
+        aria-label="选择模型和推理强度"
+      >
+        <span className="composer-settings-model">{selectedModel?.display_name ?? '选择模型'}</span>
+        <span className="composer-settings-effort">{selectedReasoning?.label ?? '中'}</span>
+        <IconCaretDown />
+      </button>
+    </Dropdown>
+  )
+}
 
 function activityKindIcon(kind: string): ReactNode {
   const style = { fontSize: 12 }
@@ -215,13 +347,44 @@ function ActivityBlock({
   )
 }
 
+function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
+  if (files.length === 0) return null
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {files.map((f) => (
+        <a
+          key={f.attachment_id}
+          href={f.download_url}
+          target="_blank"
+          rel="noreferrer"
+          download={f.filename}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', borderRadius: 10,
+            border: '1px solid #BFDBFE', background: '#EFF6FF',
+            color: '#1D4ED8', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+          }}
+        >
+          <IconFile />
+          <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {f.filename}
+          </span>
+          <IconDownload />
+        </a>
+      ))}
+    </div>
+  )
+}
+
 function AssistantMessage({
   message,
   activities,
+  files = [],
   pending = false,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
+  files?: GeneratedFile[]
   pending?: boolean
 }) {
   return (
@@ -243,6 +406,8 @@ function AssistantMessage({
             </div>
           )
         )}
+
+        <GeneratedFileLinks files={files} />
       </div>
     </div>
   )
@@ -310,6 +475,7 @@ export function StudentHomePage() {
   const [allSessions, setAllSessions] = useState<AgentSession[]>([])
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
+  const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
   const [inputValue, setInputValue] = useState('')
   const [bootingAgent, setBootingAgent] = useState(false)
   const [streaming, setStreaming] = useState(false)
@@ -358,6 +524,19 @@ export function StudentHomePage() {
     setMessages(history.messages)
     setActivities(history.activities)
     setPendingAttachments([])
+    // 恢复主智能体生成的可下载文件（绑定在 assistant 消息上的 PDF）
+    const assistantIds = new Set(history.messages.filter((m) => m.role === 'assistant').map((m) => m.id))
+    const restored: Record<number, GeneratedFile[]> = {}
+    for (const a of history.attachments) {
+      if (a.file_ext === 'pdf' && a.download_url && a.message_id && assistantIds.has(a.message_id)) {
+        ;(restored[a.message_id] ??= []).push({
+          attachment_id: a.id,
+          download_url: a.download_url,
+          filename: a.original_name,
+        })
+      }
+    }
+    setGeneratedFiles(restored)
   }, [])
 
   const createAgentSession = useCallback(async () => {
@@ -369,6 +548,7 @@ export function StudentHomePage() {
     setMessages([])
     setActivities([])
     setPendingAttachments([])
+    setGeneratedFiles({})
     // 注意：不在此处加入 allSessions，空会话不进历史，等首次发送消息再加入
     return created
   }, [])
@@ -461,6 +641,22 @@ export function StudentHomePage() {
     }
     if (event === 'message.delta') {
       appendAssistantDelta(Number(data.message_id), String(data.delta ?? ''), sessionId)
+      return
+    }
+    if (event === 'attachment.created') {
+      const messageId = Number(data.message_id)
+      const downloadUrl = String(data.download_url ?? '')
+      if (!downloadUrl) return
+      const file: GeneratedFile = {
+        attachment_id: Number(data.attachment_id),
+        download_url: downloadUrl,
+        filename: String(data.filename ?? '简历.pdf'),
+      }
+      setGeneratedFiles((prev) => {
+        const list = prev[messageId] ?? []
+        if (list.some((f) => f.attachment_id === file.attachment_id)) return prev
+        return { ...prev, [messageId]: [...list, file] }
+      })
     }
   }
 
@@ -582,6 +778,7 @@ export function StudentHomePage() {
     setMessages([])
     setActivities([])
     setPendingAttachments([])
+    setGeneratedFiles({})
     setInputValue('')
     setActiveNav('agent')
   }
@@ -821,6 +1018,7 @@ export function StudentHomePage() {
                     key={message.id}
                     message={message}
                     activities={activitiesForAssistant(messages, activities, index)}
+                    files={generatedFiles[message.id] ?? []}
                   />
                 ),
               )}
@@ -903,34 +1101,14 @@ export function StudentHomePage() {
 
                 {/* Right: model · effort · send */}
                 <div className="composer-right">
-                  <Select
-                    className="composer-model-select"
-                    size="small"
-                    value={selectedModelId ?? undefined}
-                    placeholder="选择模型"
+                  <ModelReasoningPicker
+                    modelOptions={modelOptions}
+                    selectedModelId={selectedModelId}
+                    reasoningEffort={reasoningEffort}
                     disabled={streaming || modelOptions.length === 0}
-                    onChange={(v) => setSelectedModelId(v as number)}
-                  >
-                    {modelOptions.map((m) => (
-                      <Select.Option key={m.id} value={m.id}>
-                        {m.display_name}
-                      </Select.Option>
-                    ))}
-                  </Select>
-
-                  <Select
-                    className="composer-effort-select"
-                    size="small"
-                    value={reasoningEffort}
-                    disabled={streaming}
-                    onChange={(v) => setReasoningEffort(v as ReasoningEffort)}
-                  >
-                    {reasoningOptions.map((o) => (
-                      <Select.Option key={o.value} value={o.value}>
-                        {o.label}
-                      </Select.Option>
-                    ))}
-                  </Select>
+                    onModelChange={setSelectedModelId}
+                    onReasoningChange={setReasoningEffort}
+                  />
 
                   {streaming ? (
                     <button type="button" className="composer-send-btn stop" onClick={stopStreaming}>
