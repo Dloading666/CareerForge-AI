@@ -83,5 +83,4 @@ class Agent(TimestampMixin, Base):
     use_dify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     dify_api_key_cipher: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     dify_api_base_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    dify_app_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

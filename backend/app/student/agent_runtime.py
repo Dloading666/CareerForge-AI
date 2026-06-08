@@ -1069,7 +1069,7 @@ async def _call_dify_subagent(route: MasterRouteRule, task: str, user_key: str) 
     # Try multiple endpoints to support different Dify app modes
     endpoints = [
         ("/chat-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
-        ("/completion-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
+        ("/completion-messages", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
         ("/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
     ]
     if config.get("conversation_id"):

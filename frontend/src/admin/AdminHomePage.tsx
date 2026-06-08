@@ -168,7 +168,7 @@ const MODELS = [
     latency: 380,
     latencyColor: '#00b42a',
     provider: 'DeepSeek',
-    location: '云端',
+    location: '浜戠',
     protocols: ['OpenAI'],
     enabled: true,
   },
@@ -179,7 +179,7 @@ const MODELS = [
     latency: 850,
     latencyColor: '#ff7d00',
     provider: 'OpenAI',
-    location: '云端',
+    location: '浜戠',
     protocols: ['OpenAI'],
     enabled: true,
   },
@@ -190,7 +190,7 @@ const MODELS = [
     latency: 1200,
     latencyColor: '#f53f3f',
     provider: 'Anthropic',
-    location: '云端',
+    location: '浜戠',
     protocols: ['Anthropic'],
     enabled: false,
   },
@@ -199,47 +199,47 @@ const MODELS = [
 const AGENTS = [
   {
     id: 'interview',
-    name: 'AI 面试官',
-    desc: '模拟真实面试追问，生成逐题点评与复盘报告。',
-    status: '已发布',
+    name: 'AI 闈㈣瘯瀹?,
+    desc: '妯℃嫙鐪熷疄闈㈣瘯杩介棶锛岀敓鎴愰€愰鐐硅瘎涓庡鐩樻姤鍛娿€?,
+    status: '宸插彂甯?,
     iconTone: 'blue',
-    skills: ['面试全流程分析', '能力画像'],
+    skills: ['闈㈣瘯鍏ㄦ祦绋嬪垎鏋?, '鑳藉姏鐢诲儚'],
     mcps: [],
-    kbs: ['面试题库'],
+    kbs: ['闈㈣瘯棰樺簱'],
     models: ['DeepSeek V3', 'GPT-4o Mini'],
     callable: true,
-    route: '模拟面试 / 面试复盘',
+    route: '妯℃嫙闈㈣瘯 / 闈㈣瘯澶嶇洏',
   },
   {
     id: 'matching',
-    name: '岗位匹配',
-    desc: '对简历与 JD 进行双向匹配，解释技能差距和提升路径。',
-    status: '已发布',
+    name: '宀椾綅鍖归厤',
+    desc: '瀵圭畝鍘嗕笌 JD 杩涜鍙屽悜鍖归厤锛岃В閲婃妧鑳藉樊璺濆拰鎻愬崌璺緞銆?,
+    status: '宸插彂甯?,
     iconTone: 'green',
-    skills: ['岗位匹配打分', '简历解析'],
+    skills: ['宀椾綅鍖归厤鎵撳垎', '绠€鍘嗚В鏋?],
     mcps: [],
-    kbs: ['岗位库', '企业资料库'],
+    kbs: ['宀椾綅搴?, '浼佷笟璧勬枡搴?],
     models: ['DeepSeek V3'],
     callable: true,
-    route: '岗位匹配 / JD 分析',
+    route: '宀椾綅鍖归厤 / JD 鍒嗘瀽',
   },
   {
     id: 'resume',
-    name: '简历优化',
-    desc: '基于岗位目标重写项目经历，补齐 STAR 结构与量化表达。',
-    status: '草稿',
+    name: '绠€鍘嗕紭鍖?,
+    desc: '鍩轰簬宀椾綅鐩爣閲嶅啓椤圭洰缁忓巻锛岃ˉ榻?STAR 缁撴瀯涓庨噺鍖栬〃杈俱€?,
+    status: '鑽夌',
     iconTone: 'orange',
-    skills: ['简历全生命周期处理'],
+    skills: ['绠€鍘嗗叏鐢熷懡鍛ㄦ湡澶勭悊'],
     mcps: [],
-    kbs: ['简历范例库'],
+    kbs: ['绠€鍘嗚寖渚嬪簱'],
     models: ['GPT-4o Mini'],
     callable: false,
-    route: '简历建议 / 项目经历',
+    route: '绠€鍘嗗缓璁?/ 椤圭洰缁忓巻',
   },
 ]
 
 const FALLBACK_AGENT_OPTIONS: AgentOption[] = [
-  { id: 'master', name: '主智能体', status: '已启用', kind: 'master' },
+  { id: 'master', name: '涓绘櫤鑳戒綋', status: '宸插惎鐢?, kind: 'master' },
   ...AGENTS.map((agent) => ({
     id: agent.id,
     name: agent.name,
@@ -283,110 +283,110 @@ async function fetchAgentOptions(access: string): Promise<AgentOption[]> {
 }
 
 const DEFAULT_SKILL_CONTENT = `---
-name: 简历亮点提炼
-description: 从学生简历中提炼可用于求职沟通的项目亮点、量化成果和风险点。
+name: 绠€鍘嗕寒鐐规彁鐐?
+description: 浠庡鐢熺畝鍘嗕腑鎻愮偧鍙敤浜庢眰鑱屾矡閫氱殑椤圭洰浜偣銆侀噺鍖栨垚鏋滃拰椋庨櫓鐐广€?
 version: 1.0.0
-category: 简历
-tags: 简历, 项目经历, STAR
+category: 绠€鍘?
+tags: 绠€鍘? 椤圭洰缁忓巻, STAR
 ---
 
-# 简历亮点提炼
+# 绠€鍘嗕寒鐐规彁鐐?
 
-## 适用场景
-当主 Agent 或子 Agent 需要帮助学生把经历改写成更清晰的求职表达时，使用这个 Skill。
+## 閫傜敤鍦烘櫙
+褰撲富 Agent 鎴栧瓙 Agent 闇€瑕佸府鍔╁鐢熸妸缁忓巻鏀瑰啓鎴愭洿娓呮櫚鐨勬眰鑱岃〃杈炬椂锛屼娇鐢ㄨ繖涓?Skill銆?
 
-## 输入
-- 学生原始简历或项目经历
-- 目标岗位或 JD，可选
+## 杈撳叆
+- 瀛︾敓鍘熷绠€鍘嗘垨椤圭洰缁忓巻
+- 鐩爣宀椾綅鎴?JD锛屽彲閫?
 
-## 工作步骤
-1. 识别经历中的任务、行动、结果和量化证据。
-2. 判断表达是否存在空泛、夸大、缺少上下文的问题。
-3. 输出 3-5 条更适合投递或面试使用的亮点表达。
+## 宸ヤ綔姝ラ
+1. 璇嗗埆缁忓巻涓殑浠诲姟銆佽鍔ㄣ€佺粨鏋滃拰閲忓寲璇佹嵁銆?
+2. 鍒ゆ柇琛ㄨ揪鏄惁瀛樺湪绌烘硾銆佸じ澶с€佺己灏戜笂涓嬫枃鐨勯棶棰樸€?
+3. 杈撳嚭 3-5 鏉℃洿閫傚悎鎶曢€掓垨闈㈣瘯浣跨敤鐨勪寒鐐硅〃杈俱€?
 
-## 输出格式
-- 亮点标题
-- 改写后的表达
-- 可追问证据
-- 风险提醒
+## 杈撳嚭鏍煎紡
+- 浜偣鏍囬
+- 鏀瑰啓鍚庣殑琛ㄨ揪
+- 鍙拷闂瘉鎹?
+- 椋庨櫓鎻愰啋
 `
 
 const KNOWLEDGE_BASES = [
   {
-    name: '就业政策知识库',
+    name: '灏变笟鏀跨瓥鐭ヨ瘑搴?,
     docs: 128,
     chunks: '12.4k',
-    vectorStatus: '已向量化',
-    authorized: ['主智能体', '就业问答'],
-    update: '今天 10:24',
+    vectorStatus: '宸插悜閲忓寲',
+    authorized: ['涓绘櫤鑳戒綋', '灏变笟闂瓟'],
+    update: '浠婂ぉ 10:24',
     progress: 100,
   },
   {
-    name: '岗位库',
+    name: '宀椾綅搴?,
     docs: 864,
     chunks: '38.9k',
-    vectorStatus: '同步中',
-    authorized: ['主智能体', '岗位匹配'],
-    update: '今天 09:12',
+    vectorStatus: '鍚屾涓?,
+    authorized: ['涓绘櫤鑳戒綋', '宀椾綅鍖归厤'],
+    update: '浠婂ぉ 09:12',
     progress: 72,
   },
   {
-    name: '面试题库',
+    name: '闈㈣瘯棰樺簱',
     docs: 312,
     chunks: '18.1k',
-    vectorStatus: '已向量化',
-    authorized: ['AI 面试官'],
-    update: '昨天 18:40',
+    vectorStatus: '宸插悜閲忓寲',
+    authorized: ['AI 闈㈣瘯瀹?],
+    update: '鏄ㄥぉ 18:40',
     progress: 100,
   },
 ]
 
 const ROUTES = [
-  { intent: '模拟面试 / 面试复盘', agent: 'AI 面试官', memory: '独立线程，仅回传结果摘要' },
-  { intent: '岗位匹配 / JD 分析', agent: '岗位匹配', memory: '独立线程，仅回传匹配报告' },
-  { intent: '简历建议 / 项目经历', agent: '简历优化', memory: '草稿期，暂不对学生开放' },
+  { intent: '妯℃嫙闈㈣瘯 / 闈㈣瘯澶嶇洏', agent: 'AI 闈㈣瘯瀹?, memory: '鐙珛绾跨▼锛屼粎鍥炰紶缁撴灉鎽樿' },
+  { intent: '宀椾綅鍖归厤 / JD 鍒嗘瀽', agent: '宀椾綅鍖归厤', memory: '鐙珛绾跨▼锛屼粎鍥炰紶鍖归厤鎶ュ憡' },
+  { intent: '绠€鍘嗗缓璁?/ 椤圭洰缁忓巻', agent: '绠€鍘嗕紭鍖?, memory: '鑽夌鏈燂紝鏆備笉瀵瑰鐢熷紑鏀? },
 ]
 
 const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; drawer: DrawerMode }> = {
   agents: {
-    title: '智能体管理',
-    desc: '组装子智能体的模型范围、Skills、MCP 与专属知识库，并控制是否允许被主智能体调用。',
-    action: '新建智能体',
+    title: '鏅鸿兘浣撶鐞?,
+    desc: '缁勮瀛愭櫤鑳戒綋鐨勬ā鍨嬭寖鍥淬€丼kills銆丮CP 涓庝笓灞炵煡璇嗗簱锛屽苟鎺у埗鏄惁鍏佽琚富鏅鸿兘浣撹皟鐢ㄣ€?,
+    action: '鏂板缓鏅鸿兘浣?,
     drawer: 'agent',
   },
   master: {
-    title: '主智能体配置',
-    desc: '配置就业总助手的默认模型、系统提示词、全量能力范围、路由策略和记忆隔离规则。',
+    title: '涓绘櫤鑳戒綋閰嶇疆',
+    desc: '閰嶇疆灏变笟鎬诲姪鎵嬬殑榛樿妯″瀷銆佺郴缁熸彁绀鸿瘝銆佸叏閲忚兘鍔涜寖鍥淬€佽矾鐢辩瓥鐣ュ拰璁板繂闅旂瑙勫垯銆?,
     drawer: 'master',
   },
   models: {
-    title: '模型广场',
-    desc: '接入、测速并控制哪些模型允许学生端和智能体调用。',
-    action: '添加模型',
+    title: '妯″瀷骞垮満',
+    desc: '鎺ュ叆銆佹祴閫熷苟鎺у埗鍝簺妯″瀷鍏佽瀛︾敓绔拰鏅鸿兘浣撹皟鐢ㄣ€?,
+    action: '娣诲姞妯″瀷',
     drawer: 'model',
   },
   mcp: {
-    title: 'MCP 广场',
-    desc: '统一接入外部工具和数据服务，管理鉴权、授权、工具暴露、健康检测与审计治理。',
-    action: '添加 MCP 服务',
+    title: 'MCP 骞垮満',
+    desc: '缁熶竴鎺ュ叆澶栭儴宸ュ叿鍜屾暟鎹湇鍔★紝绠＄悊閴存潈銆佹巿鏉冦€佸伐鍏锋毚闇层€佸仴搴锋娴嬩笌瀹¤娌荤悊銆?,
+    action: '娣诲姞 MCP 鏈嶅姟',
     drawer: 'mcp',
   },
   skills: {
-    title: 'Skills 广场',
-    desc: '管理可复用原子能力，作为智能体装配时的技能池。',
-    action: '新建 Skill',
+    title: 'Skills 骞垮満',
+    desc: '绠＄悊鍙鐢ㄥ師瀛愯兘鍔涳紝浣滀负鏅鸿兘浣撹閰嶆椂鐨勬妧鑳芥睜銆?,
+    action: '鏂板缓 Skill',
     drawer: 'skill',
   },
   knowledge: {
-    title: '知识库',
-    desc: '上传文档、解析切片、向量化，并按智能体授权检索范围。',
-    action: '新建知识库',
+    title: '鐭ヨ瘑搴?,
+    desc: '涓婁紶鏂囨。銆佽В鏋愬垏鐗囥€佸悜閲忓寲锛屽苟鎸夋櫤鑳戒綋鎺堟潈妫€绱㈣寖鍥淬€?,
+    action: '鏂板缓鐭ヨ瘑搴?,
     drawer: 'knowledge',
   },
   settings: {
-    title: '系统设置',
-    desc: '管理账号、权限和平台运行偏好。',
-    action: '保存设置',
+    title: '绯荤粺璁剧疆',
+    desc: '绠＄悊璐﹀彿銆佹潈闄愬拰骞冲彴杩愯鍋忓ソ銆?,
+    action: '淇濆瓨璁剧疆',
     drawer: 'master',
   },
 }
@@ -396,7 +396,7 @@ function createEmptySkillDraft(): SkillDraft {
     name: '',
     description: '',
     version: '1.0.0',
-    category: '通用',
+    category: '閫氱敤',
     tagsText: '',
     status: 'enabled',
     fileName: 'SKILL.md',
@@ -419,7 +419,7 @@ function skillToDraft(skill: SkillRecord): SkillDraft {
 
 function splitTags(tagsText: string) {
   return tagsText
-    .split(/[,，\n]/)
+    .split(/[,锛孿n]/)
     .map((tag) => tag.trim())
     .filter(Boolean)
 }
@@ -444,7 +444,7 @@ function createEmptyMcpDraft(): McpDraft {
     category: '',
     transport: 'Streamable HTTP',
     endpoint: '',
-    authType: '无鉴权',
+    authType: '鏃犻壌鏉?,
     authConfig: '',
     owner: '',
     version: 'v1.0.0',
@@ -477,7 +477,7 @@ function mcpDraftPayload(draft: McpDraft) {
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
-    category: draft.category.trim() || '通用',
+    category: draft.category.trim() || '閫氱敤',
     transport: draft.transport,
     endpoint: draft.endpoint.trim(),
     auth_type: draft.authType,
@@ -492,7 +492,7 @@ function mcpDraftPayload(draft: McpDraft) {
       .map((tool) => ({
         name: tool.name.trim(),
         description: tool.description.trim(),
-        risk: tool.risk || '低风险',
+        risk: tool.risk || '浣庨闄?,
         input_schema: tool.input_schema ?? {},
         enabled: tool.enabled,
       })),
@@ -500,7 +500,7 @@ function mcpDraftPayload(draft: McpDraft) {
 }
 
 function statusLabel(status: McpServiceRecord['status']) {
-  const labels = { enabled: '已启用', disabled: '已停用', error: '异常' }
+  const labels = { enabled: '宸插惎鐢?, disabled: '宸插仠鐢?, error: '寮傚父' }
   return labels[status]
 }
 
@@ -511,7 +511,7 @@ function statusColor(status: McpServiceRecord['status']) {
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) return '未检测'
+  if (!value) return '鏈娴?
   return new Date(value).toLocaleString('zh-CN', {
     hour12: false,
     timeZone: 'Asia/Shanghai',
@@ -524,12 +524,12 @@ function formatDateTime(value: string | null) {
 }
 
 function detailOwnerLabel(service: McpServiceRecord) {
-  return service.owner ? `开发者：${service.owner}` : '未设置开发者'
+  return service.owner ? `寮€鍙戣€咃細${service.owner}` : '鏈缃紑鍙戣€?
 }
 
 export function AdminHomePage() {
   const { session, logout } = useAuth()
-  const displayName = (session?.profile.display_name as string) || '平台管理员'
+  const displayName = (session?.profile.display_name as string) || '骞冲彴绠＄悊鍛?
   const avatarUrl = (session?.profile.avatar_url as string) || ''
   const [avatarKey, setAvatarKey] = useState(0)
   const [settingsTab, setSettingsTab] = useState<string>('')
@@ -626,7 +626,7 @@ export function AdminHomePage() {
 
   async function runMcpCall() {
     if (!mcpCallDraft.serviceId || !mcpCallDraft.toolName) {
-      setAdminFeedback({ type: 'warning', content: '请先选择 MCP 服务和工具' })
+      setAdminFeedback({ type: 'warning', content: '璇峰厛閫夋嫨 MCP 鏈嶅姟鍜屽伐鍏? })
       return
     }
     const agent = agentOptions.find((item) => item.id === mcpCallDraft.agentId)
@@ -644,9 +644,9 @@ export function AdminHomePage() {
       })
       setMcpCallDraft((current) => ({ ...current, result: JSON.stringify(log.response, null, 2) }))
       setMcpLogs((current) => [log, ...current])
-      setAdminFeedback({ type: 'success', content: 'MCP 调用已完成并写入日志' })
+      setAdminFeedback({ type: 'success', content: 'MCP 璋冪敤宸插畬鎴愬苟鍐欏叆鏃ュ織' })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '调用 MCP 失败'
+      const message = error instanceof ApiError ? error.message : '璋冪敤 MCP 澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -677,13 +677,13 @@ export function AdminHomePage() {
   }, [session?.access])
 
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
-    { key: 'agents', icon: <IconRobot />, label: '智能体管理' },
-    { key: 'master', icon: <IconDashboard />, label: '主智能体配置' },
-    { key: 'models', icon: <IconExperiment />, label: '模型广场' },
-    { key: 'mcp', icon: <IconSafe />, label: 'MCP 广场' },
-    { key: 'skills', icon: <IconApps />, label: 'Skills 广场' },
-    { key: 'knowledge', icon: <IconHistory />, label: '知识库' },
-    { key: 'settings', icon: <IconSettings />, label: '系统设置' },
+    { key: 'agents', icon: <IconRobot />, label: '鏅鸿兘浣撶鐞? },
+    { key: 'master', icon: <IconDashboard />, label: '涓绘櫤鑳戒綋閰嶇疆' },
+    { key: 'models', icon: <IconExperiment />, label: '妯″瀷骞垮満' },
+    { key: 'mcp', icon: <IconSafe />, label: 'MCP 骞垮満' },
+    { key: 'skills', icon: <IconApps />, label: 'Skills 骞垮満' },
+    { key: 'knowledge', icon: <IconHistory />, label: '鐭ヨ瘑搴? },
+    { key: 'settings', icon: <IconSettings />, label: '绯荤粺璁剧疆' },
   ]
 
   function openDrawer(mode: DrawerMode = meta.drawer) {
@@ -717,7 +717,7 @@ export function AdminHomePage() {
           setSkills(data)
         }
       } catch (error) {
-        const message = error instanceof ApiError ? error.message : '加载 Skills 失败'
+        const message = error instanceof ApiError ? error.message : '鍔犺浇 Skills 澶辫触'
         if (alive) {
           setAdminFeedback({ type: 'error', content: message })
         }
@@ -771,7 +771,7 @@ export function AdminHomePage() {
         }
       })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '加载 MCP 数据失败'
+      const message = error instanceof ApiError ? error.message : '鍔犺浇 MCP 鏁版嵁澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     } finally {
       setMcpLoading(false)
@@ -794,7 +794,7 @@ export function AdminHomePage() {
 
   async function saveMcp() {
     if (!mcpDraft.name.trim() || !mcpDraft.endpoint.trim()) {
-      setAdminFeedback({ type: 'warning', content: '请填写 MCP 名称和命令或 URL' })
+      setAdminFeedback({ type: 'warning', content: '璇峰～鍐?MCP 鍚嶇О鍜屽懡浠ゆ垨 URL' })
       return
     }
     setMcpSaving(true)
@@ -816,11 +816,11 @@ export function AdminHomePage() {
         toolName: saved.tools[0]?.name ?? '',
         result: '',
       }))
-      setAdminFeedback({ type: 'success', content: editingMcpId ? 'MCP 服务已更新' : 'MCP 服务已添加' })
+      setAdminFeedback({ type: 'success', content: editingMcpId ? 'MCP 鏈嶅姟宸叉洿鏂? : 'MCP 鏈嶅姟宸叉坊鍔? })
       setDrawerVisible(false)
       setEditingMcpId(null)
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '保存 MCP 服务失败'
+      const message = error instanceof ApiError ? error.message : '淇濆瓨 MCP 鏈嶅姟澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     } finally {
       setMcpSaving(false)
@@ -834,10 +834,10 @@ export function AdminHomePage() {
         headers: authHeaders(),
       })
       setMcps((current) => current.filter((item) => item.id !== service.id))
-      setAdminFeedback({ type: 'success', content: 'MCP 服务已下架' })
+      setAdminFeedback({ type: 'success', content: 'MCP 鏈嶅姟宸蹭笅鏋? })
       loadMcpData()
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '下架 MCP 服务失败'
+      const message = error instanceof ApiError ? error.message : '涓嬫灦 MCP 鏈嶅姟澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -849,9 +849,9 @@ export function AdminHomePage() {
         headers: authHeaders(),
       })
       setMcps((current) => current.map((item) => (item.id === saved.id ? saved : item)))
-      setAdminFeedback({ type: 'success', content: '连接测试已完成' })
+      setAdminFeedback({ type: 'success', content: '杩炴帴娴嬭瘯宸插畬鎴? })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '连接测试失败'
+      const message = error instanceof ApiError ? error.message : '杩炴帴娴嬭瘯澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -865,9 +865,9 @@ export function AdminHomePage() {
       setMcps((current) => current.map((item) => (item.id === saved.id ? saved : item)))
       const pool = await apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers: authHeaders() })
       setMcpToolPool(pool)
-      setAdminFeedback({ type: 'success', content: '工具发现已写入数据库' })
+      setAdminFeedback({ type: 'success', content: '宸ュ叿鍙戠幇宸插啓鍏ユ暟鎹簱' })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '工具发现失败'
+      const message = error instanceof ApiError ? error.message : '宸ュ叿鍙戠幇澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -881,7 +881,7 @@ export function AdminHomePage() {
 
   async function saveSkill() {
     if (!skillDraft.content.trim()) {
-      setAdminFeedback({ type: 'warning', content: '请先填写或上传 Skill 文件内容' })
+      setAdminFeedback({ type: 'warning', content: '璇峰厛濉啓鎴栦笂浼?Skill 鏂囦欢鍐呭' })
       return
     }
 
@@ -898,12 +898,12 @@ export function AdminHomePage() {
       )
       setAdminFeedback({
         type: 'success',
-        content: editingSkillId ? 'Skill 文件已更新' : 'Skill 已添加到广场',
+        content: editingSkillId ? 'Skill 鏂囦欢宸叉洿鏂? : 'Skill 宸叉坊鍔犲埌骞垮満',
       })
       setDrawerVisible(false)
       setEditingSkillId(null)
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '保存 Skill 失败'
+      const message = error instanceof ApiError ? error.message : '淇濆瓨 Skill 澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     } finally {
       setSkillSaving(false)
@@ -919,9 +919,9 @@ export function AdminHomePage() {
         body: JSON.stringify({ status: nextStatus }),
       })
       setSkills((current) => current.map((item) => (item.id === saved.id ? saved : item)))
-      setAdminFeedback({ type: 'success', content: nextStatus === 'enabled' ? 'Skill 已启用' : 'Skill 已停用' })
+      setAdminFeedback({ type: 'success', content: nextStatus === 'enabled' ? 'Skill 宸插惎鐢? : 'Skill 宸插仠鐢? })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '更新 Skill 状态失败'
+      const message = error instanceof ApiError ? error.message : '鏇存柊 Skill 鐘舵€佸け璐?
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -933,9 +933,9 @@ export function AdminHomePage() {
         headers: authHeaders(),
       })
       setSkills((current) => current.filter((item) => item.id !== skill.id))
-      setAdminFeedback({ type: 'success', content: 'Skill 已从广场移除' })
+      setAdminFeedback({ type: 'success', content: 'Skill 宸蹭粠骞垮満绉婚櫎' })
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : '删除 Skill 失败'
+      const message = error instanceof ApiError ? error.message : '鍒犻櫎 Skill 澶辫触'
       setAdminFeedback({ type: 'error', content: message })
     }
   }
@@ -967,7 +967,7 @@ export function AdminHomePage() {
 
         <div className="admin-sidebar-status">
           <span className="status-dot" />
-          <span>本地大模型 · 在线</span>
+          <span>鏈湴澶фā鍨?路 鍦ㄧ嚎</span>
         </div>
       </aside>
 
@@ -989,7 +989,7 @@ export function AdminHomePage() {
                   </Menu.Item>
                   <Menu.Item key="logout" onClick={logout}>
                     <IconPoweroff style={{ marginRight: 8 }} />
-                    退出登录
+                    閫€鍑虹櫥褰?
                   </Menu.Item>
                 </Menu>
               }
@@ -1020,7 +1020,7 @@ export function AdminHomePage() {
               <h2>{meta.title}</h2>
               <p>{meta.desc}</p>
             </div>
-            {activeNav !== 'master' && activeNav !== 'models' && (
+{activeNav !== 'master' && activeNav !== 'models' && (
               <Button icon={<IconPlus />} type="primary" onClick={() => openDrawer()}>
                 {meta.action}
               </Button>
@@ -1126,35 +1126,35 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
     <div className="master-grid">
       <section className="master-config-panel">
         <div className="admin-section-title">
-          <h3>全局编排者</h3>
-          <p>主智能体默认拥有全量能力，但可以在这里收窄访问范围。</p>
+          <h3>鍏ㄥ眬缂栨帓鑰?/h3>
+          <p>涓绘櫤鑳戒綋榛樿鎷ユ湁鍏ㄩ噺鑳藉姏锛屼絾鍙互鍦ㄨ繖閲屾敹绐勮闂寖鍥淬€?/p>
         </div>
         <div className="form-surface">
           <label>
-            系统提示词
+            绯荤粺鎻愮ず璇?
             <Input.TextArea
-              defaultValue="你是 CareerForge 就业总助手，负责路由子智能体、调用工具和知识库，并以清晰、可执行的建议帮助学生完成求职准备。"
+              defaultValue="浣犳槸 CareerForge 灏变笟鎬诲姪鎵嬶紝璐熻矗璺敱瀛愭櫤鑳戒綋銆佽皟鐢ㄥ伐鍏峰拰鐭ヨ瘑搴擄紝骞朵互娓呮櫚銆佸彲鎵ц鐨勫缓璁府鍔╁鐢熷畬鎴愭眰鑱屽噯澶囥€?
               autoSize={{ minRows: 4, maxRows: 6 }}
             />
           </label>
           <div className="switch-list">
             <Switch defaultChecked />
-            <span>模型切换后同步传递给被调用的子智能体</span>
+            <span>妯″瀷鍒囨崲鍚庡悓姝ヤ紶閫掔粰琚皟鐢ㄧ殑瀛愭櫤鑳戒綋</span>
           </div>
           <div className="switch-list">
             <Switch defaultChecked />
-            <span>子智能体记忆独立隔离，仅结果摘要回流主对话</span>
+            <span>瀛愭櫤鑳戒綋璁板繂鐙珛闅旂锛屼粎缁撴灉鎽樿鍥炴祦涓诲璇?/span>
           </div>
           <Button type="primary" onClick={() => openDrawer('master')}>
-            保存编排配置
+            淇濆瓨缂栨帓閰嶇疆
           </Button>
         </div>
       </section>
 
       <section className="route-panel">
         <div className="admin-section-title">
-          <h3>路由策略</h3>
-          <p>当学生意图命中时，主智能体将派发给对应子智能体。</p>
+          <h3>璺敱绛栫暐</h3>
+          <p>褰撳鐢熸剰鍥惧懡涓椂锛屼富鏅鸿兘浣撳皢娲惧彂缁欏搴斿瓙鏅鸿兘浣撱€?/p>
         </div>
         <div className="route-list">
           {ROUTES.map((route) => (
@@ -1163,7 +1163,7 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
                 <strong>{route.intent}</strong>
                 <p>{route.memory}</p>
               </div>
-              <Tag color={route.agent === '简历优化' ? 'orange' : 'arcoblue'}>{route.agent}</Tag>
+              <Tag color={route.agent === '绠€鍘嗕紭鍖? ? 'orange' : 'arcoblue'}>{route.agent}</Tag>
             </div>
           ))}
         </div>
@@ -1231,7 +1231,7 @@ function renderMcpPage({
   onTest: (service: McpServiceRecord) => void
   onDiscover: (service: McpServiceRecord) => void
 }) {
-  const categoryOptions = Array.from(new Set(mcps.map((service) => service.category || '通用').filter(Boolean)))
+  const categoryOptions = Array.from(new Set(mcps.map((service) => service.category || '閫氱敤').filter(Boolean)))
   const detailService = mcps.find((service) => service.id === mcpDetailId) ?? null
   const serviceLogs = detailService ? mcpLogs.filter((log) => log.service_id === detailService.id) : mcpLogs
 
@@ -1252,103 +1252,103 @@ function renderMcpPage({
               </span>
               <div>
                 <h2>{detailService.name}</h2>
-                <p>{detailService.description || '管理员尚未填写服务介绍。'}</p>
+                <p>{detailService.description || '绠＄悊鍛樺皻鏈～鍐欐湇鍔′粙缁嶃€?}</p>
                 <div className="mcp-detail-tags">
                   <Tag color={statusColor(detailService.status)}>{statusLabel(detailService.status)}</Tag>
                   <Tag color={detailService.transport === 'Streamable HTTP' ? 'arcoblue' : 'green'}>{detailService.transport}</Tag>
-                  <Tag bordered>{detailService.category || '通用'}</Tag>
-                  <Tag bordered>{detailService.owner || '未设置负责人'}</Tag>
+                  <Tag bordered>{detailService.category || '閫氱敤'}</Tag>
+                  <Tag bordered>{detailService.owner || '鏈缃礋璐ｄ汉'}</Tag>
                 </div>
               </div>
             </div>
             <Button className="mcp-back-button" type="outline" onClick={() => setMcpDetailId(null)}>
-              ← 返回 MCP 广场
+              鈫?杩斿洖 MCP 骞垮満
             </Button>
           </div>
           <div className="mcp-detail-actions">
             <Button type="outline" icon={<IconSettings />} onClick={() => onEdit(detailService)}>
-              编辑配置
+              缂栬緫閰嶇疆
             </Button>
-            <Popconfirm title={`确定下架 ${detailService.name} 吗？`} okText="下架" cancelText="取消" onOk={() => onDelete(detailService)}>
+            <Popconfirm title={`纭畾涓嬫灦 ${detailService.name} 鍚楋紵`} okText="涓嬫灦" cancelText="鍙栨秷" onOk={() => onDelete(detailService)}>
               <Button type="outline" status="danger" icon={<IconPoweroff />}>
-                下架
+                涓嬫灦
               </Button>
             </Popconfirm>
             <Button type="primary" icon={<IconRobot />} onClick={() => setMcpDetailTab('test')}>
-              工具测试
+              宸ュ叿娴嬭瘯
             </Button>
           </div>
         </section>
 
         <Tabs className="mcp-detail-tabs" activeTab={mcpDetailTab} onChange={setMcpDetailTab}>
-          <Tabs.TabPane key="detail" title="服务详情">
+          <Tabs.TabPane key="detail" title="鏈嶅姟璇︽儏">
             <section className="mcp-detail-layout">
               <article className="mcp-doc-panel">
-                <h3>获取 MCP 服务器</h3>
-                <p>{detailService.description || '该 MCP 服务已接入数据库，可被授权智能体按工具清单调用。'}</p>
-                <h3>可用工具</h3>
+                <h3>鑾峰彇 MCP 鏈嶅姟鍣?/h3>
+                <p>{detailService.description || '璇?MCP 鏈嶅姟宸叉帴鍏ユ暟鎹簱锛屽彲琚巿鏉冩櫤鑳戒綋鎸夊伐鍏锋竻鍗曡皟鐢ㄣ€?}</p>
+                <h3>鍙敤宸ュ叿</h3>
                 {detailService.tools.length > 0 ? (
                   <div className="mcp-doc-tool-list">
                     {detailService.tools.map((tool) => (
                       <div key={tool.name}>
                         <strong>{tool.name}</strong>
-                        <span>{tool.description || '暂无工具说明'}</span>
-                        <Tag color={tool.risk === '高风险' ? 'red' : tool.risk === '中风险' ? 'orange' : 'green'}>{tool.risk}</Tag>
+                        <span>{tool.description || '鏆傛棤宸ュ叿璇存槑'}</span>
+                        <Tag color={tool.risk === '楂橀闄? ? 'red' : tool.risk === '涓闄? ? 'orange' : 'green'}>{tool.risk}</Tag>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="mcp-empty-mini">还没有工具。管理员可以点击“发现”或“编辑配置”维护工具清单。</div>
+                  <div className="mcp-empty-mini">杩樻病鏈夊伐鍏枫€傜鐞嗗憳鍙互鐐瑰嚮鈥滃彂鐜扳€濇垨鈥滅紪杈戦厤缃€濈淮鎶ゅ伐鍏锋竻鍗曘€?/div>
                 )}
-                <h3>Agent 调用边界</h3>
-                <p>只有下方服务配置中授权的主 Agent 或子智能体可以调用该 MCP。保存后，工具会进入统一工具池，由主 Agent 编排时注入模型。</p>
+                <h3>Agent 璋冪敤杈圭晫</h3>
+                <p>鍙湁涓嬫柟鏈嶅姟閰嶇疆涓巿鏉冪殑涓?Agent 鎴栧瓙鏅鸿兘浣撳彲浠ヨ皟鐢ㄨ MCP銆備繚瀛樺悗锛屽伐鍏蜂細杩涘叆缁熶竴宸ュ叿姹狅紝鐢变富 Agent 缂栨帓鏃舵敞鍏ユā鍨嬨€?/p>
               </article>
 
               <aside className="mcp-config-panel">
                 <div className="mcp-config-head">
-                  <strong>服务配置</strong>
-                  <Tag color="green">可部署</Tag>
+                  <strong>鏈嶅姟閰嶇疆</strong>
+                  <Tag color="green">鍙儴缃?/Tag>
                 </div>
                 <div className="mcp-config-card">
-                  <span>传输类型</span>
+                  <span>浼犺緭绫诲瀷</span>
                   <strong>{detailService.transport}</strong>
                 </div>
                 <div className="mcp-config-card">
-                  <span>连接地址</span>
+                  <span>杩炴帴鍦板潃</span>
                   <strong>{detailService.endpoint}</strong>
                 </div>
                 <div className="mcp-config-grid">
                   <div>
-                    <span>鉴权类型</span>
+                    <span>閴存潈绫诲瀷</span>
                     <strong>{detailService.auth_type}</strong>
                   </div>
                   <div>
-                    <span>最近检测</span>
+                    <span>鏈€杩戞娴?/span>
                     <strong>{formatDateTime(detailService.last_checked_at)}</strong>
                   </div>
                 </div>
                 <Button type="primary" long onClick={() => onTest(detailService)}>
-                  连接测试
+                  杩炴帴娴嬭瘯
                 </Button>
                 <Button long type="outline" onClick={() => onDiscover(detailService)}>
-                  工具发现
+                  宸ュ叿鍙戠幇
                 </Button>
               </aside>
             </section>
           </Tabs.TabPane>
 
-          <Tabs.TabPane key="test" title="工具测试">
+          <Tabs.TabPane key="test" title="宸ュ叿娴嬭瘯">
             <section className="mcp-detail-layout">
               <article className="mcp-doc-panel">
                 <div className="mcp-call-form is-horizontal">
-                  <Select value={mcpCallDraft.agentId} placeholder="调用智能体" onChange={(value) => patchMcpCallDraft({ agentId: value })}>
+                  <Select value={mcpCallDraft.agentId} placeholder="璋冪敤鏅鸿兘浣? onChange={(value) => patchMcpCallDraft({ agentId: value })}>
                     {agentOptions.map((agent) => (
                       <Select.Option key={agent.id} value={agent.id}>
                         {agent.name}
                       </Select.Option>
                     ))}
                   </Select>
-                  <Select value={mcpCallDraft.toolName || undefined} placeholder="工具" onChange={(value) => patchMcpCallDraft({ toolName: value })}>
+                  <Select value={mcpCallDraft.toolName || undefined} placeholder="宸ュ叿" onChange={(value) => patchMcpCallDraft({ toolName: value })}>
                     {detailService.tools.map((tool) => (
                       <Select.Option key={tool.name} value={tool.name}>
                         {tool.name}
@@ -1359,19 +1359,19 @@ function renderMcpPage({
                 <Input.TextArea
                   value={mcpCallDraft.input}
                   autoSize={{ minRows: 5, maxRows: 8 }}
-                  placeholder="输入工具参数，例如岗位关键词、城市、薪资范围"
+                  placeholder="杈撳叆宸ュ叿鍙傛暟锛屼緥濡傚矖浣嶅叧閿瘝銆佸煄甯傘€佽柂璧勮寖鍥?
                   onChange={(value) => patchMcpCallDraft({ input: value })}
                 />
                 <Button type="primary" icon={<IconRobot />} disabled={!detailService.tools.length} onClick={runMcpCall}>
-                  执行调用
+                  鎵ц璋冪敤
                 </Button>
                 <pre className="mcp-call-result is-detail">
-                  {mcpCallDraft.result || '执行结果会显示智能体、工具、请求参数、结构化响应和 trace。'}
+                  {mcpCallDraft.result || '鎵ц缁撴灉浼氭樉绀烘櫤鑳戒綋銆佸伐鍏枫€佽姹傚弬鏁般€佺粨鏋勫寲鍝嶅簲鍜?trace銆?}
                 </pre>
               </article>
               <aside className="mcp-config-panel">
                 <div className="mcp-config-head">
-                  <strong>已授权智能体</strong>
+                  <strong>宸叉巿鏉冩櫤鑳戒綋</strong>
                 </div>
                 <div className="mcp-agent-chip-list">
                   {detailService.agent_ids.length ? (
@@ -1380,13 +1380,13 @@ function renderMcpPage({
                       return <Tag key={agentId} color="arcoblue">{agent?.name ?? agentId}</Tag>
                     })
                   ) : (
-                    <Tag color="orange">未授权</Tag>
+                    <Tag color="orange">鏈巿鏉?/Tag>
                   )}
                 </div>
                 <div className="mcp-tool-pool">
                   <div className="mcp-tool-pool-head">
-                    <strong>Agent 工具池</strong>
-                    <span>内置工具优先，其次 Skill，最后合并已启用 MCP 工具。</span>
+                    <strong>Agent 宸ュ叿姹?/strong>
+                    <span>鍐呯疆宸ュ叿浼樺厛锛屽叾娆?Skill锛屾渶鍚庡悎骞跺凡鍚敤 MCP 宸ュ叿銆?/span>
                   </div>
                   {mcpToolPool.tools.map((tool) => (
                     <div key={`${tool.source}-${tool.name}`} className="mcp-tool-pool-row">
@@ -1395,7 +1395,7 @@ function renderMcpPage({
                         <span>{tool.provider}</span>
                       </div>
                       <Tag color={tool.source === 'builtin' ? 'green' : tool.source === 'skill' ? 'arcoblue' : 'orange'} bordered>
-                        {tool.source === 'builtin' ? '内置' : tool.source === 'skill' ? 'Skill' : 'MCP'}
+                        {tool.source === 'builtin' ? '鍐呯疆' : tool.source === 'skill' ? 'Skill' : 'MCP'}
                       </Tag>
                     </div>
                   ))}
@@ -1404,7 +1404,7 @@ function renderMcpPage({
             </section>
           </Tabs.TabPane>
 
-          <Tabs.TabPane key="logs" title={`调用日志 ${serviceLogs.length}`}>
+          <Tabs.TabPane key="logs" title={`璋冪敤鏃ュ織 ${serviceLogs.length}`}>
             <section className="mcp-doc-panel">
               {serviceLogs.length > 0 ? (
                 serviceLogs.map((log) => (
@@ -1412,14 +1412,14 @@ function renderMcpPage({
                     <div>
                       <strong>{log.agent_name}</strong>
                       <span>
-                        {log.service_name} / {log.tool_name} · {formatDateTime(log.created_at)}
+                        {log.service_name} / {log.tool_name} 路 {formatDateTime(log.created_at)}
                       </span>
                     </div>
-                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '失败'}</Tag>
+                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '澶辫触'}</Tag>
                   </div>
                 ))
               ) : (
-                <div className="mcp-empty-mini">暂无调用日志</div>
+                <div className="mcp-empty-mini">鏆傛棤璋冪敤鏃ュ織</div>
               )}
             </section>
           </Tabs.TabPane>
@@ -1432,18 +1432,18 @@ function renderMcpPage({
     <div className="mcp-workspace">
       <section className="mcp-market-top">
         <div className="mcp-market-title">
-          <strong>MCP 服务</strong>
-          <Tag bordered>MCP 体验</Tag>
+          <strong>MCP 鏈嶅姟</strong>
+          <Tag bordered>MCP 浣撻獙</Tag>
         </div>
         <Input
           className="mcp-market-search"
           allowClear
-          placeholder={`搜索 MCP 服务（共 ${mcps.length} 个）`}
+          placeholder={`鎼滅储 MCP 鏈嶅姟锛堝叡 ${mcps.length} 涓級`}
           value={mcpSearch}
           onChange={setMcpSearch}
         />
         <div className="mcp-type-filter">
-          <span>服务类型：</span>
+          <span>鏈嶅姟绫诲瀷锛?/span>
           <Button type={mcpServiceTypeFilter === 'hosted' ? 'primary' : 'outline'} onClick={() => setMcpServiceTypeFilter(mcpServiceTypeFilter === 'hosted' ? 'all' : 'hosted')}>
             Hosted
           </Button>
@@ -1456,7 +1456,7 @@ function renderMcpPage({
       <section className="mcp-market-shell">
         <aside className="mcp-category-rail">
           <button className={mcpCategoryFilter === 'all' ? 'active' : ''} type="button" onClick={() => setMcpCategoryFilter('all')}>
-            <span>全部服务</span>
+            <span>鍏ㄩ儴鏈嶅姟</span>
             <b>{mcps.length}</b>
           </button>
           {categoryOptions.map((category) => (
@@ -1467,7 +1467,7 @@ function renderMcpPage({
               onClick={() => setMcpCategoryFilter(category)}
             >
               <span>{category}</span>
-              <b>{mcps.filter((service) => (service.category || '通用') === category).length}</b>
+              <b>{mcps.filter((service) => (service.category || '閫氱敤') === category).length}</b>
             </button>
           ))}
         </aside>
@@ -1476,7 +1476,7 @@ function renderMcpPage({
           <div className="mcp-market-toolbar">
             <div className="mcp-result-line">
               <span>
-                共找到 <b>{filteredMcps.length}</b> 个结果
+                鍏辨壘鍒?<b>{filteredMcps.length}</b> 涓粨鏋?
               </span>
               {mcpCategoryFilter !== 'all' ? (
                 <Tag closable onClose={() => setMcpCategoryFilter('all')}>
@@ -1485,16 +1485,16 @@ function renderMcpPage({
               ) : null}
             </div>
             <Select value={mcpStatusFilter} onChange={setMcpStatusFilter}>
-              <Select.Option value="all">全部状态</Select.Option>
-              <Select.Option value="enabled">已启用</Select.Option>
-              <Select.Option value="disabled">已停用</Select.Option>
-              <Select.Option value="error">异常</Select.Option>
+              <Select.Option value="all">鍏ㄩ儴鐘舵€?/Select.Option>
+              <Select.Option value="enabled">宸插惎鐢?/Select.Option>
+              <Select.Option value="disabled">宸插仠鐢?/Select.Option>
+              <Select.Option value="error">寮傚父</Select.Option>
             </Select>
             <Button type="outline" icon={<IconHistory />} onClick={() => setShowMcpLogs(!showMcpLogs)}>
-              {showMcpLogs ? '回到服务' : '审计记录'}
+              {showMcpLogs ? '鍥炲埌鏈嶅姟' : '瀹¤璁板綍'}
             </Button>
             <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
-              添加服务
+              娣诲姞鏈嶅姟
             </Button>
           </div>
 
@@ -1506,19 +1506,19 @@ function renderMcpPage({
                     <div>
                       <strong>{log.agent_name}</strong>
                       <span>
-                        {log.service_name} / {log.tool_name} · {formatDateTime(log.created_at)}
+                        {log.service_name} / {log.tool_name} 路 {formatDateTime(log.created_at)}
                       </span>
                     </div>
-                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '失败'}</Tag>
+                    <Tag color={log.success ? 'green' : 'red'}>{log.success ? `${log.latency_ms ?? 0}ms` : '澶辫触'}</Tag>
                   </div>
                 ))
               ) : (
-                <div className="mcp-empty-mini">暂无调用日志</div>
+                <div className="mcp-empty-mini">鏆傛棤璋冪敤鏃ュ織</div>
               )}
             </section>
           ) : (
             <section className="mcp-card-grid">
-              {mcpLoading ? <div className="mcp-empty-state">正在读取数据库 MCP 服务...</div> : null}
+              {mcpLoading ? <div className="mcp-empty-state">姝ｅ湪璇诲彇鏁版嵁搴?MCP 鏈嶅姟...</div> : null}
               {!mcpLoading && filteredMcps.map((service) => (
                 <article key={service.id} className="mcp-market-card" onClick={() => openDetail(service)}>
                   <div className="mcp-market-card-head">
@@ -1531,15 +1531,15 @@ function renderMcpPage({
                     </div>
                     <span className="mcp-card-logo">{service.name.slice(0, 1).toUpperCase()}</span>
                   </div>
-                  <p>{service.description || '管理员尚未填写服务介绍。'}</p>
+                  <p>{service.description || '绠＄悊鍛樺皻鏈～鍐欐湇鍔′粙缁嶃€?}</p>
                   <div className="mcp-market-card-tags">
-                    <Tag bordered>{service.category || '通用'}</Tag>
+                    <Tag bordered>{service.category || '閫氱敤'}</Tag>
                     <Tag bordered>{detailOwnerLabel(service)}</Tag>
-                    <Tag bordered>{service.tools.length} 工具</Tag>
+                    <Tag bordered>{service.tools.length} 宸ュ叿</Tag>
                   </div>
                   <div className="mcp-market-card-foot">
                     <span>@{service.slug}</span>
-                    <span>{service.latency_ms ? `${service.latency_ms}ms` : '未测试'}</span>
+                    <span>{service.latency_ms ? `${service.latency_ms}ms` : '鏈祴璇?}</span>
                     <span>{formatDateTime(service.last_checked_at)}</span>
                   </div>
                 </article>
@@ -1547,10 +1547,10 @@ function renderMcpPage({
               {!mcpLoading && filteredMcps.length === 0 ? (
                 <div className="mcp-empty-state">
                   <IconSafe />
-                  <strong>{mcps.length === 0 ? '还没有 MCP 服务' : '没有匹配的 MCP 服务'}</strong>
-                  <span>{mcps.length === 0 ? '数据库中暂无记录，请手动添加第一个 MCP 服务。' : '调整筛选条件或新建一个服务接入配置。'}</span>
+                  <strong>{mcps.length === 0 ? '杩樻病鏈?MCP 鏈嶅姟' : '娌℃湁鍖归厤鐨?MCP 鏈嶅姟'}</strong>
+                  <span>{mcps.length === 0 ? '鏁版嵁搴撲腑鏆傛棤璁板綍锛岃鎵嬪姩娣诲姞绗竴涓?MCP 鏈嶅姟銆? : '璋冩暣绛涢€夋潯浠舵垨鏂板缓涓€涓湇鍔℃帴鍏ラ厤缃€?}</span>
                   <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
-                    添加 MCP 服务
+                    娣诲姞 MCP 鏈嶅姟
                   </Button>
                 </div>
               ) : null}
@@ -1586,7 +1586,7 @@ function renderSkillsPage({
   return (
     <>
       <Tabs activeTab={skillFilter} onChange={setSkillFilter} className="admin-tabs">
-        <Tabs.TabPane key="all" title="全部" />
+        <Tabs.TabPane key="all" title="鍏ㄩ儴" />
         {categories.map((category) => (
           <Tabs.TabPane key={category} title={category} />
         ))}
@@ -1599,11 +1599,11 @@ function renderSkillsPage({
                 <IconApps />
               </span>
               <div>
-                <h3>正在加载 Skills</h3>
+                <h3>姝ｅ湪鍔犺浇 Skills</h3>
                 <Tag color="arcoblue">File Based</Tag>
               </div>
             </div>
-            <p>正在从后端读取 Skill 文件资产。</p>
+            <p>姝ｅ湪浠庡悗绔鍙?Skill 鏂囦欢璧勪骇銆?/p>
           </Card>
         ) : null}
         {filteredSkills.map((skill) => (
@@ -1617,28 +1617,28 @@ function renderSkillsPage({
                 <Tag color="arcoblue">{skill.file_name}</Tag>
               </div>
             </div>
-            <p>{skill.description || '这个 Skill 暂未填写说明，Agent 会直接按文件内容使用。'}</p>
+            <p>{skill.description || '杩欎釜 Skill 鏆傛湭濉啓璇存槑锛孉gent 浼氱洿鎺ユ寜鏂囦欢鍐呭浣跨敤銆?}</p>
             <div className="meta-list">
-              <span>分类：{skill.category}</span>
-              <span>版本：{skill.version}</span>
-              <span>Slug：{skill.slug}</span>
-              <span>Hash：{skill.content_hash.slice(0, 12)}</span>
+              <span>鍒嗙被锛歿skill.category}</span>
+              <span>鐗堟湰锛歿skill.version}</span>
+              <span>Slug锛歿skill.slug}</span>
+              <span>Hash锛歿skill.content_hash.slice(0, 12)}</span>
             </div>
-            {skill.tags.length > 0 ? <AbilityChips title="标签" items={skill.tags} compact /> : null}
+            {skill.tags.length > 0 ? <AbilityChips title="鏍囩" items={skill.tags} compact /> : null}
             <div className="admin-card-footer">
               <Tag color={skill.status === 'enabled' ? 'green' : 'gray'}>
-                {skill.status === 'enabled' ? '启用' : '停用'}
+                {skill.status === 'enabled' ? '鍚敤' : '鍋滅敤'}
               </Tag>
               <Space size={4}>
                 <Button type="text" size="small" onClick={() => onEdit(skill)}>
-                  编辑文件
+                  缂栬緫鏂囦欢
                 </Button>
                 <Button type="text" size="small" onClick={() => onToggleStatus(skill)}>
-                  {skill.status === 'enabled' ? '停用' : '启用'}
+                  {skill.status === 'enabled' ? '鍋滅敤' : '鍚敤'}
                 </Button>
-                <Popconfirm title="确定删除这个 Skill 吗？" okText="删除" cancelText="取消" onOk={() => onDelete(skill)}>
+                <Popconfirm title="纭畾鍒犻櫎杩欎釜 Skill 鍚楋紵" okText="鍒犻櫎" cancelText="鍙栨秷" onOk={() => onDelete(skill)}>
                   <Button type="text" status="danger" size="small">
-                    删除
+                    鍒犻櫎
                   </Button>
                 </Popconfirm>
               </Space>
@@ -1652,17 +1652,17 @@ function renderSkillsPage({
                 <IconApps />
               </span>
               <div>
-                <h3>还没有 Skill 文件</h3>
-                <Tag color="orange">等待添加</Tag>
+                <h3>杩樻病鏈?Skill 鏂囦欢</h3>
+                <Tag color="orange">绛夊緟娣诲姞</Tag>
               </div>
             </div>
-            <p>可以上传或粘贴 Skill 文件，启用后会进入可复用能力池。</p>
+            <p>鍙互涓婁紶鎴栫矘璐?Skill 鏂囦欢锛屽惎鐢ㄥ悗浼氳繘鍏ュ彲澶嶇敤鑳藉姏姹犮€?/p>
           </Card>
         ) : null}
         <button className="admin-add-card" type="button" onClick={() => openDrawer('skill')}>
           <IconPlus />
-          <strong>添加 Skill 文件</strong>
-          <span>上传或粘贴 SKILL.md / .txt</span>
+          <strong>娣诲姞 Skill 鏂囦欢</strong>
+          <span>涓婁紶鎴栫矘璐?SKILL.md / .txt</span>
         </button>
       </div>
     </>
@@ -1680,7 +1680,7 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
             </span>
             <div>
               <h3>{kb.name}</h3>
-              <p>{kb.docs} 文档 · {kb.chunks} chunks · 更新 {kb.update}</p>
+              <p>{kb.docs} 鏂囨。 路 {kb.chunks} chunks 路 鏇存柊 {kb.update}</p>
             </div>
           </div>
           <div className="kb-progress">
@@ -1697,13 +1697,13 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
             ))}
           </div>
           <Button type="text" onClick={() => openDrawer('knowledge')}>
-            授权配置
+            鎺堟潈閰嶇疆
           </Button>
         </div>
       ))}
       <button className="kb-add-row" type="button" onClick={() => openDrawer('knowledge')}>
         <IconPlus />
-        <span>新建知识库 / 上传文档</span>
+        <span>鏂板缓鐭ヨ瘑搴?/ 涓婁紶鏂囨。</span>
       </button>
     </section>
   )
@@ -1712,16 +1712,16 @@ function renderKnowledgePage(openDrawer: (mode: DrawerMode) => void) {
 function renderSettingsPage(displayName: string, email: string, avatarUrl: string, avatarKey: number, setAvatarKey: (v: number | ((prev: number) => number)) => void, settingsTab: string, setSettingsTab: (v: string | ((prev: string) => string)) => void, logout: () => void) {
 
   if (settingsTab === 'account') return renderAccountSection(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout, () => setSettingsTab(''))
-  if (settingsTab === 'system') return <><div style={{ marginBottom: 16 }}><Button type="text" onClick={() => setSettingsTab('')} style={{ padding: 0, color: "#165dff" }}>← 返回</Button></div><SystemSettings /></>
+  if (settingsTab === 'system') return <><div style={{ marginBottom: 16 }}><Button type="text" onClick={() => setSettingsTab('')} style={{ padding: 0, color: "#165dff" }}>鈫?杩斿洖</Button></div><SystemSettings /></>
 
   return (
     <div>
       <div className="admin-section-title" style={{ marginBottom: 24 }}>
-        <h3>系统设置</h3>
-        <p>管理账号、系统配置与应用偏好。</p>
+        <h3>绯荤粺璁剧疆</h3>
+        <p>绠＄悊璐﹀彿銆佺郴缁熼厤缃笌搴旂敤鍋忓ソ銆?/p>
       </div>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        {/* 账号信息卡片 */}
+        {/* 璐﹀彿淇℃伅鍗＄墖 */}
         <div
           onClick={() => setSettingsTab('account')}
           style={{
@@ -1737,11 +1737,11 @@ function renderSettingsPage(displayName: string, email: string, avatarUrl: strin
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #e8f0ff, #d0e0ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
             <IconUser style={{ fontSize: 24, color: '#165dff' }} />
           </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>账号信息</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>头像、昵称、邮箱与退出</p>
+          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>璐﹀彿淇℃伅</h4>
+          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>澶村儚銆佹樀绉般€侀偖绠变笌閫€鍑?/p>
         </div>
 
-        {/* 系统配置卡片 */}
+        {/* 绯荤粺閰嶇疆鍗＄墖 */}
         <div
           onClick={() => setSettingsTab('system')}
           style={{
@@ -1757,11 +1757,11 @@ function renderSettingsPage(displayName: string, email: string, avatarUrl: strin
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #e8fff0, #d0ffe0)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
             <IconSettings style={{ fontSize: 24, color: '#00b42a' }} />
           </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>系统配置</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>公告、维护模式、平台名称</p>
+          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>绯荤粺閰嶇疆</h4>
+          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>鍏憡銆佺淮鎶ゆā寮忋€佸钩鍙板悕绉?/p>
         </div>
 
-        {/* 运行偏好卡片 */}
+        {/* 杩愯鍋忓ソ鍗＄墖 */}
         <div
           style={{
             flex: '1 1 180px', minWidth: 160, maxWidth: 220,
@@ -1774,8 +1774,8 @@ function renderSettingsPage(displayName: string, email: string, avatarUrl: strin
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #fff0e8, #ffe0d0)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
             <IconSafe style={{ fontSize: 24, color: '#ff7d00' }} />
           </div>
-          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>运行偏好</h4>
-          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>即将推出 · 审计与通知策略</p>
+          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600 }}>杩愯鍋忓ソ</h4>
+          <p style={{ margin: 0, fontSize: 13, color: '#86909C' }}>鍗冲皢鎺ㄥ嚭 路 瀹¤涓庨€氱煡绛栫暐</p>
         </div>
       </div>
     </div>
@@ -1787,7 +1787,7 @@ function renderAccountSection(displayName: string, email: string, avatarUrl: str
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
         <Button type="text" icon={<IconArrowLeft />} onClick={onBack} />
-        <h3 style={{ margin: 0 }}>账号信息</h3>
+        <h3 style={{ margin: 0 }}>璐﹀彿淇℃伅</h3>
       </div>
       <section className="form-surface">
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
@@ -1811,30 +1811,30 @@ function renderAccountSection(displayName: string, email: string, avatarUrl: str
                     body: formData,
                   })
                   setAvatarKey(k => k + 1)
-                  Message.success('头像上传成功')
+                  Message.success('澶村儚涓婁紶鎴愬姛')
                   setTimeout(() => window.location.reload(), 500)
                 } catch (err) {
-                  Message.error(err instanceof ApiError ? err.message : '上传失败')
+                  Message.error(err instanceof ApiError ? err.message : '涓婁紶澶辫触')
                 }
               }}
             >
-              <Button size="small" type="outline">上传头像</Button>
+              <Button size="small" type="outline">涓婁紶澶村儚</Button>
             </Upload>
           </div>
         </div>
         <div className="setting-field">
-          <span>当前账号</span>
+          <span>褰撳墠璐﹀彿</span>
           <strong>{displayName}</strong>
         </div>
         <div className="setting-field">
-          <span>邮箱</span>
-          <strong>{email || '未绑定'}</strong>
+          <span>閭</span>
+          <strong>{email || '鏈粦瀹?}</strong>
         </div>
       </section>
       <section className="form-surface" style={{ marginTop: 16 }}>
-        <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
+        <Popconfirm title="纭畾瑕侀€€鍑虹櫥褰曞悧锛? okText="閫€鍑? cancelText="鍙栨秷" onOk={logout}>
           <Button type="outline" status="danger" icon={<IconPoweroff />} long>
-            退出登录
+            閫€鍑虹櫥褰?
           </Button>
         </Popconfirm>
       </section>
@@ -1897,12 +1897,12 @@ function AdminConfigDrawer({
   onClose: () => void
 }) {
   const titleMap: Record<DrawerMode, string> = {
-    agent: `配置智能体 · ${selectedAgent.name}`,
-    master: '编辑主智能体配置',
-    model: '添加模型',
-    mcp: editingMcpId ? '编辑 MCP 服务' : '添加 MCP 服务',
-    skill: editingSkillId ? '编辑 Skill 文件' : '添加 Skill 文件',
-    knowledge: '新建知识库',
+    agent: `閰嶇疆鏅鸿兘浣?路 ${selectedAgent.name}`,
+    master: '缂栬緫涓绘櫤鑳戒綋閰嶇疆',
+    model: '娣诲姞妯″瀷',
+    mcp: editingMcpId ? '缂栬緫 MCP 鏈嶅姟' : '娣诲姞 MCP 鏈嶅姟',
+    skill: editingSkillId ? '缂栬緫 Skill 鏂囦欢' : '娣诲姞 Skill 鏂囦欢',
+    knowledge: '鏂板缓鐭ヨ瘑搴?,
   }
   const isSaving = mode === 'skill' ? skillSaving : mode === 'mcp' ? mcpSaving : false
   const onSave = mode === 'skill' ? onSaveSkill : mode === 'mcp' ? onSaveMcp : onClose
@@ -1916,9 +1916,9 @@ function AdminConfigDrawer({
       onCancel={onClose}
       footer={
         <div className="drawer-footer">
-          <Button onClick={onClose}>取消</Button>
+          <Button onClick={onClose}>鍙栨秷</Button>
           <Button type="primary" loading={isSaving} onClick={onSave}>
-            保存
+            淇濆瓨
           </Button>
         </div>
       }
@@ -1945,9 +1945,9 @@ function AdminConfigDrawer({
 function AgentDrawerContent({ agent, skillNames }: { agent: (typeof AGENTS)[number]; skillNames: string[] }) {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Input defaultValue={agent.name} addBefore="名称" />
+      <Input defaultValue={agent.name} addBefore="鍚嶇О" />
       <Input.TextArea defaultValue={agent.desc} autoSize={{ minRows: 3, maxRows: 4 }} />
-      <Select mode="multiple" defaultValue={agent.models} placeholder="可用模型范围">
+      <Select mode="multiple" defaultValue={agent.models} placeholder="鍙敤妯″瀷鑼冨洿">
         {MODELS.map((model) => (
           <Select.Option key={model.name} value={model.name}>
             {model.name}
@@ -1959,11 +1959,11 @@ function AgentDrawerContent({ agent, skillNames }: { agent: (typeof AGENTS)[numb
       <Checkbox.Group defaultValue={agent.kbs} options={KNOWLEDGE_BASES.map((kb) => kb.name)} />
       <div className="switch-list">
         <Switch defaultChecked={agent.callable} />
-        <span>允许被主智能体调用</span>
+        <span>鍏佽琚富鏅鸿兘浣撹皟鐢?/span>
       </div>
       <div className="switch-list">
-        <Switch defaultChecked={agent.status === '已发布'} />
-        <span>发布到学生端智能体广场</span>
+        <Switch defaultChecked={agent.status === '宸插彂甯?} />
+        <span>鍙戝竷鍒板鐢熺鏅鸿兘浣撳箍鍦?/span>
       </div>
     </Space>
   )
@@ -1972,7 +1972,7 @@ function AgentDrawerContent({ agent, skillNames }: { agent: (typeof AGENTS)[numb
 function MasterDrawerContent() {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Select defaultValue="DeepSeek V3" placeholder="默认模型">
+      <Select defaultValue="DeepSeek V3" placeholder="榛樿妯″瀷">
         {MODELS.filter((model) => model.enabled).map((model) => (
           <Select.Option key={model.name} value={model.name}>
             {model.name}
@@ -1980,12 +1980,12 @@ function MasterDrawerContent() {
         ))}
       </Select>
       <Input.TextArea
-        defaultValue="主智能体负责总控、路由、兜底问答和结果汇总。调用子智能体时传递当前模型，但保持会话记忆隔离。"
+        defaultValue="涓绘櫤鑳戒綋璐熻矗鎬绘帶銆佽矾鐢便€佸厹搴曢棶绛斿拰缁撴灉姹囨€汇€傝皟鐢ㄥ瓙鏅鸿兘浣撴椂浼犻€掑綋鍓嶆ā鍨嬶紝浣嗕繚鎸佷細璇濊蹇嗛殧绂汇€?
         autoSize={{ minRows: 5, maxRows: 8 }}
       />
       <Checkbox.Group
-        defaultValue={['全部 Skills', '全部 MCP', '全部知识库']}
-        options={['全部 Skills', '全部 MCP', '全部知识库']}
+        defaultValue={['鍏ㄩ儴 Skills', '鍏ㄩ儴 MCP', '鍏ㄩ儴鐭ヨ瘑搴?]}
+        options={['鍏ㄩ儴 Skills', '鍏ㄩ儴 MCP', '鍏ㄩ儴鐭ヨ瘑搴?]}
       />
     </Space>
   )
@@ -1994,21 +1994,21 @@ function MasterDrawerContent() {
 function ModelDrawerContent() {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Select defaultValue="DeepSeek" placeholder="模型供应商">
-        {['DeepSeek', 'OpenAI 兼容', 'Anthropic', 'Ollama·本地', '自定义'].map((item) => (
+      <Select defaultValue="DeepSeek" placeholder="妯″瀷渚涘簲鍟?>
+        {['DeepSeek', 'OpenAI 鍏煎', 'Anthropic', 'Ollama路鏈湴', '鑷畾涔?].map((item) => (
           <Select.Option key={item} value={item}>
             {item}
           </Select.Option>
         ))}
       </Select>
-      <Input defaultValue="DeepSeek 对话-生产" addBefore="显示名称" />
+      <Input defaultValue="DeepSeek 瀵硅瘽-鐢熶骇" addBefore="鏄剧ず鍚嶇О" />
       <Input defaultValue="https://api.deepseek.com/v1" addBefore="Base URL" />
       <Input.Password defaultValue="sk-0000000000000000" addBefore="API Key" />
-      <Input defaultValue="deepseek-chat" addBefore="模型标识" />
-      <div className="test-result success">连接成功 · 延迟 420ms · 模型已就绪</div>
+      <Input defaultValue="deepseek-chat" addBefore="妯″瀷鏍囪瘑" />
+      <div className="test-result success">杩炴帴鎴愬姛 路 寤惰繜 420ms 路 妯″瀷宸插氨缁?/div>
       <div className="switch-list">
         <Switch defaultChecked />
-        <span>对学生开放</span>
+        <span>瀵瑰鐢熷紑鏀?/span>
       </div>
     </Space>
   )
@@ -2033,7 +2033,7 @@ function McpDrawerContent({
 
   function addTool() {
     onChange({
-      tools: [...draft.tools, { name: '', description: '', risk: '低风险', enabled: true, input_schema: {} }],
+      tools: [...draft.tools, { name: '', description: '', risk: '浣庨闄?, enabled: true, input_schema: {} }],
     })
   }
 
@@ -2046,7 +2046,7 @@ function McpDrawerContent({
       <div className="mcp-apple-hero">
         <div>
           <span>MCP Service</span>
-          <h3>添加可被智能体调用的工具服务</h3>
+          <h3>娣诲姞鍙鏅鸿兘浣撹皟鐢ㄧ殑宸ュ叿鏈嶅姟</h3>
         </div>
         <Tag color="arcoblue" bordered>
           Database
@@ -2055,63 +2055,63 @@ function McpDrawerContent({
 
       <section className="mcp-apple-card">
         <div className="mcp-apple-card-head">
-          <strong>服务身份</strong>
-          <span>手动录入后保存到数据库，用于广场检索和智能体路由</span>
+          <strong>鏈嶅姟韬唤</strong>
+          <span>鎵嬪姩褰曞叆鍚庝繚瀛樺埌鏁版嵁搴擄紝鐢ㄤ簬骞垮満妫€绱㈠拰鏅鸿兘浣撹矾鐢?/span>
         </div>
-        <Input value={draft.name} placeholder="MCP 服务名称" addBefore="名称" onChange={(value) => onChange({ name: value })} />
+        <Input value={draft.name} placeholder="MCP 鏈嶅姟鍚嶇О" addBefore="鍚嶇О" onChange={(value) => onChange({ name: value })} />
         <Input.TextArea
           value={draft.description}
-          placeholder="描述这个 MCP 可以提供哪些业务能力"
+          placeholder="鎻忚堪杩欎釜 MCP 鍙互鎻愪緵鍝簺涓氬姟鑳藉姏"
           autoSize={{ minRows: 3, maxRows: 4 }}
           onChange={(value) => onChange({ description: value })}
         />
         <div className="mcp-apple-grid">
-          <Select value={draft.category || undefined} placeholder="服务分类" onChange={(value) => onChange({ category: value })}>
-            {['招聘数据', '学生服务', '搜索工具', '企业资料', '内容采集', '文档处理', '日程协同', '平台治理', '通用'].map((item) => (
+          <Select value={draft.category || undefined} placeholder="鏈嶅姟鍒嗙被" onChange={(value) => onChange({ category: value })}>
+            {['鎷涜仒鏁版嵁', '瀛︾敓鏈嶅姟', '鎼滅储宸ュ叿', '浼佷笟璧勬枡', '鍐呭閲囬泦', '鏂囨。澶勭悊', '鏃ョ▼鍗忓悓', '骞冲彴娌荤悊', '閫氱敤'].map((item) => (
               <Select.Option key={item} value={item}>
                 {item}
               </Select.Option>
             ))}
           </Select>
-          <Input value={draft.owner} placeholder="负责人或团队" addBefore="负责人" onChange={(value) => onChange({ owner: value })} />
+          <Input value={draft.owner} placeholder="璐熻矗浜烘垨鍥㈤槦" addBefore="璐熻矗浜? onChange={(value) => onChange({ owner: value })} />
         </div>
       </section>
 
       <section className="mcp-apple-card">
         <div className="mcp-apple-card-head">
-          <strong>连接协议</strong>
-          <span>支持 stdio / SSE / Streamable HTTP，保存后可进行连接测试</span>
+          <strong>杩炴帴鍗忚</strong>
+          <span>鏀寔 stdio / SSE / Streamable HTTP锛屼繚瀛樺悗鍙繘琛岃繛鎺ユ祴璇?/span>
         </div>
-        <Select value={draft.transport} placeholder="传输方式" onChange={(value) => onChange({ transport: value })}>
+        <Select value={draft.transport} placeholder="浼犺緭鏂瑰紡" onChange={(value) => onChange({ transport: value })}>
           {['stdio', 'SSE', 'Streamable HTTP'].map((item) => (
             <Select.Option key={item} value={item}>
               {item}
             </Select.Option>
           ))}
         </Select>
-        <Input value={draft.endpoint} placeholder="命令或 URL" addBefore="地址" onChange={(value) => onChange({ endpoint: value })} />
+        <Input value={draft.endpoint} placeholder="鍛戒护鎴?URL" addBefore="鍦板潃" onChange={(value) => onChange({ endpoint: value })} />
         <div className="mcp-apple-grid">
-          <Select value={draft.authType} placeholder="鉴权方式" onChange={(value) => onChange({ authType: value })}>
-            {['无鉴权', 'Bearer Token', 'API Key', 'OAuth 2.0', '本地沙箱'].map((item) => (
+          <Select value={draft.authType} placeholder="閴存潈鏂瑰紡" onChange={(value) => onChange({ authType: value })}>
+            {['鏃犻壌鏉?, 'Bearer Token', 'API Key', 'OAuth 2.0', '鏈湴娌欑'].map((item) => (
               <Select.Option key={item} value={item}>
                 {item}
               </Select.Option>
             ))}
           </Select>
-          <Input value={draft.authConfig} placeholder="鉴权配置" addBefore="鉴权" onChange={(value) => onChange({ authConfig: value })} />
+          <Input value={draft.authConfig} placeholder="閴存潈閰嶇疆" addBefore="閴存潈" onChange={(value) => onChange({ authConfig: value })} />
         </div>
       </section>
 
       <section className="mcp-apple-card">
         <div className="mcp-apple-card-head">
-          <strong>智能体授权</strong>
-          <span>这里读取真实智能体接口；只有被授权的智能体才能调用</span>
+          <strong>鏅鸿兘浣撴巿鏉?/strong>
+          <span>杩欓噷璇诲彇鐪熷疄鏅鸿兘浣撴帴鍙ｏ紱鍙湁琚巿鏉冪殑鏅鸿兘浣撴墠鑳借皟鐢?/span>
         </div>
         <Select
           mode="multiple"
           value={draft.agentIds}
           loading={agentOptionsLoading}
-          placeholder="选择可调用该 MCP 的智能体"
+          placeholder="閫夋嫨鍙皟鐢ㄨ MCP 鐨勬櫤鑳戒綋"
           showSearch
           onChange={(value) => onChange({ agentIds: value })}
         >
@@ -2125,41 +2125,41 @@ function McpDrawerContent({
 
       <section className="mcp-apple-card">
         <div className="mcp-apple-card-head">
-          <strong>工具暴露</strong>
-          <span>手动维护 MCP 暴露的工具；保存后进入 Agent 工具池</span>
+          <strong>宸ュ叿鏆撮湶</strong>
+          <span>鎵嬪姩缁存姢 MCP 鏆撮湶鐨勫伐鍏凤紱淇濆瓨鍚庤繘鍏?Agent 宸ュ叿姹?/span>
         </div>
         <div className="mcp-tool-editor">
           {draft.tools.map((tool, index) => (
             <div key={index} className="mcp-tool-editor-row">
-              <Input value={tool.name} placeholder="工具名，如 web_search" onChange={(value) => updateTool(index, { name: value })} />
-              <Input value={tool.description} placeholder="工具说明" onChange={(value) => updateTool(index, { description: value })} />
+              <Input value={tool.name} placeholder="宸ュ叿鍚嶏紝濡?web_search" onChange={(value) => updateTool(index, { name: value })} />
+              <Input value={tool.description} placeholder="宸ュ叿璇存槑" onChange={(value) => updateTool(index, { description: value })} />
               <Select value={tool.risk} onChange={(value) => updateTool(index, { risk: value })}>
-                <Select.Option value="低风险">低风险</Select.Option>
-                <Select.Option value="中风险">中风险</Select.Option>
-                <Select.Option value="高风险">高风险</Select.Option>
+                <Select.Option value="浣庨闄?>浣庨闄?/Select.Option>
+                <Select.Option value="涓闄?>涓闄?/Select.Option>
+                <Select.Option value="楂橀闄?>楂橀闄?/Select.Option>
               </Select>
               <Button type="text" status="danger" onClick={() => removeTool(index)}>
-                删除
+                鍒犻櫎
               </Button>
             </div>
           ))}
-          {draft.tools.length === 0 ? <div className="mcp-empty-mini">还没有工具，保存服务后也可以稍后发现或编辑。</div> : null}
+          {draft.tools.length === 0 ? <div className="mcp-empty-mini">杩樻病鏈夊伐鍏凤紝淇濆瓨鏈嶅姟鍚庝篃鍙互绋嶅悗鍙戠幇鎴栫紪杈戙€?/div> : null}
           <Button type="outline" icon={<IconPlus />} onClick={addTool}>
-            添加工具
+            娣诲姞宸ュ叿
           </Button>
         </div>
       </section>
 
       <section className="mcp-apple-card">
         <div className="mcp-apple-card-head">
-          <strong>工具池策略</strong>
-          <span>发布后按优先级注入给模型，避免同名工具冲突</span>
+          <strong>宸ュ叿姹犵瓥鐣?/strong>
+          <span>鍙戝竷鍚庢寜浼樺厛绾ф敞鍏ョ粰妯″瀷锛岄伩鍏嶅悓鍚嶅伐鍏峰啿绐?/span>
         </div>
         <div className="mcp-priority-flow">
           {[
-            ['1', '内置工具', '硬编码能力，最高优先级'],
-            ['2', 'Skill 工具', '从数据库动态加载'],
-            ['3', 'MCP 工具', '运行时发现并合并'],
+            ['1', '鍐呯疆宸ュ叿', '纭紪鐮佽兘鍔涳紝鏈€楂樹紭鍏堢骇'],
+            ['2', 'Skill 宸ュ叿', '浠庢暟鎹簱鍔ㄦ€佸姞杞?],
+            ['3', 'MCP 宸ュ叿', '杩愯鏃跺彂鐜板苟鍚堝苟'],
           ].map(([step, title, desc]) => (
             <div key={title}>
               <b>{step}</b>
@@ -2173,11 +2173,11 @@ function McpDrawerContent({
       <div className="mcp-apple-switches">
         <div className="switch-list">
           <Switch checked={draft.status === 'enabled'} onChange={(checked) => onChange({ status: checked ? 'enabled' : 'disabled' })} />
-          <span>启用服务</span>
+          <span>鍚敤鏈嶅姟</span>
         </div>
         <div className="switch-list">
           <Switch checked={draft.autoDisableOnError} onChange={(checked) => onChange({ autoDisableOnError: checked })} />
-          <span>异常时自动从智能体路由中摘除</span>
+          <span>寮傚父鏃惰嚜鍔ㄤ粠鏅鸿兘浣撹矾鐢变腑鎽橀櫎</span>
         </div>
       </div>
     </div>
@@ -2209,37 +2209,37 @@ function SkillDrawerContent({
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
       <div className="skill-file-tools">
         <div>
-          <strong>文件化 Skill</strong>
-          <p>上传 SKILL.md 文件，或直接编辑下方内容。</p>
+          <strong>鏂囦欢鍖?Skill</strong>
+          <p>涓婁紶 SKILL.md 鏂囦欢锛屾垨鐩存帴缂栬緫涓嬫柟鍐呭銆?/p>
         </div>
         <Button type="outline" onClick={() => fileInputRef.current?.click()}>
-          上传文件
+          涓婁紶鏂囦欢
         </Button>
         <input ref={fileInputRef} type="file" accept=".md,.txt" hidden onChange={handleFileChange} />
       </div>
       <div className="skill-editor-meta">
-        <Input value={draft.name} addBefore="Skill 名称" placeholder="留空则从文件解析" onChange={(value) => onChange({ name: value })} />
-        <Input value={draft.category} addBefore="分类" placeholder="例如：简历 / 求职 / 面试" onChange={(value) => onChange({ category: value })} />
-        <Input value={draft.version} addBefore="版本" placeholder="1.0.0" onChange={(value) => onChange({ version: value })} />
+        <Input value={draft.name} addBefore="Skill 鍚嶇О" placeholder="鐣欑┖鍒欎粠鏂囦欢瑙ｆ瀽" onChange={(value) => onChange({ name: value })} />
+        <Input value={draft.category} addBefore="鍒嗙被" placeholder="渚嬪锛氱畝鍘?/ 姹傝亴 / 闈㈣瘯" onChange={(value) => onChange({ category: value })} />
+        <Input value={draft.version} addBefore="鐗堟湰" placeholder="1.0.0" onChange={(value) => onChange({ version: value })} />
       </div>
       <Input.TextArea
         value={draft.description}
-        placeholder="一句话说明这个 Skill 能做什么；也可留空，从 frontmatter 解析"
+        placeholder="涓€鍙ヨ瘽璇存槑杩欎釜 Skill 鑳藉仛浠€涔堬紱涔熷彲鐣欑┖锛屼粠 frontmatter 瑙ｆ瀽"
         autoSize={{ minRows: 3, maxRows: 4 }}
         onChange={(value) => onChange({ description: value })}
       />
-      <Input value={draft.tagsText} addBefore="标签" placeholder="用逗号分隔，例如：简历, STAR, 评分" onChange={(value) => onChange({ tagsText: value })} />
-      <Input value={draft.fileName} addBefore="文件名" placeholder="SKILL.md" onChange={(value) => onChange({ fileName: value })} />
+      <Input value={draft.tagsText} addBefore="鏍囩" placeholder="鐢ㄩ€楀彿鍒嗛殧锛屼緥濡傦細绠€鍘? STAR, 璇勫垎" onChange={(value) => onChange({ tagsText: value })} />
+      <Input value={draft.fileName} addBefore="鏂囦欢鍚? placeholder="SKILL.md" onChange={(value) => onChange({ fileName: value })} />
       <Input.TextArea
         className="skill-code-editor"
         value={draft.content}
-        placeholder="在这里粘贴 SKILL.md 内容"
+        placeholder="鍦ㄨ繖閲岀矘璐?SKILL.md 鍐呭"
         autoSize={{ minRows: 14, maxRows: 22 }}
         onChange={(value) => onChange({ content: value })}
       />
       <div className="switch-list">
         <Switch checked={draft.status === 'enabled'} onChange={(checked) => onChange({ status: checked ? 'enabled' : 'disabled' })} />
-        <span>启用 Skill</span>
+        <span>鍚敤 Skill</span>
       </div>
     </Space>
   )
@@ -2248,16 +2248,16 @@ function SkillDrawerContent({
 function KnowledgeDrawerContent() {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Input defaultValue="企业资料库" addBefore="知识库名称" />
-      <Input.TextArea placeholder="描述知识库用途、数据来源与更新节奏" autoSize={{ minRows: 3, maxRows: 4 }} />
-      <Checkbox.Group defaultValue={['主智能体']} options={['主智能体', ...AGENTS.map((agent) => agent.name)]} />
+      <Input defaultValue="浼佷笟璧勬枡搴? addBefore="鐭ヨ瘑搴撳悕绉? />
+      <Input.TextArea placeholder="鎻忚堪鐭ヨ瘑搴撶敤閫斻€佹暟鎹潵婧愪笌鏇存柊鑺傚" autoSize={{ minRows: 3, maxRows: 4 }} />
+      <Checkbox.Group defaultValue={['涓绘櫤鑳戒綋']} options={['涓绘櫤鑳戒綋', ...AGENTS.map((agent) => agent.name)]} />
       <div className="upload-dropzone">
         <IconPlus />
-        <span>拖拽或点击上传文档，随后进行解析、切片与向量化</span>
+        <span>鎷栨嫿鎴栫偣鍑讳笂浼犳枃妗ｏ紝闅忓悗杩涜瑙ｆ瀽銆佸垏鐗囦笌鍚戦噺鍖?/span>
       </div>
       <div className="switch-list">
         <Switch defaultChecked />
-        <span>允许主智能体按需访问已授权内容</span>
+        <span>鍏佽涓绘櫤鑳戒綋鎸夐渶璁块棶宸叉巿鏉冨唴瀹?/span>
       </div>
     </Space>
   )

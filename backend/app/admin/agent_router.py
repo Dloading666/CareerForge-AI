@@ -53,50 +53,107 @@ def api_toggle_agent(agent_id: int, payload: AgentToggle, db: Session = Depends(
 class DifyTestRequest(BaseModel):
     api_base_url: str
     api_key: str
-    app_id: str = ""
 
 @router.post("/test-dify")
 async def api_test_dify(payload: "DifyTestRequest", _current=Depends(require_role("admin"))):
-    """Test Dify connection - tries multiple endpoints and returns detailed diagnostics."""
+    """Test Dify connection - probes app info + parameters, then tests matched endpoint."""
     import httpx
     base_url = payload.api_base_url.rstrip("/")
     api_key = payload.api_key
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     user = "admin-test"
-    inputs_test = {"test": "ping"}
-    
-    # Try multiple paths and body formats
-    attempts = []
-    
-    # Attempt 1: chat-messages (Chatbot/Agent)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-        for path, body in [
-            ("/chat-messages", {"inputs": inputs_test, "query": "ping", "response_mode": "blocking", "user": user}),
-            ("/completion-messages", {"inputs": inputs_test, "query": "ping", "response_mode": "blocking", "user": user}),
-            ("/workflows/run", {"inputs": inputs_test, "response_mode": "blocking", "user": user}),
-        ]:
-            full_url = f"{base_url}{path}"
+    steps = []
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        # Step 1: GET /info to discover app mode
+        app_mode = "unknown"
+        try:
+            info_resp = await client.get(f"{base_url}/info", headers=headers)
+            if info_resp.status_code == 200:
+                info = info_resp.json()
+                app_mode = info.get("mode", "unknown")
+                steps.append({"step": "info", "ok": True, "mode": app_mode})
+            else:
+                steps.append({"step": "info", "ok": False, "status": info_resp.status_code, "body": info_resp.text[:200]})
+        except Exception as exc:
+            steps.append({"step": "info", "ok": False, "error": str(exc)[:120]})
+
+        # Step 2: GET /parameters to discover required inputs
+        test_inputs = {}
+        try:
+            param_resp = await client.get(f"{base_url}/parameters", headers=headers)
+            if param_resp.status_code == 200:
+                params = param_resp.json()
+                user_inputs = params.get("user_input_form", [])
+                if isinstance(user_inputs, list):
+                    for field in user_inputs:
+                        if isinstance(field, dict):
+                            for ftype, fconfig in field.items():
+                                if isinstance(fconfig, dict):
+                                    vname = fconfig.get("variable") or ""
+                                    if vname and vname not in test_inputs:
+                                        test_inputs[vname] = "test"
+                steps.append({"step": "parameters", "ok": True, "inputs": list(test_inputs.keys())})
+                # If workflow has no user inputs, inject a generic query key
+                if not test_inputs:
+                    test_inputs["query"] = "ping"
+                    steps[-1]["inputs"] = list(test_inputs.keys())
+            else:
+                body = param_resp.text[:300]
+                steps.append({"step": "parameters", "ok": False, "status": param_resp.status_code, "body": body})
+                # Fallback: try common workflow input variable names
+                test_inputs["query"] = "ping"
+                test_inputs["sys.query"] = "ping"
+        except Exception as exc:
+            steps.append({"step": "parameters", "ok": False, "error": str(exc)[:120]})
+            test_inputs["query"] = "ping"
+            test_inputs["sys.query"] = "ping"
+
+        # Step 3: Test the matched endpoint
+        mode_endpoints = {
+            "chat": ("/chat-messages", {"inputs": test_inputs, "query": "ping", "response_mode": "blocking", "user": user}),
+            "agent-chat": ("/chat-messages", {"inputs": test_inputs, "query": "ping", "response_mode": "blocking", "user": user}),
+            "advanced-chat": ("/chat-messages", {"inputs": test_inputs, "query": "ping", "response_mode": "blocking", "user": user}),
+            "completion": ("/completion-messages", {"inputs": test_inputs, "response_mode": "blocking", "user": user}),
+            "workflow": ("/workflows/run", {"inputs": test_inputs, "response_mode": "blocking", "user": user}),
+        }
+
+        fallback_endpoints = [
+            ("/chat-messages", {"inputs": test_inputs, "query": "ping", "response_mode": "blocking", "user": user}),
+            ("/completion-messages", {"inputs": test_inputs, "response_mode": "blocking", "user": user}),
+            ("/workflows/run", {"inputs": test_inputs, "response_mode": "blocking", "user": user}),
+        ]
+
+        to_try = []
+        if app_mode in mode_endpoints:
+            to_try.append(mode_endpoints[app_mode])
+        for ep in fallback_endpoints:
+            if ep[0] not in [t[0] for t in to_try]:
+                to_try.append(ep)
+
+        attempt_results = []
+        for path, body in to_try:
             try:
-                resp = await client.post(full_url, headers=headers, json=body)
+                resp = await client.post(f"{base_url}{path}", headers=headers, json=body)
                 status = resp.status_code
                 try:
                     detail = resp.json()
-                    msg = detail.get("message", "") or detail.get("error", "") or str(detail)[:120]
+                    msg = detail.get("message", "") or str(detail)[:200]
                 except Exception:
-                    msg = resp.text[:120]
-                attempts.append({"path": path, "status": status, "message": msg})
+                    msg = resp.text[:200]
+                attempt_results.append({"path": path, "status": status, "message": msg})
                 if status == 200:
-                    return ok({"success": True, "message": f"OK - connected via {path}", "diagnostics": attempts})
+                    return ok({"success": True, "message": f"OK via {path} (mode: {app_mode})", "steps": steps, "attempts": attempt_results})
             except Exception as exc:
-                attempts.append({"path": path, "status": 0, "message": str(exc)[:120]})
-    
-    # All failed - return diagnostic info
-    return ok({
-        "success": False,
-        "message": f"All 3 endpoints failed. Base URL: {base_url}",
-        "diagnostics": attempts,
-        "hint": "Check: 1) API Secret is correct 2) App is published 3) Base URL matches your Dify server"
-    })
+                attempt_results.append({"path": path, "status": 0, "message": str(exc)[:120]})
+
+        return ok({
+            "success": False,
+            "message": f"Failed. Mode: {app_mode}, inputs: {list(test_inputs.keys())}",
+            "steps": steps,
+            "attempts": attempt_results,
+            "hint": "Check: 1) App published? 2) API Secret = API Secret not App ID? 3) Required input fields exist?"
+        })
 
 
 @router.post("/{agent_id}/chat")
@@ -106,8 +163,10 @@ def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depen
     # Dify mode
     if agent.use_dify and agent.dify_api_key_cipher:
         try:
+            uid = _current[0].user_id if hasattr(_current[0], "user_id") else "admin"
             result = dify_chat_completion(agent, user_message=payload.message, variables=payload.variables,
-                                           conversation_id=payload.variables.get("conversation_id", "") if payload.variables else "")
+                                           conversation_id=payload.variables.get("conversation_id", "") if payload.variables else "",
+                                           user_id=str(uid))
         except RuntimeError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
         return ok(AgentChatResponse(reply=result["reply"], model_name="Dify", usage=result["usage"]).model_dump())
