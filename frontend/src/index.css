@@ -1287,10 +1287,10 @@ textarea {
 
 .composer-settings-menu,
 .composer-model-submenu {
-  width: 320px;
-  padding: 10px;
+  width: 278px;
+  padding: 8px;
   border: 1px solid #dfe1e5;
-  border-radius: 22px;
+  border-radius: 18px;
   background: #fff;
   box-shadow: 0 16px 42px rgba(22, 27, 38, 0.13);
   color: #20242c;
@@ -1301,18 +1301,18 @@ textarea {
 }
 
 .composer-settings-heading {
-  height: 38px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 10px;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   color: #8b94a6;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 650;
 }
 
 .composer-settings-heading svg {
-  font-size: 20px;
+  font-size: 17px;
 }
 
 .composer-settings-options {
@@ -1323,10 +1323,10 @@ textarea {
 
 .composer-settings-option {
   width: 100%;
-  min-height: 50px;
-  padding: 0 17px;
+  min-height: 42px;
+  padding: 0 14px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   background: transparent;
   color: #252931;
   display: flex;
@@ -1334,7 +1334,7 @@ textarea {
   justify-content: space-between;
   gap: 14px;
   text-align: left;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 560;
   cursor: pointer;
   transition: background 0.12s ease;
@@ -1355,17 +1355,17 @@ textarea {
 .composer-settings-option > svg {
   flex-shrink: 0;
   color: #1677ff;
-  font-size: 20px;
+  font-size: 17px;
 }
 
 .composer-settings-option.model-entry > svg {
   color: #858c98;
-  font-size: 17px;
+  font-size: 15px;
 }
 
 .composer-settings-divider {
   height: 1px;
-  margin: 9px 0 10px;
+  margin: 7px 0 8px;
   background: #e6e7e9;
 }
 
@@ -1407,7 +1407,7 @@ textarea {
 }
 
 .composer-model-submenu .model-options {
-  max-height: min(360px, calc(100vh - 120px));
+  max-height: min(310px, calc(100vh - 110px));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1882,7 +1882,7 @@ textarea {
 
   .composer-settings-menu,
   .composer-model-submenu {
-    width: min(320px, calc(100vw - 24px));
+    width: min(278px, calc(100vw - 24px));
   }
 
   .composer-model-submenu {

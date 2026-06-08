@@ -1,15 +1,20 @@
-import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
   IconBook,
   IconCaretDown,
   IconCaretRight,
+  IconCheck,
   IconClose,
   IconCloseCircle,
+  IconDashboard,
+  IconDelete,
+  IconDownload,
   IconFile,
   IconHistory,
   IconLoading,
+  IconMindMapping,
   IconNotification,
   IconPlus,
   IconPoweroff,
@@ -73,7 +78,11 @@ type AgentAttachment = {
   file_size: number
   status: string
   created_at: string
+  download_url?: string | null
 }
+
+// 主智能体生成的可下载文件（如 export_resume_pdf 产出的简历 PDF），按 assistant 消息 id 归集
+type GeneratedFile = { attachment_id: number; download_url: string; filename: string }
 
 type AgentHistory = {
   session: AgentSession
@@ -119,6 +128,130 @@ const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
 ]
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
+
+function ModelReasoningPicker({
+  modelOptions,
+  selectedModelId,
+  reasoningEffort,
+  disabled,
+  onModelChange,
+  onReasoningChange,
+}: {
+  modelOptions: AgentModelOption[]
+  selectedModelId: number | null
+  reasoningEffort: ReasoningEffort
+  disabled: boolean
+  onModelChange: (modelId: number) => void
+  onReasoningChange: (effort: ReasoningEffort) => void
+}) {
+  const [popupVisible, setPopupVisible] = useState(false)
+  const [modelMenuVisible, setModelMenuVisible] = useState(false)
+  const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
+  const selectedReasoning = reasoningOptions.find((option) => option.value === reasoningEffort)
+
+  const closePicker = () => {
+    setPopupVisible(false)
+    setModelMenuVisible(false)
+  }
+
+  return (
+    <Dropdown
+      trigger="click"
+      position="tr"
+      disabled={disabled}
+      popupVisible={popupVisible}
+      onVisibleChange={(visible) => {
+        setPopupVisible(visible)
+        if (!visible) setModelMenuVisible(false)
+      }}
+      triggerProps={{ popupAlign: { bottom: 8 } }}
+      droplist={
+        <div className="composer-settings-menu" onClick={(event) => event.stopPropagation()}>
+          <div className="composer-settings-heading">
+            <IconMindMapping />
+            <span>推理</span>
+          </div>
+          <div className="composer-settings-options">
+            {reasoningOptions.map((option) => {
+              const selected = option.value === reasoningEffort
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`composer-settings-option${selected ? ' selected' : ''}`}
+                  onClick={() => {
+                    onReasoningChange(option.value)
+                    closePicker()
+                  }}
+                >
+                  <span>{option.label}</span>
+                  {selected && <IconCheck />}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="composer-settings-divider" />
+
+          <div className="composer-settings-heading">
+            <IconDashboard />
+            <span>模型</span>
+          </div>
+          <div className="composer-model-menu-anchor">
+            <button
+              type="button"
+              className={`composer-settings-option model-entry${modelMenuVisible ? ' selected' : ''}`}
+              aria-expanded={modelMenuVisible}
+              onClick={() => setModelMenuVisible(true)}
+              onFocus={() => setModelMenuVisible(true)}
+            >
+              <span>{selectedModel?.display_name ?? '选择模型'}</span>
+              <IconCaretRight />
+            </button>
+
+            <div className={`composer-model-submenu${modelMenuVisible ? ' visible' : ''}`}>
+              <div className="composer-settings-heading">
+                <IconDashboard />
+                <span>可用模型</span>
+              </div>
+              <div className="composer-settings-options model-options">
+                {modelOptions.map((model) => {
+                  const selected = model.id === selectedModelId
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      className={`composer-settings-option${selected ? ' selected' : ''}`}
+                      title={`${model.provider} · ${model.model_identifier}`}
+                      onClick={() => {
+                        onModelChange(model.id)
+                        closePicker()
+                      }}
+                    >
+                      <span>{model.display_name}</span>
+                      {selected && <IconCheck />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <button
+        type="button"
+        className={`composer-settings-button${popupVisible ? ' active' : ''}`}
+        disabled={disabled}
+        aria-label="选择模型和推理强度"
+      >
+        <span className="composer-settings-model">{selectedModel?.display_name ?? '选择模型'}</span>
+        <span className="composer-settings-effort">{selectedReasoning?.label ?? '中'}</span>
+        <IconCaretDown />
+      </button>
+    </Dropdown>
+  )
+}
 
 function activityKindIcon(kind: string): ReactNode {
   const style = { fontSize: 12 }
@@ -214,13 +347,44 @@ function ActivityBlock({
   )
 }
 
+function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
+  if (files.length === 0) return null
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {files.map((f) => (
+        <a
+          key={f.attachment_id}
+          href={f.download_url}
+          target="_blank"
+          rel="noreferrer"
+          download={f.filename}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', borderRadius: 10,
+            border: '1px solid #BFDBFE', background: '#EFF6FF',
+            color: '#1D4ED8', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+          }}
+        >
+          <IconFile />
+          <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {f.filename}
+          </span>
+          <IconDownload />
+        </a>
+      ))}
+    </div>
+  )
+}
+
 function AssistantMessage({
   message,
   activities,
+  files = [],
   pending = false,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
+  files?: GeneratedFile[]
   pending?: boolean
 }) {
   return (
@@ -242,6 +406,8 @@ function AssistantMessage({
             </div>
           )
         )}
+
+        <GeneratedFileLinks files={files} />
       </div>
     </div>
   )
@@ -251,10 +417,12 @@ function SessionHistoryPanel({
   sessions,
   currentSessionId,
   onSelect,
+  onDelete,
 }: {
   sessions: AgentSession[]
   currentSessionId: number | null
   onSelect: (session: AgentSession) => void
+  onDelete: (session: AgentSession) => void
 }) {
   if (sessions.length === 0) {
     return <div className="side-nav-history-empty">暂无历史对话</div>
@@ -263,16 +431,31 @@ function SessionHistoryPanel({
   return (
     <div className="side-nav-history-list">
       {sessions.map((s) => (
-        <button
+        <div
           key={s.id}
-          type="button"
+          role="button"
+          tabIndex={0}
           className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
           onClick={() => onSelect(s)}
           title={s.title}
         >
           <IconHistory className="side-nav-history-item-icon" />
           <span className="side-nav-history-item-title">{s.title}</span>
-        </button>
+          <Popconfirm
+            title="删除这条对话记录？"
+            okText="删除"
+            cancelText="取消"
+            onOk={() => onDelete(s)}
+          >
+            <span
+              className="side-nav-history-del"
+              title="删除"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <IconDelete />
+            </span>
+          </Popconfirm>
+        </div>
       ))}
     </div>
   )
@@ -294,6 +477,7 @@ export function StudentHomePage() {
   const [allSessions, setAllSessions] = useState<AgentSession[]>([])
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
+  const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
   const [inputValue, setInputValue] = useState('')
   const [bootingAgent, setBootingAgent] = useState(false)
   const [streaming, setStreaming] = useState(false)
@@ -342,6 +526,19 @@ export function StudentHomePage() {
     setMessages(history.messages)
     setActivities(history.activities)
     setPendingAttachments([])
+    // 恢复主智能体生成的可下载文件（绑定在 assistant 消息上的 PDF）
+    const assistantIds = new Set(history.messages.filter((m) => m.role === 'assistant').map((m) => m.id))
+    const restored: Record<number, GeneratedFile[]> = {}
+    for (const a of history.attachments) {
+      if (a.file_ext === 'pdf' && a.download_url && a.message_id && assistantIds.has(a.message_id)) {
+        ;(restored[a.message_id] ??= []).push({
+          attachment_id: a.id,
+          download_url: a.download_url,
+          filename: a.original_name,
+        })
+      }
+    }
+    setGeneratedFiles(restored)
   }, [])
 
   const createAgentSession = useCallback(async () => {
@@ -353,23 +550,23 @@ export function StudentHomePage() {
     setMessages([])
     setActivities([])
     setPendingAttachments([])
-    setAllSessions((prev) => [created, ...prev])
+    setGeneratedFiles({})
+    // 注意：不在此处加入 allSessions，空会话不进历史，等首次发送消息再加入
     return created
   }, [])
 
-  // 获取公告
   useEffect(() => {
     if (!session?.access) return
     const dismissed = localStorage.getItem('announcement_dismissed')
     apiRequest<{ announcement: string; enabled: boolean }>('/api/v1/student/announcement')
-      .then(res => {
+      .then((res) => {
         if (res.enabled && res.announcement && res.announcement !== dismissed) {
+          setDontShowAgain(false)
           setAnnouncement({ text: res.announcement, visible: true })
         }
       })
       .catch(() => {})
   }, [session?.access])
-
 
   // 每次登录（session 对象引用变化）都重新初始化：加载模型 + 创建全新会话
   useEffect(() => {
@@ -397,22 +594,16 @@ export function StudentHomePage() {
           setNotice('当前没有可用模型，请管理员先在模型广场开启「对学生开放」。')
         }
 
-        // 拉取历史会话列表
+        // 拉取历史会话列表（后端只返回有过对话的会话）
         const sessions = await apiRequest<AgentSession[]>('/api/v1/student/master/sessions')
         if (!alive) return
         setAllSessions(sessions)
 
-        // 始终创建一个新会话作为当前对话，旧会话保留在历史记录中
-        const created = await apiRequest<AgentSession>('/api/v1/student/master/sessions', {
-          method: 'POST',
-          body: JSON.stringify({ title: '新对话' }),
-        })
-        if (!alive) return
-        setAgentSession(created)
+        // 不再预创建空会话：登录后保持「新对话」空状态，首次发送消息时才真正创建会话
+        setAgentSession(null)
         setMessages([])
         setActivities([])
         setPendingAttachments([])
-        setAllSessions([created, ...sessions])
       } catch (error) {
         if (alive) {
           setNotice(error instanceof ApiError ? error.message : '主智能体会话初始化失败')
@@ -465,6 +656,22 @@ export function StudentHomePage() {
     }
     if (event === 'message.delta') {
       appendAssistantDelta(Number(data.message_id), String(data.delta ?? ''), sessionId)
+      return
+    }
+    if (event === 'attachment.created') {
+      const messageId = Number(data.message_id)
+      const downloadUrl = String(data.download_url ?? '')
+      if (!downloadUrl) return
+      const file: GeneratedFile = {
+        attachment_id: Number(data.attachment_id),
+        download_url: downloadUrl,
+        filename: String(data.filename ?? '简历.pdf'),
+      }
+      setGeneratedFiles((prev) => {
+        const list = prev[messageId] ?? []
+        if (list.some((f) => f.attachment_id === file.attachment_id)) return prev
+        return { ...prev, [messageId]: [...list, file] }
+      })
     }
   }
 
@@ -504,6 +711,19 @@ export function StudentHomePage() {
         created_at: new Date().toISOString(),
       },
     ])
+
+    // 首次发送后才把会话加入历史侧栏；继续对话则把它移到顶部
+    const sess = currentSession
+    const optimisticTitle = content.replace(/\n/g, ' ').slice(0, 32) || '新对话'
+    setAllSessions((prev) => {
+      const existing = prev.find((s) => s.id === sess.id)
+      const entry: AgentSession = {
+        ...sess,
+        title: existing ? existing.title : optimisticTitle,
+        updated_at: new Date().toISOString(),
+      }
+      return [entry, ...prev.filter((s) => s.id !== sess.id)]
+    })
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -547,10 +767,6 @@ export function StudentHomePage() {
         const parsed = parseSseBlock(buffer)
         if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
       }
-      // Update session list title after reply
-      setAllSessions((prev) =>
-        prev.map((s) => (s.id === currentSession.id ? { ...s, updated_at: new Date().toISOString() } : s)),
-      )
     } catch (error) {
       if (!controller.signal.aborted) {
         setNotice(error instanceof Error ? error.message : '主智能体回复失败')
@@ -569,14 +785,33 @@ export function StudentHomePage() {
     }
   }
 
-  const handleNewChat = async () => {
+  const handleNewChat = () => {
     if (streaming) abortRef.current?.abort()
     setNotice(null)
+    // 仅重置为空的「新对话」状态，会话在首次发送消息时才创建
+    setAgentSession(null)
+    setMessages([])
+    setActivities([])
+    setPendingAttachments([])
+    setGeneratedFiles({})
+    setInputValue('')
+    setActiveNav('agent')
+  }
+
+  const handleDeleteSession = async (target: AgentSession) => {
     try {
-      await createAgentSession()
-      setActiveNav('agent')
+      await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
+      setAllSessions((prev) => prev.filter((s) => s.id !== target.id))
+      // 删除的是当前会话则回到空状态
+      if (agentSession?.id === target.id) {
+        if (streaming) abortRef.current?.abort()
+        setAgentSession(null)
+        setMessages([])
+        setActivities([])
+        setPendingAttachments([])
+      }
     } catch (error) {
-      setNotice(error instanceof ApiError ? error.message : '新建对话失败')
+      setNotice(error instanceof ApiError ? error.message : '删除对话失败')
     }
   }
 
@@ -706,6 +941,7 @@ export function StudentHomePage() {
             sessions={allSessions}
             currentSessionId={activeNav === 'agent' ? (agentSession?.id ?? null) : null}
             onSelect={handleSelectSession}
+            onDelete={handleDeleteSession}
           />
         </div>
 
@@ -797,6 +1033,7 @@ export function StudentHomePage() {
                     key={message.id}
                     message={message}
                     activities={activitiesForAssistant(messages, activities, index)}
+                    files={generatedFiles[message.id] ?? []}
                   />
                 ),
               )}
@@ -879,34 +1116,14 @@ export function StudentHomePage() {
 
                 {/* Right: model · effort · send */}
                 <div className="composer-right">
-                  <Select
-                    className="composer-model-select"
-                    size="small"
-                    value={selectedModelId ?? undefined}
-                    placeholder="选择模型"
+                  <ModelReasoningPicker
+                    modelOptions={modelOptions}
+                    selectedModelId={selectedModelId}
+                    reasoningEffort={reasoningEffort}
                     disabled={streaming || modelOptions.length === 0}
-                    onChange={(v) => setSelectedModelId(v as number)}
-                  >
-                    {modelOptions.map((m) => (
-                      <Select.Option key={m.id} value={m.id}>
-                        {m.display_name}
-                      </Select.Option>
-                    ))}
-                  </Select>
-
-                  <Select
-                    className="composer-effort-select"
-                    size="small"
-                    value={reasoningEffort}
-                    disabled={streaming}
-                    onChange={(v) => setReasoningEffort(v as ReasoningEffort)}
-                  >
-                    {reasoningOptions.map((o) => (
-                      <Select.Option key={o.value} value={o.value}>
-                        {o.label}
-                      </Select.Option>
-                    ))}
-                  </Select>
+                    onModelChange={setSelectedModelId}
+                    onReasoningChange={setReasoningEffort}
+                  />
 
                   {streaming ? (
                     <button type="button" className="composer-send-btn stop" onClick={stopStreaming}>
@@ -937,11 +1154,10 @@ export function StudentHomePage() {
         {activeNav === 'profile' && <ProfilePage />}
       </section>
 
-      {/* Announcement Modal */}
       <Modal
         title={<span style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>系统公告</span>}
         visible={announcement.visible}
-        onCancel={() => setAnnouncement(prev => ({ ...prev, visible: false }))}
+        onCancel={() => setAnnouncement((prev) => ({ ...prev, visible: false }))}
         footer={null}
         closable
         maskClosable={false}
@@ -978,7 +1194,7 @@ export function StudentHomePage() {
               if (dontShowAgain) {
                 localStorage.setItem('announcement_dismissed', announcement.text)
               }
-              setAnnouncement(prev => ({ ...prev, visible: false }))
+              setAnnouncement((prev) => ({ ...prev, visible: false }))
             }}
           >
             关闭
