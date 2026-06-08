@@ -22,6 +22,7 @@ from app.student.agent_runtime import (
     save_attachment,
     stream_master_reply,
 )
+from app.admin.model_service import get_all_config
 from app.student.agent_schemas import (
     AgentHistoryResponse,
     AgentMessageRequest,
@@ -229,3 +230,11 @@ async def upload_banner(
     student.banner_url = f"/static/banners/{filename}"
     db.commit()
     return ok({"banner_url": student.banner_url})
+
+
+@router.get("/announcement")
+def student_announcement(db: Session = Depends(get_db)):
+    config = get_all_config(db)
+    enabled = config.get("announcement_enabled", "false") == "true"
+    announcement = config.get("announcement", "") if enabled else ""
+    return ok({"announcement": announcement, "enabled": enabled})

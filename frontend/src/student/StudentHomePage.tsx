@@ -1,4 +1,4 @@
-import { Button, Dropdown, Input, Menu, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Select, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
@@ -286,6 +286,8 @@ export function StudentHomePage() {
   const studentAvatar = (session?.profile.avatar_url as string) || ''
   const [studentAvatarKey] = useState(0)
   const studentEmail = (session?.profile.email as string) || ''
+  const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
+  const [dontShowAgain, setDontShowAgain] = useState(false)
 
   const [activeNav, setActiveNav] = useState<NavKey>('agent')
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null)
@@ -354,6 +356,20 @@ export function StudentHomePage() {
     setAllSessions((prev) => [created, ...prev])
     return created
   }, [])
+
+  // 获取公告
+  useEffect(() => {
+    if (!session?.access) return
+    const dismissed = localStorage.getItem('announcement_dismissed')
+    apiRequest<{ announcement: string; enabled: boolean }>('/api/v1/student/announcement')
+      .then(res => {
+        if (res.enabled && res.announcement && res.announcement !== dismissed) {
+          setAnnouncement({ text: res.announcement, visible: true })
+        }
+      })
+      .catch(() => {})
+  }, [session?.access])
+
 
   // 每次登录（session 对象引用变化）都重新初始化：加载模型 + 创建全新会话
   useEffect(() => {
@@ -920,6 +936,55 @@ export function StudentHomePage() {
 
         {activeNav === 'profile' && <ProfilePage />}
       </section>
+
+      {/* Announcement Modal */}
+      <Modal
+        title={<span style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>系统公告</span>}
+        visible={announcement.visible}
+        onCancel={() => setAnnouncement(prev => ({ ...prev, visible: false }))}
+        footer={null}
+        closable
+        maskClosable={false}
+        className="announcement-modal"
+      >
+        <style>{`
+          .announcement-modal { margin-top: -80px; margin-left: 80px; }
+          .announcement-modal .arco-modal-header {
+            background: linear-gradient(135deg, #165dff, #2c73ff);
+            border-radius: 8px 8px 0 0;
+            padding: 16px 24px;
+            border-bottom: none;
+          }
+          .announcement-modal .arco-modal-close-btn {
+            color: #fff;
+          }
+          .announcement-modal .arco-modal-content {
+            padding: 24px;
+            background: #fff;
+            border-radius: 0 0 8px 8px;
+          }
+        `}</style>
+        <div style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: 1.8, padding: '12px 0', color: '#1D2129' }}>
+          {announcement.text}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+          <Checkbox checked={dontShowAgain} onChange={setDontShowAgain}>
+            <span style={{ fontSize: 13, color: '#86909C' }}>我已知晓，不再提醒</span>
+          </Checkbox>
+          <Button
+            type="primary"
+            size="small"
+            onClick={() => {
+              if (dontShowAgain) {
+                localStorage.setItem('announcement_dismissed', announcement.text)
+              }
+              setAnnouncement(prev => ({ ...prev, visible: false }))
+            }}
+          >
+            关闭
+          </Button>
+        </div>
+      </Modal>
     </div>
   )
 }
