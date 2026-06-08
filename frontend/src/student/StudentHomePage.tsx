@@ -7,6 +7,7 @@ import {
   IconCaretRight,
   IconCheck,
   IconClose,
+  IconCopy,
   IconCloseCircle,
   IconDashboard,
   IconDelete,
@@ -21,7 +22,6 @@ import {
   IconRobot,
   IconSearch,
   IconSend,
-  IconStop,
   IconThunderbolt,
   IconUser,
 } from '@arco-design/web-react/icon'
@@ -489,6 +489,10 @@ export function StudentHomePage() {
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
+  // Track image attachments associated with user messages (optimistic id -> attachments)
+  const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
+  // Lightbox state
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null)
   const dragCounterRef = useRef(0)
 
   const abortRef = useRef<AbortController | null>(null)
@@ -527,6 +531,14 @@ export function StudentHomePage() {
     setMessages(history.messages)
     setActivities(history.activities)
     setPendingAttachments([])
+    // 恢复用户消息的图片附件
+    const userMsgAttachments: Record<number, AgentAttachment[]> = {}
+    for (const a of history.attachments) {
+      if (a.message_id && a.content_type?.startsWith('image/') && history.messages.some((m) => m.id === a.message_id && m.role === 'user')) {
+        ;(userMsgAttachments[a.message_id] ??= []).push(a)
+      }
+    }
+    setUserMessageAttachments(userMsgAttachments)
     // 恢复主智能体生成的可下载文件（绑定在 assistant 消息上的 PDF）
     const assistantIds = new Set(history.messages.filter((m) => m.role === 'assistant').map((m) => m.id))
     const restored: Record<number, GeneratedFile[]> = {}
@@ -649,6 +661,14 @@ export function StudentHomePage() {
     if (event === 'message.saved') {
       const messageId = Number(data.message_id)
       setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, id: messageId } : m)))
+      // 把乐观 id 上挂的图片附件迁移到真实消息 id，否则 message.saved 后图片会消失
+      setUserMessageAttachments((prev) => {
+        if (!prev[optimisticId]) return prev
+        const next = { ...prev }
+        next[messageId] = next[optimisticId]
+        delete next[optimisticId]
+        return next
+      })
       return
     }
     if (event === 'activity.started' || event === 'activity.completed' || event === 'activity.failed') {
@@ -708,10 +728,15 @@ export function StudentHomePage() {
         id: optimisticId,
         session_id: currentSession.id,
         role: 'user',
-        content: withAttachmentNames(content, sendingAttachments),
+        content: content,
         created_at: new Date().toISOString(),
       },
     ])
+    // Track image attachments for this user message
+    const imageAttachments = sendingAttachments.filter((a) => a.content_type?.startsWith('image/'))
+    if (imageAttachments.length > 0) {
+      setUserMessageAttachments((prev) => ({ ...prev, [optimisticId]: imageAttachments }))
+    }
 
     // 首次发送后才把会话加入历史侧栏；继续对话则把它移到顶部
     const sess = currentSession
@@ -1029,7 +1054,19 @@ export function StudentHomePage() {
               {messages.map((message, index) =>
                 message.role === 'user' ? (
                   <div key={message.id} className="message-row user">
-                    <div className="message-bubble user">{message.content}</div>
+                    {userMessageAttachments[message.id]?.length > 0 && (
+                      <div className="user-image-grid">
+                        {userMessageAttachments[message.id].map((att) => {
+                          const src = att.download_url || ''
+                          return (
+                            <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
+                              <img src={src} alt={att.original_name} />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {message.content && <div className="message-bubble user">{message.content}</div>}
                   </div>
                 ) : (
                   <AssistantMessage
@@ -1073,15 +1110,29 @@ export function StudentHomePage() {
 
               {pendingAttachments.length > 0 && (
                 <div className="attachment-chip-row">
-                  {pendingAttachments.map((a) => (
-                    <span key={a.id} className="attachment-chip">
-                      <IconAttachment />
-                      <span>{a.original_name}</span>
-                      <button type="button" onClick={() => removePendingAttachment(a.id)}>
-                        <IconClose />
-                      </button>
-                    </span>
-                  ))}
+                  {pendingAttachments.map((a) =>
+                    a.content_type?.startsWith('image/') && a.download_url ? (
+                      <div key={a.id} className="composer-image-preview" title={a.original_name}>
+                        <img src={a.download_url} alt={a.original_name} />
+                        <button
+                          type="button"
+                          className="composer-image-remove"
+                          aria-label="移除图片"
+                          onClick={() => removePendingAttachment(a.id)}
+                        >
+                          <IconClose />
+                        </button>
+                      </div>
+                    ) : (
+                      <span key={a.id} className="attachment-chip">
+                        <IconAttachment />
+                        <span>{a.original_name}</span>
+                        <button type="button" onClick={() => removePendingAttachment(a.id)}>
+                          <IconClose />
+                        </button>
+                      </span>
+                    ),
+                  )}
                 </div>
               )}
 
@@ -1101,7 +1152,7 @@ export function StudentHomePage() {
                     <button
                       type="button"
                       className={`composer-add-btn${uploadingAttachment ? ' loading' : ''}`}
-                      disabled={streaming || bootingAgent || uploadingAttachment}
+                      disabled={bootingAgent || uploadingAttachment}
                       onClick={() => fileInputRef.current?.click()}
                     >
                       {uploadingAttachment ? <IconLoading /> : <IconPlus />}
@@ -1123,14 +1174,14 @@ export function StudentHomePage() {
                     modelOptions={modelOptions}
                     selectedModelId={selectedModelId}
                     reasoningEffort={reasoningEffort}
-                    disabled={streaming || modelOptions.length === 0}
+                    disabled={modelOptions.length === 0}
                     onModelChange={setSelectedModelId}
                     onReasoningChange={setReasoningEffort}
                   />
 
                   {streaming ? (
                     <button type="button" className="composer-send-btn stop" onClick={stopStreaming}>
-                      <IconStop />
+                      <span className="stop-icon" />
                     </button>
                   ) : (
                     <button
@@ -1204,6 +1255,8 @@ export function StudentHomePage() {
           </Button>
         </div>
       </Modal>
+
+      {lightboxImage && <ImageLightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />}
     </div>
   )
 }
@@ -1218,11 +1271,6 @@ function activitiesForAssistant(
   const previousUser = [...messages.slice(0, assistantIndex)].reverse().find((m) => m.role === 'user')
   if (!previousUser) return []
   return activities.filter((a) => a.message_id === previousUser.id)
-}
-
-function withAttachmentNames(content: string, attachments: AgentAttachment[]) {
-  if (attachments.length === 0) return content
-  return `${content}\n\n附件：${attachments.map((a) => a.original_name).join('、')}`
 }
 
 function parseSseBlock(block: string): StreamEvent | null {
@@ -1241,4 +1289,29 @@ function parseSseBlock(block: string): StreamEvent | null {
   } catch {
     return null
   }
+}
+
+
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const handleCopy = async () => {
+    try {
+      const resp = await fetch(src)
+      const blob = await resp.blob()
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
+    } catch {
+      window.open(src, '_blank')
+    }
+  }
+
+  return (
+    <div className="image-lightbox-overlay" onClick={onClose}>
+      <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
+        <img src={src} alt="preview" />
+        <div className="image-lightbox-actions">
+          <button onClick={handleCopy} title="复制"><IconCopy /></button>
+          <button onClick={onClose} title="关闭"><IconClose /></button>
+        </div>
+      </div>
+    </div>
+  )
 }

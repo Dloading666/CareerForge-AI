@@ -1,5 +1,11 @@
 :root {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 系统 UI 字体栈：macOS=SF Pro/苹方，Windows=Segoe UI/微软雅黑，原生渲染、零加载 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC',
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  font-family: var(--font-sans);
   line-height: 1.5;
   font-weight: 400;
   color: #191b24;
@@ -708,6 +714,8 @@ textarea {
 
 .message-row.user {
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .message-row.assistant {
@@ -724,9 +732,13 @@ textarea {
 }
 
 .message-bubble.user {
-  background: #165dff;
-  color: #fff;
-  box-shadow: 0 12px 26px rgba(22, 93, 255, 0.16);
+  background: #f2f3f5;
+  color: #1a1d28;
+  border-radius: 18px;
+  padding: 10px 16px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  max-width: fit-content;
 }
 
 .assistant-message {
@@ -795,7 +807,7 @@ textarea {
   border-radius: 5px;
   background: #f0f1f6;
   border: 1px solid #dde1ec;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   color: #c7254e;
 }
@@ -1160,6 +1172,17 @@ textarea {
   background-color: transparent !important;
 }
 
+
+
+/* Keep textarea white during streaming */
+.agent-composer textarea:disabled {
+  background: transparent !important;
+  background-color: transparent !important;
+  opacity: 1 !important;
+  color: #1a1d28 !important;
+  -webkit-text-fill-color: #1a1d28 !important;
+}
+
 .agent-composer textarea::placeholder {
   color: #b0b5c3;
 }
@@ -1210,6 +1233,48 @@ textarea {
 .attachment-chip button:hover {
   color: #f53f3f;
   background: #f0e8e8;
+}
+
+/* 输入框里待发送的图片缩略图 */
+.composer-image-preview {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e6f0;
+  background: #f6f7fb;
+  flex-shrink: 0;
+}
+
+.composer-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.composer-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.14s;
+}
+
+.composer-image-remove:hover {
+  background: rgba(0, 0, 0, 0.78);
 }
 
 /* Bottom bar */
@@ -1475,15 +1540,114 @@ textarea {
 }
 
 .composer-send-btn.stop {
-  background: #fff;
-  border: 1.5px solid #d0d4de;
-  color: #3d4560;
+  background: #1a1d28;
+  border: none;
+  color: #fff;
 }
 
 .composer-send-btn.stop:hover {
-  border-color: #f53f3f;
-  color: #f53f3f;
-  background: #fff5f5;
+  background: #2d3149;
+}
+
+.stop-icon {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border-radius: 2px;
+}
+
+
+
+/* ── User message with images ── */
+.user-message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(720px, 86%);
+}
+
+.user-image-grid {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.user-image-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #e8e8e8;
+  flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.06);
+}
+
+.user-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.user-image-thumb:hover {
+  opacity: 0.8;
+  transition: opacity 0.15s;
+}
+
+/* ── Image lightbox ── */
+.image-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-lightbox-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.image-lightbox-content img {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.image-lightbox-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.image-lightbox-actions button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s;
+}
+
+.image-lightbox-actions button:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .student-placeholder {
@@ -2485,7 +2649,7 @@ textarea {
 }
 
 .skill-code-editor textarea {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   line-height: 1.7;
   background: #111827;
   color: #e5e7eb;
@@ -2850,7 +3014,7 @@ textarea {
 .mcp-tool-pool-row strong {
   color: #242b3d;
   font-size: 12px;
-  font-family: Consolas, 'SFMono-Regular', monospace;
+  font-family: var(--font-mono);
 }
 
 .mcp-tool-pool-row span {
@@ -3253,7 +3417,7 @@ textarea {
 
 .mcp-doc-tool-list strong {
   color: #111827;
-  font-family: Consolas, 'SFMono-Regular', monospace;
+  font-family: var(--font-mono);
 }
 
 .mcp-doc-tool-list span {

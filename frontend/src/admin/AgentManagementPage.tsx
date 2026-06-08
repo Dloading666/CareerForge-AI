@@ -34,16 +34,16 @@ const CAT_META: Record<string, { label: string; color: string; emoji: string }> 
 const CAT_OPT = Object.entries(CAT_META).map(([k, v]) => ({ value: k, label: v.emoji + ' ' + v.label }))
 
 const ICONS = [
-  { value: 'smart_toy', label: '🤖 智能体' },
-  { value: 'record_voice_over', label: '🎙️ 面试' },
-  { value: 'join_inner', label: '🤝 匹配' },
-  { value: 'description', label: '📄 简历' },
-  { value: 'psychology', label: '🧠 测评' },
-  { value: 'support_agent', label: '🎧 客服' },
-  { value: 'school', label: '🎓 学业' },
-  { value: 'work', label: '👩‍💻 职业' },
-  { value: 'trending_up', label: '📈 成长' },
-  { value: 'auto_awesome', label: '✨ 创意' },
+  { value: 'smart_toy', label: '智能体' },
+  { value: 'record_voice_over', label: '面试' },
+  { value: 'join_inner', label: '匹配' },
+  { value: 'description', label: '简历' },
+  { value: 'psychology', label: '测评' },
+  { value: 'support_agent', label: '客服' },
+  { value: 'school', label: '学业' },
+  { value: 'work', label: '职业' },
+  { value: 'trending_up', label: '成长' },
+  { value: 'auto_awesome', label: '创意' },
 ]
 
 const GRADIENT_PRESETS = [
@@ -71,8 +71,8 @@ export function AgentManagementPage() {
   const [cIn, setCIn] = useState('')
   const [difyTestResult, setDifyTestResult] = useState<string | null>(null)
   const [difyTesting, setDifyTesting] = useState(false)
-  const [difyOn, setDifyOn] = useState(false)
   const [cLoading, setCLoading] = useState(false)
+  const [useDify, setUseDify] = useState(false)
   const [vVals, setVVals] = useState<Record<string, string>>({})
   const cEnd = useRef<HTMLDivElement>(null)
 
@@ -93,7 +93,7 @@ export function AgentManagementPage() {
   useEffect(() => { fetchAgents() }, [fetchAgents])
   useEffect(() => { fetchModels() }, [fetchModels])
   useEffect(() => {
-    const h = () => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true); setDifyOn(false) }
+    const h = () => { setEdit(null); form.resetFields(); setUseDify(false); setMsgs([]); setTab('basic'); setDrawer(true) }
     window.addEventListener('agent-create', h); return () => window.removeEventListener('agent-create', h)
   }, [])
   useEffect(() => { cEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
@@ -104,6 +104,7 @@ export function AgentManagementPage() {
     if (a.prompt_variables) for (const pv of a.prompt_variables) v[pv.name] = pv.default || ''
     setVVals(v)
     setMsgs([])
+    setUseDify(a.use_dify || false)
     form.setFieldsValue({
       name: a.name, desc: a.description || '', cat: a.category,
       icon: a.icon_name || 'smart_toy', cFrom: a.icon_color_from || '#6366F1', cTo: a.icon_color_to || '#8B5CF6',
@@ -114,7 +115,6 @@ export function AgentManagementPage() {
       fp: a.frequency_penalty ?? 0, pp: a.presence_penalty ?? 0, mw: a.memory_window ?? 10,
       enabled: a.is_enabled, pub: a.is_published,
     })
-    setDifyOn(a.use_dify || false)
     setTab('basic')
     setDrawer(true)
   }
@@ -216,58 +216,52 @@ export function AgentManagementPage() {
   const allCategories = ['all', ...Object.keys(CAT_META)]
 
   return (
-    <div style={{ padding: '24px 28px', background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 30%, #f0f9ff 70%, #fdf2f8 100%)', minHeight: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div>
-          <Title heading={4} style={{ margin: 0, fontWeight: 700, color: '#1E1B4B' }}>🤖 智能体管理</Title>
-          <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 4, display: 'block' }}>创建和管理 AI 智能体，支持内置模型和 Dify 平台接入</Text>
-        </div>
-        <Button type='primary' icon={<IconPlus />} shape='round' size='large'
-          onClick={() => { setEdit(null); form.resetFields(); setMsgs([]); setTab('basic'); setDrawer(true); setDifyOn(false) }}
-          style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', border: 'none', fontWeight: 600, borderRadius: 24, height: 40, padding: '0 24px' }}>
-          创建智能体
-        </Button>
-      </div>
-
+    <div style={{ padding: '24px 28px', background: '#F8F9FB', minHeight: '100%' }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-        {[{ label: '全部', value: stats.total, emoji: '📊', color: '#6366F1' },
-          { label: '已启用', value: stats.enabled, emoji: '✅', color: '#10B981' },
-          { label: 'Dify 接入', value: stats.dify, emoji: '🔗', color: '#F59E0B' },
-          { label: '内置模型', value: stats.builtin, emoji: '🧩', color: '#EC4899' }].map(s => (
-          <div key={s.label} style={{ background: 'rgba(255,255,255,0.75)', backdropFilter: 'blur(12px)', borderRadius: 14, padding: '14px 20px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.6)', boxShadow: '0 2px 12px rgba(99,102,241,0.08)', transition: 'transform 0.2s', cursor: 'default' }}>
-            <div style={{ fontSize: 22, marginBottom: 2 }}>{s.emoji}</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: '#9CA3AF' }}>{s.label}</div>
+        {[{ label: '全部', value: stats.total, color: '#1F2937' },
+          { label: '已启用', value: stats.enabled, color: '#10B981' },
+          { label: 'Dify 接入', value: stats.dify, color: '#3B82F6' },
+          { label: '内置模型', value: stats.builtin, color: '#6366F1' }].map(s => (
+          <div key={s.label} style={{ background: '#FFFFFF', borderRadius: 8, padding: '16px 20px', textAlign: 'center', border: '1px solid #E5E6EB', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', cursor: 'default' }}>
+            <div style={{ fontSize: 28, fontWeight: 700, color: s.color, marginBottom: 2 }}>{s.value}</div>
+            <div style={{ fontSize: 13, color: '#6B7280' }}>{s.label}</div>
           </div>
         ))}
       </div>
 
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <Title heading={5} style={{ margin: 0, color: '#1F2937' }}>智能体列表</Title>
+        <Button type='primary' icon={<IconPlus />} size='small'
+          onClick={() => { setEdit(null); form.resetFields(); setUseDify(false); setMsgs([]); setTab('basic'); setDrawer(true) }}
+          style={{ fontWeight: 500, borderRadius: 6 }}>
+          新建智能体
+        </Button>
+      </div>
+
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         {allCategories.map(cat => {
-          const meta = cat === 'all' ? { label: '全部', color: '#6366F1', emoji: '🌐' } : CAT_META[cat]
+          const meta = cat === 'all' ? { label: '全部', color: '#6366F1' } : CAT_META[cat]
           const active = flt === cat
           return (
-            <div key={cat} onClick={() => setFlt(cat)} style={{ padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: active ? 600 : 400, cursor: 'pointer', border: '1.5px solid ' + (active ? meta.color : '#E5E6EB'), background: active ? meta.color + '12' : '#fff', color: active ? meta.color : '#4E5969', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>
-              {meta.emoji} {meta.label}
+            <div key={cat} onClick={() => setFlt(cat)} style={{ padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: active ? 600 : 400, cursor: 'pointer', border: '1.5px solid ' + (active ? meta.color : '#E5E6EB'), background: active ? meta.color + '12' : '#fff', color: active ? meta.color : '#4E5969', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>
+              {meta.label}
             </div>
           )
         })}
         <div style={{ flex: 1 }} />
-        <Input.Search placeholder='🔍 搜索智能体...' value={srch} onChange={v => setSrch(v)} style={{ width: 220, borderRadius: 20 }} size='large' />
+        <Input.Search placeholder='搜索智能体...' value={srch} onChange={v => setSrch(v)} style={{ width: 220, borderRadius: 8 }} size='large' />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
         {filtered.map(a => {
           const cm = CAT_META[a.category] || CAT_META.other
           const gradFrom = a.icon_color_from || cm.color
-          const gradTo = a.icon_color_to || gradFrom
           return (
-            <div key={a.id} style={{ background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(10px)', borderRadius: 16, padding: '20px 20px 16px', border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 4px 20px rgba(0,0,0,0.06)', transition: 'all 0.25s ease', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 8px 30px rgba(99,102,241,0.15)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.06)' }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, ${gradFrom}, ${gradTo})` }} />
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginTop: 4 }}>
-                <div style={{ width: 52, height: 52, borderRadius: 14, background: `linear-gradient(135deg, ${gradFrom}, ${gradTo})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 22, flexShrink: 0, boxShadow: `0 4px 12px ${gradFrom}40` }}>
+            <div key={a.id} style={{ background: '#FFFFFF', borderRadius: 8, padding: '16px 16px 14px', border: '1px solid #E5E6EB', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', transition: 'all 0.25s ease', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginTop: 0 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 8, background: gradFrom, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 22, flexShrink: 0 }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 26, fontVariationSettings: "'FILL' 1" }}>{a.icon_name || 'smart_toy'}</span>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -275,10 +269,10 @@ export function AgentManagementPage() {
                     <span style={{ fontWeight: 700, fontSize: 15, color: '#1F2937' }}>{a.name}</span>
                     {a.use_dify && <Tag size='small' color='arcoblue' style={{ fontSize: 10, borderRadius: 6, padding: '1px 6px' }}>Dify</Tag>}
                   </div>
-                  <Text style={{ fontSize: 12, color: '#9CA3AF', display: 'block', lineHeight: '18px', marginBottom: 8 }} ellipsis={{ rows: 2 }}>{a.description || '暂无描述'}</Text>
+                  <Text style={{ fontSize: 13, color: '#6B7280', display: 'block', lineHeight: '18px', marginBottom: 8 }} ellipsis={{ rows: 2 }}>{a.description || '暂无描述'}</Text>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <Tag color={cm.color === '#6366F1' ? 'arcoblue' : cm.color === '#F59E0B' ? 'orangered' : cm.color === '#10B981' ? 'green' : 'purple'} size='small' style={{ borderRadius: 8 }}>{cm.emoji} {cm.label}</Tag>
-                    <Tag size='small' color={a.is_enabled ? 'green' : 'gray'} style={{ borderRadius: 8 }}>{a.is_enabled ? '✅ 已启用' : '⏸ 已禁用'}</Tag>
+                    <Tag color={cm.color === '#6366F1' ? 'arcoblue' : cm.color === '#F59E0B' ? 'orangered' : cm.color === '#10B981' ? 'green' : 'purple'} size='small' style={{ borderRadius: 8 }}>{cm.label}</Tag>
+                    <Tag size='small' color={a.is_enabled ? 'green' : 'gray'} style={{ borderRadius: 8 }}>{a.is_enabled ? '已启用' : '已禁用'}</Tag>
                     {a.is_published && <Tag size='small' color='arcoblue' style={{ borderRadius: 8 }}>🌐 公开</Tag>}
                   </div>
                 </div>
@@ -295,19 +289,19 @@ export function AgentManagementPage() {
         })}
         {filtered.length === 0 && (
           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 60, color: '#D1D5DB' }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>🤖</div>
+            <div style={{ fontSize: 48, marginBottom: 12 }}></div>
             <Text style={{ fontSize: 15, color: '#9CA3AF' }}>还没有智能体，点击"创建智能体"开始吧</Text>
           </div>
         )}
       </div>
 
-      <Drawer width={560} title={edit ? '✏️ 编辑 · ' + edit.name : '✨ 创建智能体'} visible={drawer} onCancel={() => setDrawer(false)}
+      <Drawer width={560} title={edit ? '编辑 · ' + edit.name : '创建智能体'} visible={drawer} onCancel={() => setDrawer(false)}
         footer={<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <Button shape='round' onClick={() => setDrawer(false)}>取消</Button>
-          <Button type='primary' shape='round' loading={sub} onClick={handleSubmit} style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', border: 'none', fontWeight: 600 }}>{edit ? '保存' : '创建'}</Button>
+          <Button type='primary' shape='round' loading={sub} onClick={handleSubmit} style={{ fontWeight: 600 }}>{edit ? '保存' : '创建'}</Button>
         </div>}>
         <Tabs activeTab={tab} onChange={setTab} style={{ marginTop: -4 }}>
-          <Tabs.TabPane key='basic' title='📝 基础信息'>
+          <Tabs.TabPane key='basic' title='基础信息'>
             <Form form={form} layout='vertical'>
               <Form.Item label='智能体名称' field='name' rules={[{ required: true, message: '请输入名称' }]}>
                 <Input placeholder='如：AI 面试官' maxLength={64} />
@@ -320,7 +314,15 @@ export function AgentManagementPage() {
                   <Select options={CAT_OPT} placeholder='选择分类' />
                 </Form.Item>
                 <Form.Item label='图标' field='icon'>
-                  <Select options={ICONS} placeholder='选择图标' />
+                  <Select options={ICONS} placeholder='选择图标' renderFormat={(option) => {
+  const icon = ICONS.find(i => i.value === option?.value)
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 20, fontVariationSettings: "'FILL' 1" }}>{option?.value}</span>
+      <span>{icon?.label || option?.value}</span>
+    </span>
+  )
+}} />
                 </Form.Item>
               </div>
               <Form.Item label='渐变配色' field='cFrom'>
@@ -342,10 +344,10 @@ export function AgentManagementPage() {
           <Tabs.TabPane key='dify' title='🔗 Dify'>
             <Form form={form} layout='vertical'>
               <Form.Item label='启用 Dify' field='use_dify' triggerPropName='checked'>
-                <Switch onChange={(v) => setDifyOn(v)} />
+                <Switch onChange={(v) => setUseDify(v)} />
               </Form.Item>
-              {difyOn && (
-                <div style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)', borderRadius: 12, padding: 16, border: '1px solid #C7D2FE' }}>
+              {useDify && (
+                <div style={{ background: '#F8F9FB', borderRadius: 8, padding: 16, border: '1px solid #E5E6EB' }}>
                   <Form.Item label='API Base URL' field='dify_api_base_url' rules={[{ required: true, message: '请输入' }]}>
                     <Input placeholder='https://api.dify.ai/v1' />
                   </Form.Item>
@@ -354,7 +356,7 @@ export function AgentManagementPage() {
                   </Form.Item>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
                     <Button size='small' shape='round' loading={difyTesting} onClick={handleTestDify}
-                      style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff', border: 'none', fontWeight: 500 }}>🔌 测试连接</Button>
+                      style={{ fontWeight: 500 }} type='primary'>测试连接</Button>
                     {difyTestResult && <Tag size='small' color={difyTestResult.startsWith('OK') ? 'green' : 'red'} style={{ borderRadius: 8, maxWidth: 320 }}>{difyTestResult}</Tag>}
                   </div>
                   <div style={{ fontSize: 11, color: '#6B7280', lineHeight: '16px' }}>
@@ -368,7 +370,8 @@ export function AgentManagementPage() {
             </Form>
           </Tabs.TabPane>
 
-          <Tabs.TabPane key='model' title='⚙️ 模型参数'> style={{ display: difyOn ? 'none' : undefined }}>
+          {!useDify && (
+            <Tabs.TabPane key='model' title='⚙️ 模型参数'>
               <Form form={form} layout='vertical'>
                 <Form.Item label='绑定模型' field='model_id'>
                   <Select options={mOpts} placeholder='选择模型（先在模型广场配 API Key）' allowClear />
@@ -399,10 +402,13 @@ export function AgentManagementPage() {
                   </Form.Item>
                 </div>
               </Form>
-          <Tabs.TabPane key='test' title='💬 测试对话' disabled={!edit}>
+            </Tabs.TabPane>
+          )}
+
+          <Tabs.TabPane key='test' title='测试对话' disabled={!edit}>
             <div style={{ display: 'flex', flexDirection: 'column', height: 460 }}>
               {edit?.prompt_variables && edit.prompt_variables.length > 0 && (
-                <div style={{ marginBottom: 10, padding: 10, borderRadius: 10, background: '#F9FAFB', border: '1px solid #E5E6EB' }}>
+                <div style={{ marginBottom: 10, padding: 10, borderRadius: 6, background: '#F9FAFB', border: '1px solid #E5E6EB' }}>
                   <Text style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 4, display: 'block' }}>变量输入</Text>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {edit.prompt_variables.map(v => (
@@ -414,26 +420,26 @@ export function AgentManagementPage() {
                   </div>
                 </div>
               )}
-              <div style={{ flex: 1, overflowY: 'auto', marginBottom: 10, borderRadius: 12, padding: 12, background: 'linear-gradient(180deg, #F5F3FF 0%, #FAFAFE 100%)' }}>
+              <div style={{ flex: 1, overflowY: 'auto', marginBottom: 10, borderRadius: 12, padding: 12, background: '#F8F9FB' }}>
                 {msgs.length === 0 && (
                   <div style={{ textAlign: 'center', color: '#D1D5DB', paddingTop: 80 }}>
-                    <div style={{ fontSize: 48, marginBottom: 8 }}>💬</div>
+                    
                     <Text style={{ fontSize: 14, color: '#9CA3AF' }}>输入消息测试智能体</Text>
                   </div>
                 )}
                 {msgs.map((m, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
-                    <div style={{ maxWidth: '85%', padding: '10px 16px', borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', background: m.role === 'user' ? 'linear-gradient(135deg, #6366F1, #8B5CF6)' : '#FFFFFF', color: m.role === 'user' ? '#fff' : '#1F2937', border: m.role === 'assistant' ? '1px solid #E5E6EB' : 'none', fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap', boxShadow: m.role === 'assistant' ? '0 1px 4px rgba(0,0,0,0.04)' : '0 2px 8px rgba(99,102,241,0.2)' }}>
+                    <div style={{ maxWidth: '85%', padding: '10px 16px', borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', background: m.role === 'user' ? '#3B82F6' : '#FFFFFF', color: m.role === 'user' ? '#fff' : '#1F2937', border: m.role === 'assistant' ? '1px solid #E5E6EB' : 'none', fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap', boxShadow: m.role === 'assistant' ? '0 1px 2px rgba(0,0,0,0.04)' : '0 1px 2px rgba(0,0,0,0.06)' }}>
                       {m.content}
                     </div>
                   </div>
                 ))}
-                {cLoading && <Text style={{ fontSize: 12, color: '#9CA3AF', display: 'block', textAlign: 'center' }}>AI 正在思考...</Text>}
+                {cLoading && <Text style={{ fontSize: 13, color: '#6B7280', display: 'block', textAlign: 'center' }}>AI 正在思考...</Text>}
                 <div ref={cEnd} />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Input style={{ flex: 1, borderRadius: 20 }} placeholder='输入测试消息...' value={cIn} onChange={v => setCIn(v)} onPressEnter={handleChat} />
-                <Button type='primary' shape='circle' icon={<IconSend />} loading={cLoading} onClick={handleChat} style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', border: 'none' }} />
+                <Input style={{ flex: 1, borderRadius: 8 }} placeholder='输入测试消息...' value={cIn} onChange={v => setCIn(v)} onPressEnter={handleChat} />
+                <Button type='primary' shape='circle' icon={<IconSend />} loading={cLoading} onClick={handleChat} style={{}} />
               </div>
             </div>
           </Tabs.TabPane>

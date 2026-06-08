@@ -32,8 +32,8 @@ class MasterConfigResponse(BaseModel):
 class MasterConfigUpdate(BaseModel):
     model_id: Optional[int] = None
     system_prompt: Optional[str] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=128000)
     max_iterations: Optional[int] = Field(default=None, ge=1, le=100)
     permission_mode: Optional[Literal["ask", "auto", "strict"]] = None
     memory_isolation: Optional[bool] = None
