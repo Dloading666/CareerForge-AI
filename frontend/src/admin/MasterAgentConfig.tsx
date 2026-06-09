@@ -62,6 +62,7 @@ interface RouteRuleDraft {
 interface ModelOption {
   id: number
   display_name: string
+  capability?: string
 }
 
 interface AgentOption {
