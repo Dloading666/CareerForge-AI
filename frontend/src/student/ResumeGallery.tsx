@@ -13,7 +13,7 @@ function getUrl(storedPath: string) {
   return '/data/' + (idx >= 0 ? storedPath.slice(idx) : storedPath.split('/').pop())
 }
 
-export function ResumeGallery({ onBack }: { onBack?: () => void }) {
+export function ResumeGallery({ onBack, embedded = false }: { onBack?: () => void; embedded?: boolean }) {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -87,10 +87,17 @@ export function ResumeGallery({ onBack }: { onBack?: () => void }) {
   }
 
   return (
-    <div style={{ width: '100%', padding: '0 28px 40px', overflowY:'auto', maxHeight:'calc(100vh - 120px)' }}>
+    <div
+      style={{
+        width: '100%',
+        padding: embedded ? '8px 0 12px' : '0 28px 40px',
+        overflowY: 'auto',
+        maxHeight: embedded ? 'none' : 'calc(100vh - 120px)',
+      }}
+    >
       <div style={{ display:'flex', alignItems:'center', gap:12, padding:'20px 0 16px' }}>
         {onBack && <Button type="text" icon={<IconArrowLeft/>} onClick={onBack} style={{padding:0}}/>}
-        <Typography.Title heading={4} style={{margin:0}}>我的简历</Typography.Title>
+        {!embedded && <Typography.Title heading={4} style={{margin:0}}>我的简历</Typography.Title>}
         <div style={{flex:1}}/>
         <Button size="small" onClick={fetchAttachments} loading={loading}>刷新</Button>
         <Button type="primary" size="small" icon={<IconUpload/>} loading={uploading}

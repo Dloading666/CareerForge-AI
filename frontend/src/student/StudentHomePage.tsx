@@ -27,16 +27,19 @@ import {
 } from '@arco-design/web-react/icon'
 import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest } from '../shared/api'
 import { AnnouncementBellDropdown, AnnouncementBanner } from './StudentAnnouncementBar'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { AgentPlaza } from './AgentPlaza'
 import { ProfilePage } from './ProfilePage'
 import { useAuth } from '../shared/auth'
+import { ResumeCenterPage } from '../resume/ResumeCenterPage'
+import { ResumeEditorPage } from '../resume/ResumeEditorPage'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type NavKey = 'agent' | 'plaza' | 'profile'
+type NavKey = 'agent' | 'resume' | 'plaza' | 'profile'
 
 type AgentSession = {
   id: number
@@ -474,6 +477,8 @@ function SessionHistoryPanel({
 
 export function StudentHomePage() {
   const { session, logout } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const studentName = (session?.profile.name as string) || '同学'
   const studentAvatar = (session?.profile.avatar_url as string) || ''
   const [studentAvatarKey] = useState(0)
@@ -481,7 +486,6 @@ export function StudentHomePage() {
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
   const [dontShowAgain, setDontShowAgain] = useState(false)
 
-  const [activeNav, setActiveNav] = useState<NavKey>('agent')
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null)
   const [allSessions, setAllSessions] = useState<AgentSession[]>([])
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -513,11 +517,51 @@ export function StudentHomePage() {
   const isNearBottomRef = useRef(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
 
+  const activeNav = useMemo<NavKey>(() => {
+    if (location.pathname.startsWith('/student/resumes')) return 'resume'
+    if (location.pathname.startsWith('/student/plaza')) return 'plaza'
+    if (location.pathname.startsWith('/student/profile')) return 'profile'
+    return 'agent'
+  }, [location.pathname])
+
   const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
     { key: 'agent', icon: <IconRobot />, label: '主智能体' },
+    { key: 'resume', icon: <IconFile />, label: '简历制作' },
     { key: 'plaza', icon: <IconApps />, label: '智能体广场' },
     { key: 'profile', icon: <IconUser />, label: '个人中心' },
   ]
+
+  const topbarMeta = useMemo(() => {
+    if (activeNav === 'resume') {
+      return {
+        title: '简历中心',
+        subtitle: location.pathname.includes('/student/resumes/') ? '在线编辑、模板切换与实时预览' : '管理在线简历与附件简历',
+      }
+    }
+    if (activeNav === 'plaza') {
+      return { title: '智能体广场', subtitle: '发现并使用不同场景的专业智能体' }
+    }
+    if (activeNav === 'profile') {
+      return { title: '个人中心', subtitle: '管理个人资料、账号安全与附件简历' }
+    }
+    return { title: '就业助手', subtitle: '主智能体将帮助你完成求职准备与简历打磨' }
+  }, [activeNav, location.pathname])
+
+  const navigateToNav = (key: NavKey) => {
+    if (key === 'agent') {
+      navigate('/student')
+      return
+    }
+    if (key === 'resume') {
+      navigate('/student/resumes')
+      return
+    }
+    if (key === 'plaza') {
+      navigate('/student/plaza')
+      return
+    }
+    navigate('/student/profile')
+  }
 
   const latestUserMessage = useMemo(
     () => [...messages].reverse().find((m) => m.role === 'user'),
@@ -878,7 +922,7 @@ export function StudentHomePage() {
     setPendingAttachments([])
     setGeneratedFiles({})
     setInputValue('')
-    setActiveNav('agent')
+    navigate('/student')
   }
 
   const handleDeleteSession = async (target: AgentSession) => {
@@ -914,7 +958,7 @@ export function StudentHomePage() {
     if (streaming) abortRef.current?.abort()
     try {
       await loadHistory(s)
-      setActiveNav('agent')
+      navigate('/student')
     } catch {
       setNotice('加载历史会话失败')
     }
@@ -1019,7 +1063,7 @@ export function StudentHomePage() {
               className="side-nav-item"
               type={activeNav === key ? 'primary' : 'text'}
               icon={icon}
-              onClick={() => setActiveNav(key)}
+              onClick={() => navigateToNav(key)}
             >
               {label}
             </Button>
@@ -1052,7 +1096,8 @@ export function StudentHomePage() {
       <section className="content-panel">
         <header className="topbar">
           <div className="topbar-title">
-            <h2>就业助手</h2>
+            <h2>{topbarMeta.title}</h2>
+            <p>{topbarMeta.subtitle}</p>
           </div>
           <div className="topbar-actions">
             <AnnouncementBellDropdown />
@@ -1091,8 +1136,11 @@ export function StudentHomePage() {
           </div>
         </header>
 
-        {activeNav === 'agent' && (
-          <main className="page-content student-chat-page">
+        <Routes>
+          <Route
+            index
+            element={
+              <main className="page-content student-chat-page">
             {!remindersDismissed && todayEvents.length > 0 && (
               <div className="agent-reminder-banner">
                 <IconNotification style={{ fontSize: 16, flexShrink: 0 }} />
@@ -1130,19 +1178,35 @@ export function StudentHomePage() {
               )}
 
               {!bootingAgent && !historyLoading && messages.length === 0 && (
-                <section className="agent-empty-state">
-                  <div className="hero-icon">
-                    <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
-                  </div>
-                  <h3>你好，{studentName}</h3>
-                  <p>我可以调用 Skill、子智能体和工具，帮你完成求职准备。</p>
-                  <div className="agent-suggestion-grid">
-                    {suggestions.map(({ title, desc }) => (
-                      <button key={title} type="button" onClick={() => void submitMessage(title)}>
-                        <strong>{title}</strong>
-                        <span>{desc}</span>
+                <section className="agent-empty-state agent-home-workbench">
+                  <div className="agent-home-grid">
+                    <div className="agent-home-badge">
+                      <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
+                    </div>
+                    <h3>你好，{studentName}</h3>
+                    <p>我可以协助你制作简历、优化表达、梳理岗位方向，也能把你带去更适合的专属智能体。</p>
+                    <div className="agent-home-cards">
+                      <button className="agent-home-card" type="button" onClick={() => navigate('/student/resumes/new')}>
+                        <strong>AI订制简历</strong>
+                        <span>基于你的经历快速搭建第一版在线简历，并进入编辑器细化内容。</span>
                       </button>
-                    ))}
+                      <button className="agent-home-card" type="button" onClick={() => navigate('/student/resumes?tab=attachments&mode=optimize')}>
+                        <strong>简历优化</strong>
+                        <span>上传已有 PDF / Word，或直接选择在线简历，继续打磨表达和结构。</span>
+                      </button>
+                      <button className="agent-home-card" type="button" onClick={() => navigate('/student/plaza')}>
+                        <strong>AI面试官</strong>
+                        <span>进入智能体广场体验更沉浸的面试训练和场景化求职辅导。</span>
+                      </button>
+                    </div>
+                    <div className="agent-suggestion-grid compact">
+                      {suggestions.map(({ title, desc }) => (
+                        <button key={title} type="button" onClick={() => void submitMessage(title)}>
+                          <strong>{title}</strong>
+                          <span>{desc}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </section>
               )}
@@ -1305,15 +1369,15 @@ export function StudentHomePage() {
               </div>
             </div>
           </main>
-        )}
-
-        {activeNav === 'plaza' && (
-          <main className="page-content">
-            <AgentPlaza />
-          </main>
-        )}
-
-        {activeNav === 'profile' && <ProfilePage />}
+            }
+          />
+          <Route path="plaza" element={<main className="page-content"><AgentPlaza /></main>} />
+          <Route path="profile" element={<ProfilePage />} />
+          <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
+          <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
+          <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
+          <Route path="*" element={<Navigate to="/student" replace />} />
+        </Routes>
       </section>
 
       <Modal

@@ -29,12 +29,14 @@ from app.mcp.router import router as mcp_router
 from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
+from app.student import resume_models as student_resume_models  # noqa: F401
 from app.student.router import router as student_router
 from app.student.event_router import router as event_router
 from app.student.announcement_router import router as announcement_router
 from app.student.feedback_router import router as feedback_router
 from app.admin.feedback_router import router as admin_feedback_router
 from app.student.attachment_router import router as attachment_router
+from app.student.resume_router import router as resume_router
 
 AVATAR_DIR = Path("/app/data/avatars")
 BANNER_DIR = Path("/app/data/banners")
@@ -106,6 +108,7 @@ app.include_router(feedback_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_feedback_router, prefix=settings.api_v1_prefix)
 app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
+app.include_router(resume_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
