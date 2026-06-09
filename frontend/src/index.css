@@ -3146,15 +3146,14 @@ textarea {
 }
 
 .mcp-market-shell {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  display: block;
   gap: 22px;
   position: relative;
   z-index: 1;
 }
 
 .mcp-category-rail {
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 12px;
 }

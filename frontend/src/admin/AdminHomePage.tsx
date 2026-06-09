@@ -20,8 +20,11 @@
 import {
   IconApps,
   IconDashboard,
+  IconDelete,
+  IconEdit,
   IconExperiment,
   IconHistory,
+  IconPlayArrow,
   IconNotification,
   IconPlus,
   IconPoweroff,
@@ -1511,44 +1514,52 @@ function renderMcpPage({
               )}
             </section>
           ) : (
-            <section className="mcp-card-grid">
+            <div className="admin-card-grid">
               {mcpLoading ? <div className="mcp-empty-state">正在读取数据库 MCP 服务...</div> : null}
               {!mcpLoading && filteredMcps.map((service) => (
-                <article key={service.id} className="mcp-market-card" onClick={() => openDetail(service)}>
-                  <div className="mcp-market-card-head">
-                    <div>
-                      <h3>{service.name}</h3>
-                      <div>
-                        <Tag color={service.transport === 'Streamable HTTP' ? 'arcoblue' : 'green'}>{service.transport}</Tag>
+                <Card key={service.id} className="admin-card model-card" hoverable onClick={() => openDetail(service)}>
+                  <div className="model-card-top">
+                    <Space size={6}>
+                      <Tag color={service.transport === 'Streamable HTTP' ? 'arcoblue' : 'green'}>{service.transport}</Tag>
                         <Tag color={statusColor(service.status)}>{statusLabel(service.status)}</Tag>
-                      </div>
+                    </Space>
+                  </div>
+                  <h3>{service.name}</h3>
+                  <div className="meta-list">
+                    <span>分类：{service.category || '通用'}</span>
+                    <span style={{ fontSize: 12, wordBreak: 'break-all', color: '#5e6475' }}>端点：{service.endpoint}</span>
+                    <span>负责人：{detailOwnerLabel(service)}</span>
+                    <span>工具：{service.tools.length} 个 · Slug @{service.slug}</span>
+                    <span>{service.description || '管理员尚未填写服务介绍。'}</span>
+                    <span>延迟：{service.latency_ms != null ? <strong style={{ color: service.latency_ms < 500 ? '#00b42a' : service.latency_ms < 1000 ? '#ff7d00' : '#f53f3f' }}>{service.latency_ms}ms</strong> : <span style={{ color: '#5e6475' }}>未测试</span>}</span>
+                  </div>
+                  <div className="admin-card-footer">
+                    <Space size={6}>
+                      <Tag bordered>{service.category || '通用'}</Tag>
+                      <Tag bordered>{service.tools.length} 工具</Tag>
+                      <Tag bordered>v{service.version}</Tag>
+                    </Space>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <Button type="text" size="mini" icon={<IconPlayArrow />} onClick={(e) => { e.stopPropagation(); onTest(service); }} />
+                      <Button type="text" size="mini" icon={<IconEdit />} onClick={(e) => { e.stopPropagation(); onEdit(service); }} />
+                      <Popconfirm title="确定删除？" onOk={() => onDelete(service)}>
+                        <Button type="text" size="mini" status="danger" icon={<IconDelete />} onClick={(e) => e.stopPropagation()} />
+                      </Popconfirm>
                     </div>
-                    <span className="mcp-card-logo">{service.name.slice(0, 1).toUpperCase()}</span>
                   </div>
-                  <p>{service.description || '管理员尚未填写服务介绍。'}</p>
-                  <div className="mcp-market-card-tags">
-                    <Tag bordered>{service.category || '通用'}</Tag>
-                    <Tag bordered>{detailOwnerLabel(service)}</Tag>
-                    <Tag bordered>{service.tools.length} 工具</Tag>
+                  <div className="student-open-switch">
+                    <span>{service.agent_ids.length > 0 ? `${service.agent_ids.length} 个智能体已授权` : '未授权智能体'}</span>
+                    <span style={{ fontSize: 12, color: '#5e6475' }}>{formatDateTime(service.last_checked_at)}</span>
                   </div>
-                  <div className="mcp-market-card-foot">
-                    <span>@{service.slug}</span>
-                    <span>{service.latency_ms ? `${service.latency_ms}ms` : '未测试'}</span>
-                    <span>{formatDateTime(service.last_checked_at)}</span>
-                  </div>
-                </article>
+                </Card>
               ))}
-              {!mcpLoading && filteredMcps.length === 0 ? (
-                <div className="mcp-empty-state">
-                  <IconSafe />
-                  <strong>{mcps.length === 0 ? '还没有 MCP 服务' : '没有匹配的 MCP 服务'}</strong>
-                  <span>{mcps.length === 0 ? '数据库中暂无记录，请手动添加第一个 MCP 服务。' : '调整筛选条件或新建一个服务接入配置。'}</span>
-                  <Button type="primary" icon={<IconPlus />} onClick={() => openDrawer('mcp')}>
-                    添加 MCP 服务
-                  </Button>
-                </div>
-              ) : null}
-            </section>
+
+              <button className="admin-add-card" type="button" onClick={() => openDrawer("mcp")}>
+                <IconPlus />
+                <strong>添加 MCP 服务</strong>
+                <span>接入外部工具与数据服务</span>
+              </button>
+            </div>
           )}
         </div>
       </section>
