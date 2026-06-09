@@ -170,7 +170,7 @@ export function ResumeCenterPage() {
         <div className="resume-center-block-head">
           <div>
             <h3>我的在线简历</h3>
-            <p>创建完成后，会保留在这里继续编辑、导出和交给主智能体后续接入。</p>
+            <p>在线简历和附件简历放在同一个中心管理。在线简历负责编辑排版，附件简历负责上传既有 PDF / Word。</p>
           </div>
           <Tag color="blue">已创建 {countLabel}</Tag>
         </div>
