@@ -1,5 +1,5 @@
-import { Button, Form, Input, InputNumber, Message, Modal, Radio, Typography } from '@arco-design/web-react'
-import { IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
+import { Button, Form, Input, InputNumber, Message, Modal, Radio, Select, Typography, Upload } from '@arco-design/web-react'
+import { IconBug, IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
@@ -49,6 +49,11 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [uploadingBanner, setUploadingBanner] = useState(false)
   const [calendarView, setCalendarView] = useState(false)
   const [resumeView, setResumeView] = useState(false)
+  const [feedbackVisible, setFeedbackVisible] = useState(false)
+  const [feedbackDesc, setFeedbackDesc] = useState('')
+  const [feedbackCategory, setFeedbackCategory] = useState('bug')
+  const [feedbackFile, setFeedbackFile] = useState<File | null>(null)
+  const [submittingFeedback, setSubmittingFeedback] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [securityVisible, setSecurityVisible] = useState(false)
@@ -70,6 +75,28 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       const res = await apiRequest<Profile>('/api/v1/student/profile', { headers: { Authorization: `Bearer ${session?.access}` } })
       setProfile(res)
     } catch { Message.error('加载失败') } finally { setLoading(false) }
+  }
+
+  const submitFeedback = async () => {
+    if (!feedbackDesc.trim()) { Message.warning('请填写问题描述'); return }
+    setSubmittingFeedback(true)
+    try {
+      const formData = new FormData()
+      formData.append('description', feedbackDesc)
+      formData.append('category', feedbackCategory)
+      if (feedbackFile) formData.append('screenshot', feedbackFile)
+      await apiRequest('/api/v1/student/feedback', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session?.access}` },
+        body: formData,
+      })
+      Message.success('反馈提交成功，感谢！')
+      setFeedbackVisible(false)
+      setFeedbackDesc('')
+      setFeedbackFile(null)
+      setFeedbackCategory('bug')
+    } catch { Message.error('提交失败，请重试') }
+    finally { setSubmittingFeedback(false) }
   }
 
   useEffect(() => { fetchProfile() }, [])
@@ -224,6 +251,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
         <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="查看已提交的简历和附件" accentColor="#f53f3f" onClick={() => setResumeView(true)}/>
         <MenuCard icon={<IconSafe style={{fontSize:26,color:'#00b42a'}}/>} label="账号安全"
           desc={(profile?.email_verified_at?'邮箱已认证':'邮箱未认证') + ' · 修改登录密码'} accentColor="#00b42a" onClick={openSecurity}/>
+        <MenuCard icon={<IconBug style={{fontSize:26,color:'#f53f3f'}}/>} label="反馈Bug" desc="提交问题截图和描述，帮助我们改进" accentColor="#f53f3f" onClick={() => setFeedbackVisible(true)}/>
         <MenuCard icon={<IconInfoCircle style={{fontSize:26,color:'#ff7d00'}}/>} label="关于智培职联"
           desc={'注册于 '+(profile?.created_at?new Date(profile.created_at).toLocaleDateString('zh-CN'):'-')} accentColor="#ff7d00"/>
       </div>
@@ -270,6 +298,32 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           <Form.Item label="年级" field="grade"><Input placeholder="如：2025级"/></Form.Item>
           <Form.Item label="手机号" field="phone"><Input placeholder="请输入手机号" prefix={<IconPhone/>}/></Form.Item>
         </Form>
+      </Modal>
+
+      <Modal title="反馈Bug" visible={feedbackVisible} onCancel={() => { setFeedbackVisible(false); setFeedbackFile(null); setFeedbackDesc('') }}
+        onOk={submitFeedback} confirmLoading={submittingFeedback} okText="提交" cancelText="取消" unmountOnExit>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
+          <Typography.Text type="secondary">遇到问题或Bug？请描述问题并上传截图，我们会尽快修复。</Typography.Text>
+          <Form.Item label="问题类型">
+            <Select value={feedbackCategory} onChange={setFeedbackCategory} style={{ width: '100%' }}>
+              <Select.Option value="bug">Bug反馈</Select.Option>
+              <Select.Option value="feature">功能建议</Select.Option>
+              <Select.Option value="other">其他</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item label="问题描述" required>
+            <Input.TextArea value={feedbackDesc} onChange={setFeedbackDesc} placeholder="请详细描述遇到的问题..." maxLength={1000} showWordLimit autoSize={{ minRows: 3, maxRows: 6 }} />
+          </Form.Item>
+          <Form.Item label="截图（可选）">
+            <Upload
+              accept="image/*"
+              limit={1}
+              autoUpload={false}
+              onChange={(files) => setFeedbackFile(files[0]?.originFile || null)}
+              tip="支持 PNG / JPG，单张不超过 10MB"
+            />
+          </Form.Item>
+        </div>
       </Modal>
       </div>
     </div>

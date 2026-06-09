@@ -1,4 +1,4 @@
-services:
+﻿services:
   mysql:
     image: mysql:8.4
     container_name: zhipei-mysql
@@ -6,6 +6,10 @@ services:
       - --mysql-native-password=ON
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --max-connections=200
+      - --innodb-buffer-pool-size=256M
+      - --innodb-flush-log-at-trx-commit=2
+      - --innodb-log-file-size=128M
     environment:
       MYSQL_ROOT_PASSWORD: root123456
       MYSQL_DATABASE: zhipei_agent
@@ -23,11 +27,16 @@ services:
       retries: 10
       start_period: 30s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
 
   redis:
     image: redis:7-alpine
     container_name: zhipei-redis
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "redis123456"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "redis123456", "--tcp-backlog", "511", "--maxclients", "1000", "--timeout", "300"]
     ports:
       - "6380:6379"
     volumes:
@@ -39,6 +48,11 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
   backend:
     build:
@@ -47,6 +61,8 @@ services:
     container_name: zhipei-backend
     env_file:
       - ./backend/.env.docker
+    environment:
+      - WEB_CONCURRENCY=4
     depends_on:
       mysql:
         condition: service_healthy
@@ -67,6 +83,11 @@ services:
       retries: 10
       start_period: 20s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
 
   frontend:
     build:
@@ -81,6 +102,11 @@ services:
     ports:
       - "8080:80"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
 
 volumes:
   mysql-data:

@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Tooltip } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
@@ -27,11 +27,9 @@ import {
 } from '@arco-design/web-react/icon'
 import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-
 import { ApiError, apiRequest } from '../shared/api'
 import { AnnouncementBellDropdown, AnnouncementBanner } from './StudentAnnouncementBar'
+import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { AgentPlaza } from './AgentPlaza'
 import { ProfilePage } from './ProfilePage'
 import { useAuth } from '../shared/auth'
@@ -103,7 +101,7 @@ type AgentModelOption = {
   timeout_sec: number | null
 }
 
-type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type ReasoningEffort = 'low' | 'medium' | 'high'
 
 type StreamEvent = {
   event: string
@@ -125,7 +123,6 @@ const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
-  { value: 'xhigh', label: '超高' },
 ]
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -395,7 +392,16 @@ function AssistantMessage({
 
         {message.content ? (
           <div className="assistant-answer">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            {!pending && (
+              <button
+                className="msg-copy-btn"
+                title="复制"
+                onClick={() => navigator.clipboard.writeText(message.content)}
+              >
+                <IconCopy />
+              </button>
+            )}
+            <MarkdownMessage content={message.content} />
             {pending && <span className="stream-cursor" />}
           </div>
         ) : (
@@ -430,35 +436,37 @@ function SessionHistoryPanel({
   }
 
   return (
-    <div className="side-nav-history-list">
-      {sessions.map((s) => (
-        <div
-          key={s.id}
-          role="button"
-          tabIndex={0}
-          className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
-          onClick={() => onSelect(s)}
-          title={s.title}
-        >
-          <IconHistory className="side-nav-history-item-icon" />
-          <span className="side-nav-history-item-title">{s.title}</span>
-          <Popconfirm
-            title="删除这条对话记录？"
-            okText="删除"
-            cancelText="取消"
-            onOk={() => onDelete(s)}
+    <>
+      <div className="side-nav-history-list">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            role="button"
+            tabIndex={0}
+            className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
+            onClick={() => onSelect(s)}
+            title={s.title}
           >
-            <span
-              className="side-nav-history-del"
-              title="删除"
-              onClick={(e) => e.stopPropagation()}
+            <IconHistory className="side-nav-history-item-icon" />
+            <span className="side-nav-history-item-title">{s.title}</span>
+            <Popconfirm
+              title="删除这条对话记录？"
+              okText="删除"
+              cancelText="取消"
+              onOk={() => onDelete(s)}
             >
-              <IconDelete />
-            </span>
-          </Popconfirm>
-        </div>
-      ))}
-    </div>
+              <span
+                className="side-nav-history-del"
+                title="删除"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <IconDelete />
+              </span>
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -479,6 +487,9 @@ export function StudentHomePage() {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [todayEvents, setTodayEvents] = useState<{ id: number; title: string; event_time: string | null }[]>([])
+  const [remindersDismissed, setRemindersDismissed] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [bootingAgent, setBootingAgent] = useState(false)
   const [streaming, setStreaming] = useState(false)
@@ -499,6 +510,8 @@ export function StudentHomePage() {
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const optimisticIdRef = useRef(-1)
+  const isNearBottomRef = useRef(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
 
   const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
     { key: 'agent', icon: <IconRobot />, label: '主智能体' },
@@ -519,14 +532,55 @@ export function StudentHomePage() {
 
 
 
-  // Auto-scroll
+  // Smart auto-scroll: only scroll if user is near bottom
   useEffect(() => {
     const node = threadRef.current
-    if (node) node.scrollTop = node.scrollHeight
+    if (!node) return
+    const onScroll = () => {
+      const near = node.scrollHeight - node.scrollTop - node.clientHeight < 100
+      isNearBottomRef.current = near
+      setShowScrollBtn(!near)
+    }
+    node.addEventListener('scroll', onScroll, { passive: true })
+    return () => node.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    const node = threadRef.current
+    if (node && isNearBottomRef.current) node.scrollTop = node.scrollHeight
   }, [messages, activities, streaming])
 
+  // 今日日程提醒：登录后拉取今天的事件，顶部横幅提示
+  useEffect(() => {
+    if (!session?.access) return
+    let alive = true
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    apiRequest<{ id: number; title: string; event_time: string | null }[]>(
+      `/api/v1/student/events?date_from=${today}&date_to=${today}`,
+    )
+      .then((list) => {
+        if (alive) {
+          setTodayEvents(list ?? [])
+          setRemindersDismissed(false)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [session?.access])
+
   const loadHistory = useCallback(async (target: AgentSession) => {
-    const history = await apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${target.id}/messages`)
+    setHistoryLoading(true)
+    setMessages([])
+    setActivities([])
+    let history: AgentHistory
+    try {
+      history = await apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${target.id}/messages`)
+    } finally {
+      setHistoryLoading(false)
+    }
     setAgentSession(history.session)
     setMessages(history.messages)
     setActivities(history.activities)
@@ -797,6 +851,7 @@ export function StudentHomePage() {
       if (!controller.signal.aborted) {
         setNotice(error instanceof Error ? error.message : '主智能体回复失败')
         setPendingAttachments((prev) => [...sendingAttachments, ...prev])
+        setInputValue(content) // 失败时恢复输入框内容，方便重试
       }
     } finally {
       setStreaming(false)
@@ -805,6 +860,8 @@ export function StudentHomePage() {
   }
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 输入法组词中（如中文输入法打拼音）按 Enter 是「确认候选」，不能当作发送
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       void submitMessage()
@@ -844,6 +901,13 @@ export function StudentHomePage() {
   const stopStreaming = () => {
     abortRef.current?.abort()
     setStreaming(false)
+    setMessages((prev) => {
+      const last = prev[prev.length - 1]
+      if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
+        return [...prev.slice(0, -1), { ...last, content: last.content + '\n\n*[已停止]*' }]
+      }
+      return prev
+    })
   }
 
   const handleSelectSession = async (s: AgentSession) => {
@@ -863,6 +927,7 @@ export function StudentHomePage() {
       if (!sess) sess = await createAgentSession()
       setUploadingAttachment(true)
       setNotice(null)
+      if (files.length > 8) setNotice('最多同时上传 8 个文件，已自动选择前 8 个。')
       for (const file of files.slice(0, 8)) {
         const form = new FormData()
         form.append('file', file)
@@ -1028,12 +1093,43 @@ export function StudentHomePage() {
 
         {activeNav === 'agent' && (
           <main className="page-content student-chat-page">
+            {!remindersDismissed && todayEvents.length > 0 && (
+              <div className="agent-reminder-banner">
+                <IconNotification style={{ fontSize: 16, flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  今天有 {todayEvents.length} 个日程：
+                  {todayEvents
+                    .slice(0, 3)
+                    .map((e) => `${e.event_time ? e.event_time.slice(0, 5) + ' ' : ''}${e.title}`)
+                    .join('、')}
+                  {todayEvents.length > 3 ? ' 等' : ''}
+                </span>
+                <button type="button" className="agent-reminder-close" onClick={() => setRemindersDismissed(true)}>
+                  <IconClose />
+                </button>
+              </div>
+            )}
             <div ref={threadRef} className="agent-thread">
               {bootingAgent && <div className="agent-system-line">正在连接主智能体会话…</div>}
-              {notice && <div className="agent-error-line">{notice}</div>}
+              {notice && (
+                <div className="agent-error-line">
+                  <span>{notice}</span>
+                  <button className="agent-error-close" onClick={() => setNotice(null)}>
+                    <IconClose />
+                  </button>
+                </div>
+              )}
               <AnnouncementBanner />
 
-              {!bootingAgent && messages.length === 0 && (
+              {historyLoading && (
+                <div style={{ width: 'min(980px, 100%)', margin: '0 auto', padding: '12px 0' }}>
+                  <Skeleton animation text={{ rows: 3, width: ['40%', '88%', '70%'] }} />
+                  <div style={{ height: 18 }} />
+                  <Skeleton animation text={{ rows: 4, width: ['52%', '92%', '84%', '60%'] }} />
+                </div>
+              )}
+
+              {!bootingAgent && !historyLoading && messages.length === 0 && (
                 <section className="agent-empty-state">
                   <div className="hero-icon">
                     <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
@@ -1066,7 +1162,7 @@ export function StudentHomePage() {
                         })}
                       </div>
                     )}
-                    {message.content && <div className="message-bubble user">{message.content}</div>}
+                    {message.content && <div className="message-bubble user"><MarkdownMessage content={message.content} /></div>}
                   </div>
                 ) : (
                   <AssistantMessage
@@ -1092,6 +1188,18 @@ export function StudentHomePage() {
                 />
               )}
             </div>
+
+            {showScrollBtn && (
+              <button
+                className="scroll-to-bottom-btn"
+                onClick={() => {
+                  const node = threadRef.current
+                  if (node) node.scrollTop = node.scrollHeight
+                }}
+              >
+                <IconCaretDown />
+              </button>
+            )}
 
             <div
               className={`agent-composer${isDraggingOver ? ' drag-over' : ''}`}

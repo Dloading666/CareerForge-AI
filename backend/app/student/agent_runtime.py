@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import time
 import mimetypes
 import uuid
 from dataclasses import dataclass
@@ -14,10 +16,9 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.admin.master_models import MasterRouteRule
 from app.admin.master_service import DEFAULT_SYSTEM_PROMPT, get_or_create_master_config
 from app.admin.model_service import decrypt_api_key
-from app.admin.models import Agent, ModelConfig
+from app.admin.models import ModelConfig
 from app.auth.models import StudentUser
 from app.auth.service import AuthIdentity
 from app.core.config import get_settings
@@ -30,6 +31,8 @@ from app.student.agent_models import (
 )
 from app.student.agent_schemas import AgentActivityResponse, AgentAttachmentResponse, AgentModelOptionResponse
 from app.student.tool_validation import parse_tool_arguments
+
+logger = logging.getLogger(__name__)
 
 
 # ── Value objects ──────────────────────────────────────────────────────────────
@@ -51,12 +54,6 @@ class ToolDefinition:
     priority: int
     input_schema: dict[str, Any]
     metadata: dict[str, Any]
-
-
-@dataclass
-class PlannedToolCall:
-    tool: ToolDefinition
-    arguments: dict[str, Any]
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -179,44 +176,38 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         },
         metadata={"kind": "resume", "risk": "low"},
     ),
+    ToolDefinition(
+        name="read_webpage",
+        description="读取指定 URL 的网页内容，返回 Markdown 格式的正文。适用于学生发送链接、需要查看招聘信息、公司官网等场景。",
+        source="builtin",
+        priority=900,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "要读取的网页 URL"},
+                "max_length": {"type": "integer", "description": "返回内容最大字符数，默认 5000"},
+            },
+            "required": ["url"],
+        },
+        metadata={"kind": "web"},
+    ),
+    ToolDefinition(
+        name="web_search",
+        description="联网搜索关键词，返回搜索结果摘要。适用于查询公司背景、行业动态、岗位信息等需要实时网络数据的场景。",
+        source="builtin",
+        priority=895,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词"},
+                "num_results": {"type": "integer", "description": "返回结果数量，默认 5"},
+            },
+            "required": ["query"],
+        },
+        metadata={"kind": "web"},
+    ),
 ]
 
-
-# ── Tool pool assembly ─────────────────────────────────────────────────────────
-
-
-def assemble_tool_pool(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    pool: dict[str, ToolDefinition] = {}
-    for tool in BUILTIN_TOOLS:
-        pool[tool.name] = tool
-
-    for skill in list_skills(db, include_disabled=False):
-        data = serialize_skill(skill)
-        name = _tool_safe_name(str(data["slug"]))
-        if name in pool:
-            continue
-        pool[name] = ToolDefinition(
-            name=name,
-            description=str(data.get("description") or data.get("name") or "Skill 工具"),
-            source="skill",
-            priority=500,
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "context": {"type": "string"},
-                },
-                "required": ["task"],
-            },
-            metadata=data,
-        )
-
-    for tool in _discover_mcp_tools(db, identity.tenant_id):
-        if tool.name in pool:
-            continue
-        pool[tool.name] = tool
-
-    return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
 
 
 def _tool_safe_name(value: str) -> str:
@@ -251,6 +242,7 @@ def _extract_attachment_text(path: Path, content_type: str, ext: str) -> str:
         if content_type.startswith("image/"):
             return _extract_image_summary(path)
     except Exception as exc:
+        logger.exception("附件解析失败: %s", path)
         return f"附件已保存，但自动解析失败：{str(exc)[:200]}"
     return "附件已保存，当前格式需要专用 Skill 或外部工具进一步解析。"
 
@@ -301,19 +293,6 @@ def _extract_image_summary(path: Path) -> str:
         width, height = image.size
         mode = image.mode
     return f"图片附件已保存：{width}x{height}，色彩模式 {mode}。如所选模型支持视觉输入，将随请求一并传入。"
-
-
-def _discover_mcp_tools(db: Session, tenant_id: int) -> list[ToolDefinition]:
-    return [
-        ToolDefinition(
-            name="mcp__reserved__tool_discovery",
-            description="MCP 工具发现占位，支持后续接入 stdio/SSE/Streamable HTTP MCP 服务。",
-            source="mcp",
-            priority=100,
-            input_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": []},
-            metadata={"tenant_id": tenant_id, "status": "reserved"},
-        )
-    ]
 
 
 # ── Session CRUD ───────────────────────────────────────────────────────────────
@@ -668,48 +647,6 @@ def _claim_message_attachments(
     return rows
 
 
-# ── Tool planning ──────────────────────────────────────────────────────────────
-
-
-async def _run_tool_planning(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    message: StudentAgentMessage,
-    attachments: list[StudentAgentAttachment],
-    tool_pool: list[ToolDefinition],
-) -> AsyncIterator[tuple[str, dict[str, Any], Optional[RuntimeObservation]]]:
-    text = message.content
-    for planned in _plan_tool_calls(db, identity, session, text, tool_pool, attachments):
-        activity_kind = planned.tool.metadata.get("kind") or planned.tool.source
-        started = _save_activity(
-            db,
-            session,
-            message,
-            kind=str(activity_kind),
-            name=planned.tool.name,
-            status_value="started",
-            summary=_tool_start_label(planned.tool, planned.arguments),
-            detail={"source": planned.tool.source, "arguments": planned.arguments},
-        )
-        yield "activity.started", serialize_activity(started).model_dump(mode="json"), None
-
-        result = await _execute_tool_call(db, identity, session, text, planned, attachments)
-        completed = _complete_activity(
-            db,
-            started,
-            status_value=result["status"],
-            summary=result["summary"],
-            detail=result,
-        )
-        event_name = "activity.completed" if result["status"] == "completed" else "activity.failed"
-        yield event_name, serialize_activity(completed).model_dump(mode="json"), RuntimeObservation(
-            kind=str(activity_kind),
-            name=planned.tool.name,
-            summary=result["summary"],
-            detail=result,
-        )
-
 
 def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
     """Human-readable 'in progress' label shown in the activity chip."""
@@ -740,181 +677,6 @@ def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
     return f"正在执行 {tool.name}…"
 
 
-def _plan_tool_calls(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    text: str,
-    tool_pool: list[ToolDefinition],
-    attachments: list[StudentAgentAttachment],
-) -> list[PlannedToolCall]:
-    by_name = {tool.name: tool for tool in tool_pool}
-    calls: list[PlannedToolCall] = []
-    lowered = text.lower()
-
-    if session.summary or _message_count(db, session.id) > 1:
-        calls.append(PlannedToolCall(by_name["get_session_context"], {"limit": 8}))
-
-    if any(word in lowered for word in ["我", "我的", "背景", "专业", "简历", "岗位", "面试", "求职", "匹配"]):
-        calls.append(PlannedToolCall(by_name["query_student_profile"], {}))
-
-    if any(word in lowered for word in ["简历", "经历", "项目", "resume"]):
-        calls.append(PlannedToolCall(by_name["read_resume"], {}))
-
-    if attachments:
-        calls.append(
-            PlannedToolCall(
-                by_name["analyze_uploaded_file"],
-                {"attachment_ids": [attachment.id for attachment in attachments]},
-            )
-        )
-
-    if any(word in lowered for word in ["岗位", "职位", "jd", "公司", "字节", "腾讯", "阿里", "后端", "前端"]):
-        calls.append(PlannedToolCall(by_name["query_job_positions"], {"keyword": text[:80]}))
-
-    if any(word in lowered for word in ["政策", "三方", "网申", "秋招", "春招", "行业", "公司简介"]):
-        calls.append(PlannedToolCall(by_name["query_knowledge_base"], {"query": text[:120]}))
-
-    skill_tool = _select_file_skill_tool(attachments, tool_pool) or _select_skill_tool(text, tool_pool)
-    if skill_tool:
-        calls.append(PlannedToolCall(skill_tool, {"task": text, "context": "学生端主智能体请求"}))
-
-    route = _select_route(db, identity.tenant_id, text)
-    if route:
-        calls.append(PlannedToolCall(by_name["invoke_agent"], {"agent_key": route.target_agent_key, "task": text}))
-
-    if _looks_like_mcp_need(text):
-        mcp_tool = next((tool for tool in tool_pool if tool.source == "mcp"), None)
-        if mcp_tool:
-            calls.append(PlannedToolCall(mcp_tool, {"query": text[:120]}))
-
-    unique: dict[str, PlannedToolCall] = {}
-    for call in calls:
-        unique.setdefault(call.tool.name, call)
-    return list(unique.values())
-
-
-def _message_count(db: Session, session_id: int) -> int:
-    return len(
-        list(
-            db.scalars(
-                select(StudentAgentMessage.id).where(StudentAgentMessage.session_id == session_id).limit(3)
-            ).all()
-        )
-    )
-
-
-def _select_skill_tool(text: str, tool_pool: list[ToolDefinition]) -> Optional[ToolDefinition]:
-    skills = [tool for tool in tool_pool if tool.source == "skill"]
-    if not skills:
-        return None
-    lowered = text.lower()
-    keyword_groups = [
-        ["简历", "经历", "项目", "resume"],
-        ["面试", "自我介绍", "追问", "interview"],
-        ["岗位", "jd", "匹配", "职位", "job"],
-        ["测评", "mbti", "霍兰德", "职业路径", "规划"],
-    ]
-    for keywords in keyword_groups:
-        if any(keyword.lower() in lowered for keyword in keywords):
-            for tool in skills:
-                haystack = f"{tool.name} {tool.description} {' '.join(tool.metadata.get('tags', []))}".lower()
-                if any(keyword.lower() in haystack for keyword in keywords):
-                    return tool
-    return skills[0] if any(word in lowered for word in ["帮我", "分析", "优化", "生成", "规划"]) else None
-
-
-def _select_file_skill_tool(
-    attachments: list[StudentAgentAttachment],
-    tool_pool: list[ToolDefinition],
-) -> Optional[ToolDefinition]:
-    if not attachments:
-        return None
-    skills = [tool for tool in tool_pool if tool.source == "skill"]
-    if not skills:
-        return None
-    ext_text = " ".join(attachment.file_ext for attachment in attachments).lower()
-    file_keywords: list[str] = []
-    if any(ext in ext_text for ext in ["pdf", "doc", "docx"]):
-        file_keywords.extend(["文档", "简历", "pdf", "word", "doc"])
-    if any(ext in ext_text for ext in ["xls", "xlsx", "csv"]):
-        file_keywords.extend(["表格", "excel", "xlsx", "数据"])
-    if any(attachment.content_type.startswith("image/") for attachment in attachments):
-        file_keywords.extend(["图片", "照片", "image", "视觉"])
-    for tool in skills:
-        haystack = f"{tool.name} {tool.description} {' '.join(tool.metadata.get('tags', []))}".lower()
-        if any(keyword.lower() in haystack for keyword in file_keywords):
-            return tool
-    return None
-
-
-# ── Tool execution ─────────────────────────────────────────────────────────────
-
-
-async def _execute_tool_call(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    user_text: str,
-    planned: PlannedToolCall,
-    attachments: list[StudentAgentAttachment],
-) -> dict[str, Any]:
-    tool = planned.tool
-    if tool.source == "skill":
-        return _invoke_skill(tool, planned.arguments)
-    if tool.source == "mcp":
-        return _invoke_mcp_placeholder(tool)
-    if tool.name == "invoke_agent":
-        route = _select_route_by_key(db, identity.tenant_id, str(planned.arguments.get("agent_key") or ""))
-        if not route:
-            return {"status": "failed", "summary": "没有找到可调用的子智能体。", "tool": tool.name}
-        result = await _call_subagent_provider(
-            route, str(planned.arguments.get("task") or user_text), f"student-{identity.user_id}"
-        )
-        return {"tool": tool.name, "agent_key": route.target_agent_key, "agent_name": route.target_agent_name, **result}
-    if tool.name == "query_student_profile":
-        return _query_student_profile(db, identity)
-    if tool.name == "query_job_positions":
-        keyword = str(planned.arguments.get("keyword") or user_text)
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": f"已检索岗位库：围绕「{keyword[:30]}」生成岗位匹配上下文（岗位库后端待接入真实数据源）。",
-            "keyword": keyword,
-        }
-    if tool.name == "query_knowledge_base":
-        query = str(planned.arguments.get("query") or user_text)
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": f"已检索知识库：{query[:40]}（知识库 RAG adapter 已预留）。",
-            "query": query,
-        }
-    if tool.name == "read_resume":
-        if attachments:
-            names = "、".join(attachment.original_name for attachment in attachments[:4])
-            return {
-                "status": "completed",
-                "tool": tool.name,
-                "summary": f"已读取本轮材料：{names}。",
-            }
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": "已检查简历材料：当前会话还没有上传简历文件，请学生补充材料。",
-        }
-    if tool.name == "analyze_uploaded_file":
-        return _analyze_uploaded_files(attachments)
-    if tool.name == "send_notification":
-        return {
-            "status": "failed",
-            "tool": tool.name,
-            "summary": "通知发送属于需要确认的动作，当前对话未获得学生确认，已跳过。",
-        }
-    if tool.name == "get_session_context":
-        return _get_session_context(db, session, int(planned.arguments.get("limit") or 8))
-    return {"status": "failed", "tool": tool.name, "summary": f"工具 {tool.name} 尚未实现 handler。"}
-
 
 def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
     skill_name = str(tool.metadata.get("name") or tool.name)
@@ -923,7 +685,8 @@ def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, 
         "tool": tool.name,
         "skill_slug": tool.metadata.get("slug"),
         "summary": f"已调用 Skill：{skill_name}，处理「{str(arguments.get('task') or '')[:30]}」。",
-        "skill_content": str(tool.metadata.get("content") or "")[:1600],
+        # Skill 是「渐进式披露」的操作手册，调用时应把完整正文加载进上下文（不是 1600 字的缩略）
+        "skill_content": str(tool.metadata.get("content") or "")[:12000],
         "description": tool.description,
     }
 
@@ -964,24 +727,106 @@ def _analyze_uploaded_files(attachments: list[StudentAgentAttachment]) -> dict[s
     }
 
 
-def _invoke_mcp_placeholder(tool: ToolDefinition) -> dict[str, Any]:
+
+# ── Web tools (Jina Reader) ───────────────────────────────────────────────────
+
+
+def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """通过 Jina Reader 读取网页内容，返回 Markdown。"""
+    url = str(args.get("url") or "").strip()
+    if not url:
+        return {"status": "failed", "tool": "read_webpage", "summary": "缺少 url 参数。"}
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    max_length = int(args.get("max_length") or 5000)
+
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+            resp.raise_for_status()
+            content = resp.text[:max_length]
+        return {
+            "status": "completed",
+            "tool": "read_webpage",
+            "summary": f"已读取网页内容（{len(content)} 字符）。",
+            "url": url,
+            "content": content,
+        }
+    except httpx.TimeoutException:
+        return {"status": "failed", "tool": "read_webpage", "summary": f"读取超时：{url}"}
+    except httpx.HTTPStatusError as exc:
+        return {"status": "failed", "tool": "read_webpage", "summary": f"HTTP {exc.response.status_code}：{url}"}
+    except Exception as exc:
+        logger.warning("read_webpage 失败: %s", exc)
+        return {"status": "failed", "tool": "read_webpage", "summary": f"读取失败：{exc}"}
+
+
+def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """联网搜索关键词。优先用 Jina Search API（需 JINA_API_KEY），否则通过 Jina Reader 抓 DuckDuckGo 结果页。"""
+    import os
+    from urllib.parse import quote_plus
+
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"status": "failed", "tool": "web_search", "summary": "缺少 query 参数。"}
+
+    jina_key = os.environ.get("JINA_API_KEY", "")
+
+    # 方式一：Jina Search API（需 API Key）
+    if jina_key:
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                resp = client.get(
+                    f"https://s.jina.ai/{query}",
+                    headers={"Accept": "text/plain", "Authorization": f"Bearer {jina_key}"},
+                )
+                resp.raise_for_status()
+                content = resp.text[:8000]
+            return {
+                "status": "completed",
+                "tool": "web_search",
+                "summary": f"已搜索「{query}」。",
+                "query": query,
+                "content": content,
+            }
+        except Exception:
+            logger.debug("Jina Search API 调用失败，回退到 DuckDuckGo")
+            pass  # 回退到方式二
+
+    # 方式二：通过 Jina Reader 抓 DuckDuckGo 搜索结果页（免费）
+    try:
+        ddg_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+        jina_url = f"https://r.jina.ai/{ddg_url}"
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+            resp.raise_for_status()
+            content = resp.text[:8000]
+        if not content.strip():
+            raise ValueError("空内容")
+        return {
+            "status": "completed",
+            "tool": "web_search",
+            "summary": f"已搜索「{query}」（DuckDuckGo）。",
+            "query": query,
+            "content": content,
+        }
+    except Exception:
+        logger.warning("web_search 所有方式均失败: query=%s", query)
+        pass  # 回退到方式三
+
+    # 方式三：回退到 read_webpage，让模型用已知 URL 自行补充
     return {
-        "status": "completed",
-        "tool": tool.name,
-        "summary": "已探索 MCP 工具池（管理端接入具体 MCP 服务后动态发现）。",
-        "adapter": "reserved",
-        "supported_transports": ["stdio", "sse", "streamable_http"],
+        "status": "partial",
+        "tool": "web_search",
+        "summary": (
+            f"无法直接搜索「{query}」。建议：请学生提供具体网址，使用 read_webpage 工具读取；"
+            "或在回复中引导学生自行搜索后粘贴链接。"
+        ),
+        "query": query,
+        "fallback_hint": "read_webpage",
     }
 
-
-def _select_route_by_key(db: Session, tenant_id: int, agent_key: str) -> Optional[MasterRouteRule]:
-    return db.scalar(
-        select(MasterRouteRule).where(
-            MasterRouteRule.tenant_id == tenant_id,
-            MasterRouteRule.enabled.is_(True),
-            MasterRouteRule.target_agent_key == agent_key,
-        )
-    )
 
 
 def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any]:
@@ -1022,101 +867,7 @@ def _get_session_context(db: Session, session: StudentAgentSession, limit: int) 
     }
 
 
-def _select_route(db: Session, tenant_id: int, text: str) -> Optional[MasterRouteRule]:
-    routes = list(
-        db.scalars(
-            select(MasterRouteRule)
-            .where(MasterRouteRule.tenant_id == tenant_id, MasterRouteRule.enabled.is_(True))
-            .order_by(MasterRouteRule.priority.desc(), MasterRouteRule.id.asc())
-        ).all()
-    )
-    if not routes:
-        return None
-    lowered = text.lower()
-    for route in routes:
-        haystack = f"{route.intent} {route.target_agent_name} {route.target_agent_key}".lower()
-        if any(token in haystack for token in _query_tokens(lowered)):
-            return route
-    return routes[0] if any(word in lowered for word in ["面试", "岗位", "简历", "jd", "求职"]) else None
 
-
-def _query_tokens(text: str) -> list[str]:
-    tokens = ["面试", "岗位", "职位", "匹配", "简历", "项目", "jd", "求职", "三方", "网申", "interview", "resume", "job"]
-    return [token for token in tokens if token in text]
-
-
-def _looks_like_mcp_need(text: str) -> bool:
-    lowered = text.lower()
-    return any(word in lowered for word in ["查询", "搜索", "日历", "宣讲", "岗位数据", "实时", "mcp", "网申", "公司信息"])
-
-
-async def _call_subagent_provider(route: MasterRouteRule, task: str, user_key: str) -> dict[str, Any]:
-    if route.target_provider == "dify":
-        return await _call_dify_subagent(route, task, user_key)
-    return {
-        "status": "completed",
-        "provider": "builtin",
-        "summary": f"已运行子智能体「{route.target_agent_name}」，建议围绕「{task[:30]}」继续拆解目标。",
-    }
-
-
-async def _call_dify_subagent(route: MasterRouteRule, task: str, user_key: str) -> dict[str, Any]:
-    try:
-        config = json.loads(route.provider_config_json or "{}")
-    except json.JSONDecodeError:
-        config = {}
-    base_url = str(config.get("api_base_url") or config.get("base_url") or "").rstrip("/")
-    api_key = str(config.get("api_key") or "")
-    if not base_url or not api_key:
-        return {
-            "status": "failed",
-            "provider": "dify",
-            "summary": f"Dify sub-agent [{route.target_agent_name}] missing api_base_url/api_key",
-        }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    inputs = config.get("inputs") or {}
-    
-    # Try multiple endpoints to support different Dify app modes
-    endpoints = [
-        ("/chat-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
-        ("/completion-messages", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
-        ("/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
-    ]
-    if config.get("conversation_id"):
-        for _, body in endpoints:
-            body["conversation_id"] = config["conversation_id"]
-    
-    last_error = ""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(float(config.get("timeout_sec", 45)))) as client:
-        for path, body in endpoints:
-            try:
-                response = await client.post(f"{base_url}{path}", headers=headers, json=body)
-                if response.status_code == 200:
-                    data = response.json()
-                    answer = str(data.get("answer") or data.get("data", {}).get("answer") or data.get("data", {}).get("outputs", {}).get("text", "") or "").strip()
-                    return {
-                        "status": "completed",
-                        "provider": "dify",
-                        "summary": answer[:500] or f"Dify sub-agent [{route.target_agent_name}] completed (no text returned)",
-                        "conversation_id": data.get("conversation_id"),
-                        "message_id": data.get("message_id"),
-                    }
-                elif response.status_code == 401:
-                    return {"status": "failed", "provider": "dify", "summary": f"Dify sub-agent [{route.target_agent_name}] invalid API Secret (401)"}
-                else:
-                    try:
-                        detail = response.json()
-                        last_error = detail.get("message", "") or str(detail)[:100]
-                    except Exception:
-                        last_error = f"HTTP {response.status_code}"
-            except Exception as exc:
-                last_error = str(exc)[:100]
-    
-    return {
-        "status": "failed",
-        "provider": "dify",
-        "summary": f"Dify sub-agent [{route.target_agent_name}] failed: {last_error}",
-    }
 
 def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional[int]) -> Optional[ModelConfig]:
     if requested_model_id:
@@ -1157,121 +908,6 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
     )
 
 
-# ── LLM streaming ─────────────────────────────────────────────────────────────
-
-
-async def _stream_llm_response(
-    model: ModelConfig,
-    messages: list[dict[str, Any]],
-    reasoning_effort: str,
-) -> AsyncIterator[str]:
-    """Stream tokens from an OpenAI-compatible chat/completions endpoint."""
-    try:
-        api_key = decrypt_api_key(model.api_key_cipher or "")
-        payload: dict[str, Any] = {
-            "model": model.model_identifier,
-            "messages": messages,
-            "temperature": model.default_temp if model.default_temp is not None else 0.7,
-            "max_tokens": model.max_output or 4096,
-            "stream": True,
-        }
-        if _supports_reasoning_effort(model):
-            payload["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort
-
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 60, write=30, pool=5)
-        ) as client:
-            async with client.stream(
-                "POST",
-                f"{model.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(raw)
-                        delta = (obj.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
-                        if delta:
-                            yield delta
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-    except Exception:
-        return
-
-
-# ── Prompt composition ────────────────────────────────────────────────────────
-
-
-def _compose_prompt(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    user_text: str,
-    observations: list[RuntimeObservation],
-    reasoning_effort: str,
-    model: ModelConfig,
-    attachments: list[StudentAgentAttachment],
-) -> list[dict[str, Any]]:
-    config = get_or_create_master_config(db, identity.tenant_id)
-    system_prompt = (config.system_prompt or DEFAULT_SYSTEM_PROMPT).strip()
-    effort_text = _effort_instruction(reasoning_effort)
-
-    system_content = (
-        system_prompt
-        + "\n\n## 回答规范\n"
-        "- 工具调用已由 Harness 完成，你直接综合结果给出最终回答。\n"
-        "- 使用 Markdown 格式（标题、加粗、列表、代码块），让回答清晰可读。\n"
-        "- 先给结论，再给可执行步骤，简洁有力。\n"
-        "- 禁止输出工具调用 JSON、thoughts 字段或任何内部推理链。\n"
-        f"- 推理强度：{effort_text}"
-    )
-
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
-
-    # Load historical conversation as proper multi-turn pairs (excluding current user msg)
-    history_rows = list(
-        db.scalars(
-            select(StudentAgentMessage)
-            .where(StudentAgentMessage.session_id == session.id)
-            .order_by(StudentAgentMessage.id.asc())
-            .limit(24)
-        ).all()
-    )
-    for msg in history_rows[:-1]:
-        if msg.role not in ("user", "assistant"):
-            continue
-        content = msg.content
-        if len(content) > 4000:
-            content = content[:4000] + "\n…[已截断]"
-        messages.append({"role": msg.role, "content": content})
-
-    inline_images = _has_image_attachments(attachments) and _supports_image_input(model)
-
-    # Build current user turn with tool observations appended
-    parts: list[str] = [user_text]
-    if observations:
-        obs_lines = "\n".join(f"- **{o.name}**: {o.summary}" for o in observations)
-        parts.append(f"\n---\n**工具执行摘要**\n{obs_lines}")
-    if attachments:
-        parts.append(f"\n---\n**附件内容**\n{_attachment_prompt_text(attachments, inline_images)}")
-    current_text = "\n".join(parts)
-
-    if inline_images:
-        image_parts = _attachment_image_parts(attachments)
-        messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": current_text}, *image_parts],
-        })
-    else:
-        messages.append({"role": "user", "content": current_text})
-
-    return messages
 
 
 def _effort_instruction(reasoning_effort: str) -> str:
@@ -1390,6 +1026,8 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "analyze_uploaded_file",
     "get_session_context",
     "export_resume_pdf",
+    "read_webpage",
+    "web_search",
 )
 
 
@@ -1420,53 +1058,10 @@ def assemble_active_tools(db: Session, identity: AuthIdentity) -> list[ToolDefin
             metadata=data,
         )
 
-    for tool in _assemble_subagent_tools(db, identity):
-        if tool.name not in pool:
-            pool[tool.name] = tool
-
+    # 设计决策（2026-06）：主智能体不再调用子智能体。任务型能力（简历优化/岗位匹配）做成
+    # Skill 由主智能体编排；沉浸型人格（AI 面试官/职业规划师/岗位推荐师）放在「智能体广场」，
+    # 由学生直接进入多轮对话——把有状态人格压成一次性工具调用会毁掉其多轮体验。
     return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
-
-
-def _assemble_subagent_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    """把每条启用的 MasterRouteRule 暴露成一个命名子智能体工具——`intent` 即工具描述，
-    模型在循环中自主决定何时派发。只暴露能真实执行的（builtin 跑平台智能体、dify 调 Dify）。"""
-    routes = list(
-        db.scalars(
-            select(MasterRouteRule)
-            .where(MasterRouteRule.tenant_id == identity.tenant_id, MasterRouteRule.enabled.is_(True))
-            .order_by(MasterRouteRule.priority.desc(), MasterRouteRule.id.asc())
-        ).all()
-    )
-    tools: list[ToolDefinition] = []
-    for route in routes:
-        name = "subagent__" + _tool_safe_name(route.target_agent_key)
-        intent = (route.intent or route.target_agent_name or "子智能体").strip()
-        tools.append(
-            ToolDefinition(
-                name=name,
-                description=f"{intent}（子智能体：{route.target_agent_name}）",
-                source="subagent",
-                priority=800,
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "交给该子智能体的完整任务，需自带必要上下文（如简历正文、岗位 JD），子智能体看不到主对话历史。",
-                        }
-                    },
-                    "required": ["task"],
-                },
-                metadata={
-                    "kind": "subagent",
-                    "route_id": route.id,
-                    "agent_key": route.target_agent_key,
-                    "agent_name": route.target_agent_name,
-                    "provider": route.target_provider,
-                },
-            )
-        )
-    return tools
 
 
 def _build_openai_tools(tool_defs: list[ToolDefinition]) -> list[dict[str, Any]]:
@@ -1496,6 +1091,11 @@ def _harness_system_prompt(config: Any, reasoning_effort: str) -> str:
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF，然后把工具返回的 download_url 以 "
         "Markdown 链接形式给学生，例如：[点击下载优化后的简历](下载链接)。\n"
+        "- 沉浸式专家：当学生需要『模拟面试 / AI 面试官』『职业规划咨询』『岗位推荐』等多轮、有人格的沉浸体验时，"
+        "你不要自己扮演，而是引导学生前往『智能体广场』进入对应的专属智能体（那里才是多轮对话的入口）。\n"
+        "- 联网工具：当学生发来 URL 链接或需要查看网页内容时，调用 read_webpage 读取；"
+        "当需要搜索公司信息、行业动态等实时数据时，调用 web_search 搜索。"
+        "如果搜索失败，引导学生自行搜索后粘贴链接，再用 read_webpage 读取。\n"
         "- 输出规范：使用 Markdown，先结论后步骤；不要输出工具调用的原始 JSON、tool_call 或隐藏推理过程。\n"
         f"- 推理强度：{effort}"
     )
@@ -1568,8 +1168,14 @@ async def run_agent_loop(
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """The harness-owned ReAct loop. Yields (sse_event_name, data) tuples."""
     assistant_id = assistant_message.id
+    deadline = time.monotonic() + 300  # 5 分钟总超时
+    logger.info("agent_loop 开始 session=%s model=%s max_iter=%s", session.id, model.model_identifier, max_iterations)
 
     for iteration in range(max_iterations):
+        if time.monotonic() > deadline:
+            logger.warning("agent_loop 超时 session=%s iteration=%s", session.id, iteration)
+            yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[回复超时，请重试]"}
+            break
         turn_content = ""
         turn_tool_calls: list[dict[str, Any]] = []
         turn_error = False
@@ -1767,6 +1373,7 @@ async def _stream_llm_turn(
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
     except Exception as exc:  # noqa: BLE001 — surfaced to caller for graceful fallback
+        logger.exception("LLM 流式调用失败")
         yield "error", str(exc)[:200]
         return
 
@@ -1791,8 +1398,6 @@ async def _dispatch_tool(
     # 未知工具：返回结构化错误让模型自我纠正，而不是崩溃。
     if td is None:
         return {"status": "failed", "tool": name, "summary": f"未知工具「{name}」，已忽略。请只调用系统提供的工具。"}
-    if td.metadata.get("kind") == "subagent":
-        return await _dispatch_subagent(db, identity, td, args)
     if td.source == "skill":
         return _invoke_skill(td, args)
     if name == "query_student_profile":
@@ -1805,14 +1410,23 @@ async def _dispatch_tool(
         return _get_session_context(db, session, int(args.get("limit") or 8))
     if name == "export_resume_pdf":
         return _export_resume_pdf_tool(db, identity, session, assistant_message, args)
+    if name == "read_webpage":
+        return _read_webpage_tool(args)
+    if name == "web_search":
+        return _web_search_tool(args)
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
+_TOOL_RESULT_KEYS_TO_STRIP = {"tool", "status", "iteration", "tool_call_id", "arguments"}
+
+
 def _tool_result_for_model(result: dict[str, Any]) -> str:
+    """序列化工具结果发给模型，去掉内部元数据字段以节省 context window。"""
+    filtered = {k: v for k, v in result.items() if k not in _TOOL_RESULT_KEYS_TO_STRIP}
     try:
-        text = json.dumps(result, ensure_ascii=False)
+        text = json.dumps(filtered, ensure_ascii=False)
     except (TypeError, ValueError):
-        text = str(result)
+        text = str(filtered)
     return text[:6000]
 
 
@@ -1856,127 +1470,6 @@ def _permission_decision(mode: str, name: str, td: Optional[ToolDefinition]) -> 
             "请先向学生说明将要执行的动作并征得同意。",
         )
     return "allow", ""
-
-
-# ── 子智能体派发（Coordinator → sub-agent）───────────────────────────────────────
-
-
-async def _dispatch_subagent(
-    db: Session, identity: AuthIdentity, td: ToolDefinition, args: dict[str, Any]
-) -> dict[str, Any]:
-    route_id = td.metadata.get("route_id")
-    route = db.get(MasterRouteRule, route_id) if route_id else None
-    if not route or not route.enabled or route.tenant_id != identity.tenant_id:
-        return {"status": "failed", "tool": td.name, "summary": f"子智能体「{td.metadata.get('agent_name')}」已不可用。"}
-
-    task = str(args.get("task") or "").strip()
-    if not task:
-        return {"status": "failed", "tool": td.name, "summary": "调用子智能体需要提供 task（要交办的完整任务）。"}
-
-    if route.target_provider == "dify":
-        result = await _call_dify_subagent(route, task, f"student-{identity.user_id}")
-    else:
-        result = await _run_builtin_subagent(db, route, task)
-    result.setdefault("tool", td.name)
-    result.setdefault("agent_name", route.target_agent_name)
-    return result
-
-
-def _resolve_builtin_agent(db: Session, key: str) -> Optional[Agent]:
-    """把路由的 target_agent_key 解析到平台 Agent。兼容三种写法：
-    数字 id、category（如 interview）、或语义别名（matching→岗位匹配、resume→简历优化）。"""
-    key = (key or "").strip()
-    if not key:
-        return None
-    if key.isdigit():
-        agent = db.get(Agent, int(key))
-        return agent if agent and not agent.is_deleted else None
-    agent = db.scalar(
-        select(Agent).where(Agent.category == key, Agent.is_deleted.is_(False)).order_by(Agent.id.asc())
-    )
-    if agent:
-        return agent
-    aliases = {
-        "interview": ["面试"],
-        "matching": ["匹配", "岗位"],
-        "resume": ["简历"],
-        "career": ["测评", "规划", "职业"],
-    }
-    for keyword in aliases.get(key.lower(), [key]):
-        agent = db.scalar(
-            select(Agent).where(Agent.name.ilike(f"%{keyword}%"), Agent.is_deleted.is_(False)).order_by(Agent.id.asc())
-        )
-        if agent:
-            return agent
-    return None
-
-
-async def _run_builtin_subagent(db: Session, route: MasterRouteRule, task: str) -> dict[str, Any]:
-    """真实执行平台内置子智能体：在独立上下文里用该智能体的 system prompt + 模型跑一轮，
-    只把结果摘要回流主对话（不再返回编造的占位摘要）。"""
-    agent = _resolve_builtin_agent(db, route.target_agent_key)
-    if not agent or not agent.is_enabled:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{route.target_agent_name}」不存在或已停用。"}
-    if agent.use_dify:
-        return {
-            "status": "failed",
-            "provider": "builtin",
-            "summary": f"子智能体「{agent.name}」配置为 Dify 应用，请在路由里改用 Dify provider 接入。",
-        }
-
-    model = db.get(ModelConfig, agent.model_config_id) if agent.model_config_id else None
-    if not model or model.is_deleted or not model.api_key_cipher:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{agent.name}」未配置可用模型。"}
-
-    system_prompt = (agent.system_prompt or f"你是{agent.name}。").strip()
-    reply = await _oneshot_llm(
-        model, system_prompt, task,
-        temperature=agent.temperature, max_tokens=agent.max_tokens,
-    )
-    if not reply:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{agent.name}」未返回结果。"}
-    return {
-        "status": "completed",
-        "provider": "builtin",
-        "agent_name": agent.name,
-        "summary": reply[:1800],
-    }
-
-
-async def _oneshot_llm(
-    model: ModelConfig,
-    system_prompt: str,
-    user_text: str,
-    *,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-) -> str:
-    """非流式单轮调用 OpenAI 兼容 /chat/completions，返回正文。失败返回空串。"""
-    try:
-        api_key = decrypt_api_key(model.api_key_cipher or "")
-        payload = {
-            "model": model.model_identifier,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text},
-            ],
-            "temperature": temperature if temperature is not None else (model.default_temp if model.default_temp is not None else 0.7),
-            "max_tokens": max_tokens or model.max_output or 2048,
-            "stream": False,
-        }
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 60, write=30, pool=5)
-        ) as client:
-            response = await client.post(
-                f"{model.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return str((data.get("choices") or [{}])[0].get("message", {}).get("content") or "").strip()
-    except Exception:
-        return ""
 
 
 # ── Resume tools ────────────────────────────────────────────────────────────────
@@ -2069,6 +1562,22 @@ def _attachment_download_url(stored_path: Path | str) -> str:
     return "/data/" + (s[idx:] if idx >= 0 else Path(s).name)
 
 
+def _resolve_student_photo(db: Session, identity: AuthIdentity) -> Optional[str]:
+    """解析学生头像的本地文件路径，用于简历照片；找不到/非图片则返回 None。"""
+    student = db.get(StudentUser, identity.user_id)
+    avatar_url = getattr(student, "avatar_url", None) if student else None
+    if not avatar_url:
+        return None
+    name = Path(str(avatar_url)).name
+    if Path(name).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        return None
+    for base in ("/app/data/avatars", "data/avatars", "./data/avatars"):
+        candidate = Path(base) / name
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 def _export_resume_pdf_tool(
     db: Session,
     identity: AuthIdentity,
@@ -2085,9 +1594,10 @@ def _export_resume_pdf_tool(
     storage_dir = Path(settings.agent_upload_storage_dir) / str(identity.tenant_id) / str(identity.user_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
     stored_path = storage_dir / f"{uuid.uuid4().hex}.pdf"
+    photo_path = _resolve_student_photo(db, identity)
 
     try:
-        _render_resume_pdf(markdown, stored_path, title=Path(filename).stem)
+        _render_resume_pdf(markdown, stored_path, title=Path(filename).stem, photo_path=photo_path)
     except Exception as exc:  # noqa: BLE001
         return {"status": "failed", "tool": "export_resume_pdf", "summary": f"PDF 生成失败：{str(exc)[:160]}"}
 
@@ -2169,49 +1679,226 @@ def _register_cjk_font() -> str:
         return "Helvetica"
 
 
-def _render_resume_pdf(markdown_text: str, out_path: Path, title: str = "个人简历") -> None:
-    """Render a Markdown-ish resume into a PDF with an embedded CJK font."""
+_ACCENT = "#34507A"  # 板块标题左侧竖条 / 图标 的主题色
+
+
+def _contact_icon_kind(text: str) -> str:
+    """根据联系方式文本推断图标类型。"""
+    import re
+    t = (text or "").strip()
+    low = t.lower()
+    if "@" in t:
+        return "mail"
+    if low.startswith("http") or "www." in low or "://" in low:
+        return "globe"
+    if re.match(r"^\d{4}[-/.]\d{1,2}", t):
+        return "calendar"
+    if any(k in t for k in ("离职", "在职", "求职", "在校", "应届", "实习", "全职", "兼职")):
+        return "briefcase"
+    if re.fullmatch(r"[\d\-\s+()]{7,}", t):
+        return "phone"
+    return "pin"
+
+
+def _resume_icon(kind: str, color: str):
+    """用矢量图形画一个 12x12 的简约线性图标。"""
+    from reportlab.graphics.shapes import Circle, Drawing, Ellipse, Line, Polygon, Rect
+
+    d = Drawing(12, 12)
+    sw = 0.9
+
+    def rect(x, y, w, h, **kw):
+        return Rect(x, y, w, h, strokeColor=color, strokeWidth=sw, fillColor=None, **kw)
+
+    def line(x1, y1, x2, y2):
+        return Line(x1, y1, x2, y2, strokeColor=color, strokeWidth=sw)
+
+    def circ(cx, cy, r):
+        return Circle(cx, cy, r, strokeColor=color, strokeWidth=sw, fillColor=None)
+
+    if kind == "mail":
+        d.add(rect(1, 2.5, 10, 7))
+        d.add(line(1, 9.5, 6, 5.8)); d.add(line(11, 9.5, 6, 5.8))
+    elif kind == "phone":
+        d.add(rect(3.3, 1, 5.4, 10, rx=1.2, ry=1.2))
+        d.add(line(5, 2.3, 7, 2.3))
+    elif kind == "calendar":
+        d.add(rect(1, 1.5, 10, 8.5))
+        d.add(line(1, 7.6, 11, 7.6))
+        d.add(line(3.6, 9.8, 3.6, 11.4)); d.add(line(8.4, 9.8, 8.4, 11.4))
+    elif kind == "briefcase":
+        d.add(rect(1, 2.3, 10, 6.6))
+        d.add(rect(4.2, 8.6, 3.6, 1.8))
+        d.add(line(1, 5.3, 11, 5.3))
+    elif kind == "globe":
+        d.add(circ(6, 6, 5))
+        d.add(line(1, 6, 11, 6))
+        d.add(Ellipse(6, 6, 2.3, 5, strokeColor=color, strokeWidth=sw, fillColor=None))
+    else:  # pin
+        d.add(circ(6, 8, 3.1))
+        d.add(Polygon([3.4, 6.6, 8.6, 6.6, 6, 1], strokeColor=color, strokeWidth=sw, fillColor=None))
+        d.add(circ(6, 8, 1.1))
+    return d
+
+
+def _render_resume_pdf(
+    markdown_text: str, out_path: Path, title: str = "个人简历", photo_path: Optional[str] = None
+) -> None:
+    """把约定格式的 Markdown 简历渲染成「专业模板」PDF：左上照片 + 姓名 + 带图标的两列联系方式，
+    蓝色竖条 + 灰底的板块标题，三栏对齐（标题/角色/日期）的经历条目，要点带项目符号。
+    不符合约定的内容会按通用 Markdown 优雅降级，永不报错。
+    """
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     font_name = _register_cjk_font()
+    accent = colors.HexColor(_ACCENT)
+    content_w = A4[0] - 32 * mm  # 左右各 16mm 边距
 
-    body = ParagraphStyle("body", fontName=font_name, fontSize=10.5, leading=16, spaceAfter=4)
-    h1 = ParagraphStyle("h1", fontName=font_name, fontSize=18, leading=24, spaceBefore=2, spaceAfter=8)
-    h2 = ParagraphStyle(
-        "h2", fontName=font_name, fontSize=13, leading=18, spaceBefore=10, spaceAfter=4,
-        textColor=colors.HexColor("#1565C0"),
-    )
-    h3 = ParagraphStyle("h3", fontName=font_name, fontSize=11.5, leading=16, spaceBefore=6, spaceAfter=2)
-    bullet = ParagraphStyle("bullet", fontName=font_name, fontSize=10.5, leading=16, leftIndent=12, spaceAfter=2)
+    name_st = ParagraphStyle("name", fontName=font_name, fontSize=20, leading=25)
+    title_st = ParagraphStyle("title", fontName=font_name, fontSize=10.5, leading=15, textColor=colors.HexColor("#666666"))
+    contact_st = ParagraphStyle("contact", fontName=font_name, fontSize=9, leading=13, textColor=colors.HexColor("#444444"))
+    sec_st = ParagraphStyle("sec", fontName=font_name, fontSize=11.5, leading=15, textColor=colors.HexColor("#1F2937"))
+    entry_l = ParagraphStyle("el", fontName=font_name, fontSize=10.5, leading=14)
+    entry_m = ParagraphStyle("em", fontName=font_name, fontSize=10, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#444444"))
+    entry_r = ParagraphStyle("er", fontName=font_name, fontSize=9.5, leading=14, alignment=TA_RIGHT, textColor=colors.HexColor("#666666"))
+    body = ParagraphStyle("body", fontName=font_name, fontSize=9.8, leading=15, spaceAfter=2)
+    bullet = ParagraphStyle("bullet", fontName=font_name, fontSize=9.8, leading=15, leftIndent=10, spaceAfter=1)
 
+    no_pad = [
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]
+
+    lines = [ln.rstrip() for ln in markdown_text.splitlines()]
     flow: list[Any] = []
-    for raw in markdown_text.splitlines():
-        stripped = raw.strip()
-        if not stripped:
-            flow.append(Spacer(1, 4))
-            continue
-        if stripped in ("---", "***", "___"):
-            flow.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#BBBBBB"), spaceBefore=4, spaceAfter=6))
-        elif stripped.startswith("### "):
-            flow.append(Paragraph(_pdf_inline(stripped[4:]), h3))
-        elif stripped.startswith("## "):
-            flow.append(Paragraph(_pdf_inline(stripped[3:]), h2))
-        elif stripped.startswith("# "):
-            flow.append(Paragraph(_pdf_inline(stripped[2:]), h1))
-        elif stripped[:2] in ("- ", "* ") or stripped.startswith("• "):
-            flow.append(Paragraph("• " + _pdf_inline(stripped[2:].strip()), bullet))
+
+    # ── 头部：照片 + 姓名/职位 + 两列带图标联系方式 ──
+    idx = 0
+    name = None
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith("# ") and not ln.strip().startswith("## "):
+            name = ln.strip()[2:].strip()
+            idx = i + 1
+            break
+    if name:
+        extras: list[str] = []
+        while idx < len(lines) and len(extras) < 2:
+            s = lines[idx].strip()
+            if s.startswith("#"):
+                break
+            if s:
+                extras.append(s)
+            idx += 1
+        job_title = extras[0] if extras else ""
+        contacts = [c.strip() for c in extras[1].split("|") if c.strip()] if len(extras) > 1 else []
+
+        # 左：照片 + 姓名/职位
+        name_block = [Paragraph(_pdf_inline(name), name_st)]
+        if job_title:
+            name_block.append(Paragraph(_pdf_inline(job_title), title_st))
+        photo_flow = None
+        if photo_path:
+            try:
+                photo_flow = Image(photo_path, width=46, height=58)
+            except Exception:
+                photo_flow = None
+        if photo_flow is not None:
+            left_block: Any = Table([[photo_flow, name_block]], colWidths=[54, content_w * 0.42 - 54])
+            left_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
         else:
-            flow.append(Paragraph(_pdf_inline(stripped), body))
+            left_block = name_block
+
+        # 右：联系方式两列网格（图标 + 文本）
+        cell_w = content_w * 0.58 / 2
+        if contacts:
+            def contact_cell(text: str) -> Any:
+                icon = _resume_icon(_contact_icon_kind(text), _ACCENT)
+                inner = Table([[icon, Paragraph(_pdf_inline(text), contact_st)]], colWidths=[15, cell_w - 15])
+                inner.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad,
+                                           ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+                return inner
+            grid_rows: list[list[Any]] = []
+            for k in range(0, len(contacts), 2):
+                grid_rows.append([
+                    contact_cell(contacts[k]),
+                    contact_cell(contacts[k + 1]) if k + 1 < len(contacts) else "",
+                ])
+            right_block: Any = Table(grid_rows, colWidths=[cell_w, cell_w])
+            right_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
+        else:
+            right_block = Paragraph("", contact_st)
+
+        header = Table([[left_block, right_block]], colWidths=[content_w * 0.42, content_w * 0.58])
+        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
+        flow.append(header)
+        flow.append(Spacer(1, 8))
+        flow.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#D0D0D0"), spaceAfter=2))
+        rest = lines[idx:]
+    else:
+        rest = lines  # 没有约定头部 → 整体走通用渲染
+
+    def section_bar(text: str) -> Table:
+        # 左侧蓝色竖条 + 灰底标题
+        t = Table([["", Paragraph(f"<b>{_pdf_inline(text)}</b>", sec_st)]], colWidths=[3.5, content_w - 3.5])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, 0), accent),
+            ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#ECEDEF")),
+            ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 9), ("RIGHTPADDING", (1, 0), (1, 0), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return t
+
+    def entry_row(text: str) -> Any:
+        parts = [p.strip() for p in text.split("|")]
+        if len(parts) == 1:
+            return Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l)
+        if len(parts) == 2:
+            cells = [[Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l), Paragraph(_pdf_inline(parts[1]), entry_r)]]
+            widths = [content_w * 0.7, content_w * 0.3]
+        else:
+            cells = [[
+                Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l),
+                Paragraph(_pdf_inline(parts[1]), entry_m),
+                Paragraph(_pdf_inline(parts[2]), entry_r),
+            ]]
+            widths = [content_w * 0.52, content_w * 0.26, content_w * 0.22]
+        t = Table(cells, colWidths=widths)
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad,
+            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        return t
+
+    for raw in rest:
+        s = raw.strip()
+        if not s:
+            flow.append(Spacer(1, 3))
+        elif s in ("---", "***", "___"):
+            flow.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#DDDDDD"), spaceBefore=2, spaceAfter=4))
+        elif s.startswith("## "):
+            flow.append(Spacer(1, 6))
+            flow.append(section_bar(s[3:]))
+            flow.append(Spacer(1, 3))
+        elif s.startswith("### "):
+            flow.append(entry_row(s[4:]))
+        elif s.startswith("# "):
+            flow.append(Paragraph(f"<b>{_pdf_inline(s[2:])}</b>", name_st))
+        elif s[:2] in ("- ", "* ") or s.startswith("• "):
+            flow.append(Paragraph("• " + _pdf_inline(s[2:].strip()), bullet))
+        else:
+            flow.append(Paragraph(_pdf_inline(s), body))
 
     if not flow:
-        flow.append(Paragraph(_pdf_inline(title), h1))
+        flow.append(Paragraph(_pdf_inline(title), name_st))
 
     doc = SimpleDocTemplate(
         str(out_path), pagesize=A4,
-        leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=18 * mm, title=title,
+        leftMargin=16 * mm, rightMargin=16 * mm, topMargin=16 * mm, bottomMargin=14 * mm, title=title,
     )
     doc.build(flow)

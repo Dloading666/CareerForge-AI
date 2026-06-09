@@ -48,12 +48,19 @@ async def upload_resume(
     identity, student = current
 
     ext = Path(file.filename or "").suffix.lower()
-    if ext != ".pdf":
-        raise HTTPException(400, "只支持 PDF 格式")
+    allowed = {".pdf", ".docx", ".doc"}
+    if ext not in allowed:
+        raise HTTPException(400, "简历仅支持 PDF / Word（.docx/.doc）格式")
 
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(400, "文件不能超过 20MB")
+
+    default_ctype = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+    }[ext]
 
     storage_dir = Path(settings.agent_upload_storage_dir) / str(identity.tenant_id) / str(identity.user_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
@@ -70,7 +77,7 @@ async def upload_resume(
         {
             "tid": identity.tenant_id, "sid": student.id,
             "name": file.filename, "path": str(stored_path),
-            "ctype": file.content_type or "application/pdf",
+            "ctype": file.content_type or default_ctype,
             "ext": ext.lstrip("."), "size": len(content),
         },
     )
