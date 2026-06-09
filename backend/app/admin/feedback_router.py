@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -23,6 +23,16 @@ class FeedbackItem(BaseModel):
     created_at: str | None
     status: str
 
+
+
+@router.get("/feedback/stats")
+def feedback_stats(
+    current=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    open_row = db.execute(text("SELECT COUNT(*) AS cnt FROM user_feedback WHERE status = 'open'")).mappings().one()
+    latest_row = db.execute(text("SELECT MAX(id) AS mid FROM user_feedback")).mappings().one()
+    return ok({"open_count": open_row["cnt"], "latest_id": latest_row["mid"] or 0})
 
 @router.get("/feedback")
 def list_feedback(
