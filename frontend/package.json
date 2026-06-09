@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.15",
+    "framer-motion": "^12.40.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",

@@ -204,7 +204,13 @@ export function AgentManagementPage() {
     (!srch || a.name.includes(srch) || (a.description || '').includes(srch))
   )
 
-  const mOpts = models.map(m => ({ value: m.id, label: m.display_name + ' (' + m.model_identifier + ')' }))
+  const watchedCat = Form.useWatch('cat', form)
+const isInterviewAgent = watchedCat === 'interview'
+const TTS_CAPABILITIES = ['tts']
+const CHAT_CAPABILITIES = ['text', 'multimodal', 'chat']
+const mOpts = models
+  .filter(m => isInterviewAgent ? TTS_CAPABILITIES.includes(m.capability) : CHAT_CAPABILITIES.includes(m.capability))
+  .map(m => ({ value: m.id, label: m.display_name + ' (' + m.model_identifier + ')' }))
 
   const stats = {
     total: agents.length,
@@ -373,7 +379,7 @@ export function AgentManagementPage() {
           {!useDify && (
             <Tabs.TabPane key='model' title='⚙️ 模型参数'>
               <Form form={form} layout='vertical'>
-                <Form.Item label='绑定模型' field='model_id'>
+                <Form.Item label={isInterviewAgent ? '绑定 TTS 模型' : '绑定模型'} field='model_id' extra={isInterviewAgent ? '面试官智能体仅可关联 TTS 模型' : '仅显示文本/多模态模型'}>
                   <Select options={mOpts} placeholder='选择模型（先在模型广场配 API Key）' allowClear />
                 </Form.Item>
                 <Form.Item label='系统提示词' field='sp'>

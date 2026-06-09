@@ -10,7 +10,7 @@ interface ModelItem { id: number; display_name: string; provider: string; deploy
 interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string | string[]; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
 const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: ['openai'], base_url: '', api_key: '', model_identifier: '', open_to_student: false }
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
-const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' } }
+const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
 
 export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
@@ -99,10 +99,10 @@ export function ModelPlaza() {
             </div>
             <div className="admin-card-footer">
               <Space size={6}>{m.protocols.split(',').filter(Boolean).map(p => <Tag key={p}>{p.trim()}</Tag>)}<Tag>{m.provider}</Tag></Space>
-              <div style={{ display: 'flex', gap: 4 }}>
-                <Button type="text" size="mini" icon={<IconPlayArrow />} loading={testingIds.has(m.id)} onClick={() => handleTest(m.id)} />
-                <Button type="text" size="mini" icon={<IconEdit />} onClick={() => openForm(m)} />
-                <Popconfirm title="确定删除？" onOk={() => handleDelete(m.id)}><Button type="text" size="mini" status="danger" icon={<IconDelete />} /></Popconfirm>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Button type="text" size="small" icon={<IconPlayArrow />} loading={testingIds.has(m.id)} onClick={() => handleTest(m.id)} />
+                <Button type="text" size="small" icon={<IconEdit />} onClick={() => openForm(m)} />
+                <Popconfirm title="确定删除？" onOk={() => handleDelete(m.id)}><Button type="text" size="small" status="danger" icon={<IconDelete />} /></Popconfirm>
               </div>
             </div>
             <div className="student-open-switch"><span>对学生开放</span><Switch checked={m.open_to_student} onChange={v => handleToggleOpen(m.id, v)} /></div>
@@ -116,7 +116,7 @@ export function ModelPlaza() {
           <Form.Item label="展示名称" required><Input value={form.display_name} onChange={v => setForm(p => ({...p, display_name: v}))} placeholder="如 DeepSeek 对话-生产" /></Form.Item>
           <Form.Item label="供应商" required><Select value={form.provider} onChange={v => setForm(p => ({...p, provider: v}))} placeholder="选择供应商" allowCreate>{['OpenAI','DeepSeek','Anthropic','通义千问','智谱','月之暗面','Azure','Ollama'].map(v=><Select.Option key={v} value={v}>{v}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
-          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option></Select></Form.Item>
+          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
           <Form.Item label="协议"><Select mode="multiple" value={Array.isArray(form.protocols) ? form.protocols : form.protocols.split(',').filter(Boolean)} onChange={v => setForm(p => ({...p, protocols: v}))}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="Base URL" required><Input value={form.base_url} onChange={v => setForm(p => ({...p, base_url: v}))} placeholder="https://api.deepseek.com/v1" /></Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>

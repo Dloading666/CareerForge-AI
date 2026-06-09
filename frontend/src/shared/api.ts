@@ -8,8 +8,51 @@ export class ApiError extends Error {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ""
 const STORAGE_KEY = "zhipei-auth-session"
 
+type StoredSession = {
+  access?: string
+  refresh?: string
+}
+
+function getStoredSession(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as StoredSession
+  } catch {
+    return null
+  }
+}
+
 function getAccessToken(): string | null {
-  try { const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return null; return JSON.parse(raw)?.access ?? null } catch { return null }
+  return getStoredSession()?.access ?? null
+}
+
+function updateStoredAccessToken(access: string) {
+  const session = getStoredSession()
+  if (!session) return
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, access }))
+}
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  const refresh = getStoredSession()?.refresh
+  if (!refresh) return null
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh }),
+  })
+
+  let payload: { code?: number; data?: { access?: string } } | null = null
+  try {
+    payload = (await response.json()) as { code?: number; data?: { access?: string } }
+  } catch {
+    payload = null
+  }
+
+  const access = response.ok && payload?.code === 0 ? payload.data?.access ?? null : null
+  if (access) updateStoredAccessToken(access)
+  return access
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -25,6 +68,10 @@ const ERROR_TYPES: Record<string, string> = {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestWithRetry<T>(path, init, false)
+}
+
+async function requestWithRetry<T>(path: string, init: RequestInit | undefined, retried: boolean): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has("Content-Type") && init?.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json")
   if (!headers.has("Authorization")) { const token = getAccessToken(); if (token) headers.set("Authorization", `Bearer ${token}`) }
@@ -32,6 +79,22 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   let response: Response
   try { response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers }) }
   catch { throw new ApiError("无法连接后端服务", 0) }
+
+  if (
+    response.status === 401 &&
+    !retried &&
+    path !== "/api/v1/auth/refresh" &&
+    path !== "/api/v1/auth/login" &&
+    path !== "/api/v1/auth/logout"
+  ) {
+    const access = await tryRefreshAccessToken()
+    if (access) {
+      const retryHeaders = new Headers(init?.headers)
+      if (!retryHeaders.has("Content-Type") && init?.body && !(init.body instanceof FormData)) retryHeaders.set("Content-Type", "application/json")
+      retryHeaders.set("Authorization", `Bearer ${access}`)
+      return requestWithRetry<T>(path, { ...init, headers: retryHeaders }, true)
+    }
+  }
 
   let payload: (ApiEnvelope<T> & { detail?: unknown }) | undefined
   try { payload = (await response.json()) as ApiEnvelope<T> & { detail?: unknown } }

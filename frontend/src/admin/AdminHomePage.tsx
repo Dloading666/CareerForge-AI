@@ -16,9 +16,12 @@
   Tag,
   Tabs,
   Upload,
+  Modal,
+  Badge,
 } from '@arco-design/web-react'
 import {
   IconApps,
+  IconBug,
   IconDashboard,
   IconDelete,
   IconEdit,
@@ -40,8 +43,9 @@ import { useAuth } from '../shared/auth'
 import { ModelPlaza } from './ModelPlaza'
 import { AgentManagementPage } from './AgentManagementPage'
 import { SystemSettings } from './SystemSettings'
+import { FeedbackPage } from './FeedbackPage'
 
-type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings'
+type NavKey = 'agents' | 'master' | 'models' | 'mcp' | 'skills' | 'knowledge' | 'settings' | 'feedback'
 type DrawerMode = 'agent' | 'master' | 'model' | 'mcp' | 'skill' | 'knowledge'
 type SkillStatus = 'enabled' | 'disabled'
 
@@ -385,6 +389,12 @@ const pageMeta: Record<NavKey, { title: string; desc: string; action?: string; d
     action: '新建知识库',
     drawer: 'knowledge',
   },
+  feedback: {
+    title: '用户反馈',
+    desc: '查看和处理学生提交的Bug反馈与功能建议。',
+    action: '',
+    drawer: '' as DrawerMode,
+  },
   settings: {
     title: '系统设置',
     desc: '管理账号、权限和平台运行偏好。',
@@ -536,7 +546,56 @@ export function AdminHomePage() {
   const [avatarKey, setAvatarKey] = useState(0)
   const email = (session?.profile.email as string) || ''
   const [activeNav, setActiveNav] = useState<NavKey>('agents')
+
+  // 用户反馈通知：铃铛徽章 + 新反馈弹窗
+  const [openFeedbackCount, setOpenFeedbackCount] = useState(0)
+  const [latestFeedbackId, setLatestFeedbackId] = useState(0)
+  const [showNewFeedbackModal, setShowNewFeedbackModal] = useState(false)
+  const [latestFeedbackPreview, setLatestFeedbackPreview] = useState<{ id: number; student_name: string | null; description: string; category: string; created_at: string | null } | null>(null)
+  const FEEDBACK_LAST_SEEN_KEY = 'admin-feedback-last-seen-id'
   
+  useEffect(() => {
+    let cancelled = false
+    async function pollFeedbackStats() {
+      try {
+        const data = await apiRequest<{ open_count: number; latest_id: number }>('/api/v1/admin/feedback/stats')
+        if (cancelled) return
+        setOpenFeedbackCount(data.open_count)
+        setLatestFeedbackId(data.latest_id)
+        const lastSeen = Number(localStorage.getItem(FEEDBACK_LAST_SEEN_KEY) || '0')
+        if (data.latest_id > lastSeen && data.latest_id > 0) {
+          try {
+            const detail = await apiRequest<{ list: { id: number; student_name: string | null; description: string; category: string; created_at: string | null }[] }>(
+              '/api/v1/admin/feedback?page=1&size=1',
+            )
+            const first = detail.list[0]
+            if (first && !cancelled) {
+              setLatestFeedbackPreview(first)
+              setShowNewFeedbackModal(true)
+            }
+          } catch {
+            // 仅在无法取到详情时静默失败，不影响铃铛徽章
+          }
+        }
+      } catch {
+        // 静默失败
+      }
+    }
+    pollFeedbackStats()
+    const id = setInterval(pollFeedbackStats, 20000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
+
+  function markFeedbackSeen() {
+    localStorage.setItem(FEEDBACK_LAST_SEEN_KEY, String(latestFeedbackId))
+  }
+
+  function goToFeedbackPage() {
+    setActiveNav('feedback')
+    setShowNewFeedbackModal(false)
+    markFeedbackSeen()
+  }
+
   const [skillFilter, setSkillFilter] = useState('all')
   const [skills, setSkills] = useState<SkillRecord[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
@@ -684,6 +743,7 @@ export function AdminHomePage() {
     { key: 'mcp', icon: <IconSafe />, label: 'MCP 广场' },
     { key: 'skills', icon: <IconApps />, label: 'Skills 广场' },
     { key: 'knowledge', icon: <IconHistory />, label: '知识库' },
+    { key: 'feedback', icon: <IconBug />, label: '用户反馈' },
     { key: 'settings', icon: <IconSettings />, label: '系统设置' },
   ]
 
@@ -977,7 +1037,14 @@ export function AdminHomePage() {
           <strong>CareerForge AI Platform</strong>
           <div className="admin-topbar-actions">
             <Input className="admin-search" placeholder="Search..." allowClear />
-            <Button icon={<IconNotification />} type="text" />
+            <Badge count={openFeedbackCount} maxCount={99} offset={[-2, 2]}>
+              <Button
+                icon={<IconNotification />}
+                type="text"
+                className="admin-bell"
+                onClick={() => { setActiveNav('feedback'); markFeedbackSeen() }}
+              />
+            </Badge>
             <Button icon={<IconSettings />} type="text" onClick={() => setActiveNav("settings")} />
             <Dropdown
               droplist={
@@ -1084,6 +1151,7 @@ export function AdminHomePage() {
               })
             : null}
           {activeNav === 'knowledge' ? renderKnowledgePage(openDrawer) : null}
+          {activeNav === 'feedback' ? <FeedbackPage /> : null}
           {activeNav === 'settings' ? renderSettingsPage(displayName, email, avatarUrl, avatarKey, setAvatarKey, logout) : null}
         </main>
       </section>
@@ -1114,6 +1182,34 @@ export function AdminHomePage() {
         agentOptionsLoading={agentOptionsLoading}
         onClose={() => setDrawerVisible(false)}
       />
+      <Modal
+        title="收到新的用户反馈"
+        visible={showNewFeedbackModal}
+        onCancel={() => { setShowNewFeedbackModal(false); markFeedbackSeen() }}
+        onOk={goToFeedbackPage}
+        okText="前往查看"
+        cancelText="稍后处理"
+        maskClosable={false}
+      >
+        {latestFeedbackPreview ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ color: '#4e5969' }}>
+              <strong>{latestFeedbackPreview.student_name || '匿名用户'}</strong>
+              <span style={{ marginLeft: 8 }}>提交了新的反馈</span>
+            </div>
+            <div style={{ padding: 12, background: '#f7f8fa', borderRadius: 8, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              {latestFeedbackPreview.description}
+            </div>
+            {latestFeedbackPreview.created_at ? (
+              <div style={{ color: '#86909c', fontSize: 12 }}>
+                {new Date(latestFeedbackPreview.created_at).toLocaleString('zh-CN')}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div>有新的用户反馈待处理</div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -1165,6 +1261,7 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
           ))}
         </div>
       </section>
+
     </div>
   )
 }

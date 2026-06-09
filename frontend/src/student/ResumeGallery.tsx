@@ -1,5 +1,5 @@
 import { Button, Message, Popconfirm, Typography, Modal } from '@arco-design/web-react'
-import { IconArrowLeft, IconDownload, IconDelete, IconUpload, IconZoomIn } from '@arco-design/web-react/icon'
+import { IconArrowLeft, IconDownload, IconDelete, IconFile, IconUpload, IconZoomIn } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
 
@@ -13,7 +13,7 @@ function getUrl(storedPath: string) {
   return '/data/' + (idx >= 0 ? storedPath.slice(idx) : storedPath.split('/').pop())
 }
 
-export function ResumeGallery({ onBack }: { onBack?: () => void }) {
+export function ResumeGallery({ onBack, embedded = false }: { onBack?: () => void; embedded?: boolean }) {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -31,7 +31,7 @@ export function ResumeGallery({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => { fetchAttachments() }, [])
 
-  const pdfFiles = attachments.filter(a => a.file_ext === 'pdf')
+  const pdfFiles = attachments.filter(a => ['pdf', 'doc', 'docx'].includes(a.file_ext))
 
   const handleDownload = (att: Attachment) => {
     const a = document.createElement('a')
@@ -49,8 +49,8 @@ export function ResumeGallery({ onBack }: { onBack?: () => void }) {
   }
 
   const doUpload = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      Message.error('只支持 PDF 格式')
+    if (!/\.(pdf|doc|docx)$/i.test(file.name)) {
+      Message.error('简历仅支持 PDF / Word（.docx/.doc）')
       return
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -87,15 +87,22 @@ export function ResumeGallery({ onBack }: { onBack?: () => void }) {
   }
 
   return (
-    <div style={{ width: '100%', padding: '0 28px 40px', overflowY:'auto', maxHeight:'calc(100vh - 120px)' }}>
+    <div
+      style={{
+        width: '100%',
+        padding: embedded ? '8px 0 12px' : '0 28px 40px',
+        overflowY: 'auto',
+        maxHeight: embedded ? 'none' : 'calc(100vh - 120px)',
+      }}
+    >
       <div style={{ display:'flex', alignItems:'center', gap:12, padding:'20px 0 16px' }}>
         {onBack && <Button type="text" icon={<IconArrowLeft/>} onClick={onBack} style={{padding:0}}/>}
-        <Typography.Title heading={4} style={{margin:0}}>我的简历</Typography.Title>
+        {!embedded && <Typography.Title heading={4} style={{margin:0}}>我的简历</Typography.Title>}
         <div style={{flex:1}}/>
         <Button size="small" onClick={fetchAttachments} loading={loading}>刷新</Button>
         <Button type="primary" size="small" icon={<IconUpload/>} loading={uploading}
           onClick={() => fileRef.current?.click()}>上传简历</Button>
-        <input ref={fileRef} type="file" accept=".pdf" hidden onChange={handleFileSelect}/>
+        <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" hidden onChange={handleFileSelect}/>
       </div>
 
       <div onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
@@ -132,15 +139,23 @@ export function ResumeGallery({ onBack }: { onBack?: () => void }) {
             }}
               onMouseEnter={e => {e.currentTarget.style.transform='translateY(-2px)';e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'}}
               onMouseLeave={e => {e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.06)'}}>
-              <div style={{height:260,background:'#f5f5f5',position:'relative',cursor:'pointer',overflow:'hidden'}}
-                onClick={() => setPreviewPdf(getUrl(att.stored_path))}>
-                <embed src={getUrl(att.stored_path)} type="application/pdf"
-                  style={{width:'100%',height:'100%',pointerEvents:'none'}} />
-                <div style={{position:'absolute',top:8,right:8,width:32,height:32,borderRadius:'50%',
-                  background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <IconZoomIn style={{fontSize:16,color:'#fff'}}/>
+              {att.file_ext === 'pdf' ? (
+                <div style={{height:260,background:'#f5f5f5',position:'relative',cursor:'pointer',overflow:'hidden'}}
+                  onClick={() => setPreviewPdf(getUrl(att.stored_path))}>
+                  <embed src={getUrl(att.stored_path)} type="application/pdf"
+                    style={{width:'100%',height:'100%',pointerEvents:'none'}} />
+                  <div style={{position:'absolute',top:8,right:8,width:32,height:32,borderRadius:'50%',
+                    background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    <IconZoomIn style={{fontSize:16,color:'#fff'}}/>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={{height:260,background:'linear-gradient(135deg,#eef2ff,#e8f0fe)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10,cursor:'pointer'}}
+                  onClick={() => handleDownload(att)}>
+                  <IconFile style={{fontSize:48,color:'#2b6cff'}}/>
+                  <span style={{fontSize:13,color:'#4e5969'}}>Word 文档 · 点击下载查看</span>
+                </div>
+              )}
               <div style={{padding:'14px 16px'}}>
                 <div style={{fontSize:14,fontWeight:600,overflow:'hidden',
                   textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:6}}>
