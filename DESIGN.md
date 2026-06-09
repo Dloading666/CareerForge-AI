@@ -215,7 +215,8 @@ for _ in range(max_iterations):           # max_iterations 来自配置（默认
 - `get_session_context` — 回溯会话
 - `export_resume_pdf` — 生成可下载简历 PDF（见 §6.4）
 - `skill__<slug>` — 每个启用的 Skill（调用时把 SKILL.md 内容回灌，progressive disclosure）
-- `subagent__<key>` — 每条启用的路由规则一个工具，`intent` 即工具描述（见 §6.6）。`builtin` 在独立上下文真实跑平台智能体（`_run_builtin_subagent` + `_oneshot_llm`），`dify` 调 Dify；只回流结果摘要
+
+> **主智能体不调用子智能体（2026-06 决策，见 §6.6）**：工具池只有内置工具 + Skill。
 
 **SSE 事件**：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.completed` / `done` / `attachment.created`（生成文件下载入口）。
 
@@ -233,13 +234,18 @@ for _ in range(max_iterations):           # max_iterations 来自配置（默认
 
 ### 6.6 子智能体路由（规划中接入主循环）
 
-`master_route_rule` 是主智能体的子智能体注册表：`intent`(工具描述) + `target_provider`(builtin/dify) + `provider_config_json`。管理端配置 Dify 智能体时 `_sync_dify_route()` 自动同步成一条路由规则。
+**设计决策（2026-06）：主智能体与子智能体解耦。** 按「任务型 vs 体验型」划分：
 
-**已接入主循环**：每条启用的路由规则在 `assemble_active_tools()` 里被暴露为一个 `subagent__<key>` 工具，描述即 `intent`，模型自主决定何时派发。执行时：
-- `builtin` → `_run_builtin_subagent()` 用 `_resolve_builtin_agent()` 把 `target_agent_key`（数字 id / category / 语义别名 interview·matching·resume）解析到平台 `agent`，在**独立上下文**里用其 system prompt + 模型跑一轮（`_oneshot_llm`），只回流结果摘要——不再是占位编造。
-- `dify` → `_call_dify_subagent()` 调 Dify `/chat-messages` 等端点 blocking 模式。
+| 形态 | 例子 | 归属 |
+|------|------|------|
+| 任务型（一次性、无状态、输入→输出） | 简历优化、岗位匹配 | **Skill**，由主智能体在循环里编排 |
+| 体验型（多轮、有人格、有状态） | AI 面试官、职业规划师、岗位推荐师 | **智能体广场的独立 `Agent`**，学生直接进入流式对话 |
 
-子智能体在 `strict` 权限模式下会被拒绝（仅放行平台内置工具）。`memory_isolation`/`model_passthrough`/记忆策略目前未细化消费，是后续增强点。
+技术理由：把有状态的多轮人格压成「工具调一次返回摘要」会毁掉其核心价值（如面试的一问一答一追问）。因此主循环**不再暴露 `subagent__*` 工具**；`_harness_system_prompt()` 让主智能体在遇到此类需求时**引导学生去广场**，而非自己扮演。
+
+子智能体的实际入口：**智能体广场（`AgentPlaza`）卡片「去使用」→ `StudentAgentChat` 流式对话**，后端 `POST /agents/{id}/chat/stream`（direct LLM 真流式 / Dify blocking 整段下发）。
+
+`master_route_rule`（`intent` + `target_provider` + `provider_config_json`）与 `_sync_dify_route()` 仍保留，但**当前主循环不消费**；可作为未来「主动委派」能力的接入点。
 
 ---
 

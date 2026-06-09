@@ -179,6 +179,36 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         },
         metadata={"kind": "resume", "risk": "low"},
     ),
+    ToolDefinition(
+        name="read_webpage",
+        description="读取指定 URL 的网页内容，返回 Markdown 格式的正文。适用于学生发送链接、需要查看招聘信息、公司官网等场景。",
+        source="builtin",
+        priority=900,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "要读取的网页 URL"},
+                "max_length": {"type": "integer", "description": "返回内容最大字符数，默认 5000"},
+            },
+            "required": ["url"],
+        },
+        metadata={"kind": "web"},
+    ),
+    ToolDefinition(
+        name="web_search",
+        description="联网搜索关键词，返回搜索结果摘要。适用于查询公司背景、行业动态、岗位信息等需要实时网络数据的场景。",
+        source="builtin",
+        priority=895,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词"},
+                "num_results": {"type": "integer", "description": "返回结果数量，默认 5"},
+            },
+            "required": ["query"],
+        },
+        metadata={"kind": "web"},
+    ),
 ]
 
 
@@ -923,7 +953,8 @@ def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, 
         "tool": tool.name,
         "skill_slug": tool.metadata.get("slug"),
         "summary": f"已调用 Skill：{skill_name}，处理「{str(arguments.get('task') or '')[:30]}」。",
-        "skill_content": str(tool.metadata.get("content") or "")[:1600],
+        # Skill 是「渐进式披露」的操作手册，调用时应把完整正文加载进上下文（不是 1600 字的缩略）
+        "skill_content": str(tool.metadata.get("content") or "")[:12000],
         "description": tool.description,
     }
 
@@ -971,6 +1002,103 @@ def _invoke_mcp_placeholder(tool: ToolDefinition) -> dict[str, Any]:
         "summary": "已探索 MCP 工具池（管理端接入具体 MCP 服务后动态发现）。",
         "adapter": "reserved",
         "supported_transports": ["stdio", "sse", "streamable_http"],
+    }
+
+
+# ── Web tools (Jina Reader) ───────────────────────────────────────────────────
+
+
+def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """通过 Jina Reader 读取网页内容，返回 Markdown。"""
+    url = str(args.get("url") or "").strip()
+    if not url:
+        return {"status": "failed", "tool": "read_webpage", "summary": "缺少 url 参数。"}
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    max_length = int(args.get("max_length") or 5000)
+
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+            resp.raise_for_status()
+            content = resp.text[:max_length]
+        return {
+            "status": "completed",
+            "tool": "read_webpage",
+            "summary": f"已读取网页内容（{len(content)} 字符）。",
+            "url": url,
+            "content": content,
+        }
+    except httpx.TimeoutException:
+        return {"status": "failed", "tool": "read_webpage", "summary": f"读取超时：{url}"}
+    except httpx.HTTPStatusError as exc:
+        return {"status": "failed", "tool": "read_webpage", "summary": f"HTTP {exc.response.status_code}：{url}"}
+    except Exception as exc:
+        return {"status": "failed", "tool": "read_webpage", "summary": f"读取失败：{exc}"}
+
+
+def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """联网搜索关键词。优先用 Jina Search API（需 JINA_API_KEY），否则通过 Jina Reader 抓 DuckDuckGo 结果页。"""
+    import os
+    from urllib.parse import quote_plus
+
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"status": "failed", "tool": "web_search", "summary": "缺少 query 参数。"}
+
+    jina_key = os.environ.get("JINA_API_KEY", "")
+
+    # 方式一：Jina Search API（需 API Key）
+    if jina_key:
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                resp = client.get(
+                    f"https://s.jina.ai/{query}",
+                    headers={"Accept": "text/plain", "Authorization": f"Bearer {jina_key}"},
+                )
+                resp.raise_for_status()
+                content = resp.text[:8000]
+            return {
+                "status": "completed",
+                "tool": "web_search",
+                "summary": f"已搜索「{query}」。",
+                "query": query,
+                "content": content,
+            }
+        except Exception:
+            pass  # 回退到方式二
+
+    # 方式二：通过 Jina Reader 抓 DuckDuckGo 搜索结果页（免费）
+    try:
+        ddg_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+        jina_url = f"https://r.jina.ai/{ddg_url}"
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+            resp.raise_for_status()
+            content = resp.text[:8000]
+        if not content.strip():
+            raise ValueError("空内容")
+        return {
+            "status": "completed",
+            "tool": "web_search",
+            "summary": f"已搜索「{query}」（DuckDuckGo）。",
+            "query": query,
+            "content": content,
+        }
+    except Exception:
+        pass  # 回退到方式三
+
+    # 方式三：回退到 read_webpage，让模型用已知 URL 自行补充
+    return {
+        "status": "partial",
+        "tool": "web_search",
+        "summary": (
+            f"无法直接搜索「{query}」。建议：请学生提供具体网址，使用 read_webpage 工具读取；"
+            "或在回复中引导学生自行搜索后粘贴链接。"
+        ),
+        "query": query,
+        "fallback_hint": "read_webpage",
     }
 
 
@@ -1390,6 +1518,8 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "analyze_uploaded_file",
     "get_session_context",
     "export_resume_pdf",
+    "read_webpage",
+    "web_search",
 )
 
 
@@ -1420,53 +1550,10 @@ def assemble_active_tools(db: Session, identity: AuthIdentity) -> list[ToolDefin
             metadata=data,
         )
 
-    for tool in _assemble_subagent_tools(db, identity):
-        if tool.name not in pool:
-            pool[tool.name] = tool
-
+    # 设计决策（2026-06）：主智能体不再调用子智能体。任务型能力（简历优化/岗位匹配）做成
+    # Skill 由主智能体编排；沉浸型人格（AI 面试官/职业规划师/岗位推荐师）放在「智能体广场」，
+    # 由学生直接进入多轮对话——把有状态人格压成一次性工具调用会毁掉其多轮体验。
     return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
-
-
-def _assemble_subagent_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    """把每条启用的 MasterRouteRule 暴露成一个命名子智能体工具——`intent` 即工具描述，
-    模型在循环中自主决定何时派发。只暴露能真实执行的（builtin 跑平台智能体、dify 调 Dify）。"""
-    routes = list(
-        db.scalars(
-            select(MasterRouteRule)
-            .where(MasterRouteRule.tenant_id == identity.tenant_id, MasterRouteRule.enabled.is_(True))
-            .order_by(MasterRouteRule.priority.desc(), MasterRouteRule.id.asc())
-        ).all()
-    )
-    tools: list[ToolDefinition] = []
-    for route in routes:
-        name = "subagent__" + _tool_safe_name(route.target_agent_key)
-        intent = (route.intent or route.target_agent_name or "子智能体").strip()
-        tools.append(
-            ToolDefinition(
-                name=name,
-                description=f"{intent}（子智能体：{route.target_agent_name}）",
-                source="subagent",
-                priority=800,
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "交给该子智能体的完整任务，需自带必要上下文（如简历正文、岗位 JD），子智能体看不到主对话历史。",
-                        }
-                    },
-                    "required": ["task"],
-                },
-                metadata={
-                    "kind": "subagent",
-                    "route_id": route.id,
-                    "agent_key": route.target_agent_key,
-                    "agent_name": route.target_agent_name,
-                    "provider": route.target_provider,
-                },
-            )
-        )
-    return tools
 
 
 def _build_openai_tools(tool_defs: list[ToolDefinition]) -> list[dict[str, Any]]:
@@ -1496,6 +1583,11 @@ def _harness_system_prompt(config: Any, reasoning_effort: str) -> str:
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF，然后把工具返回的 download_url 以 "
         "Markdown 链接形式给学生，例如：[点击下载优化后的简历](下载链接)。\n"
+        "- 沉浸式专家：当学生需要『模拟面试 / AI 面试官』『职业规划咨询』『岗位推荐』等多轮、有人格的沉浸体验时，"
+        "你不要自己扮演，而是引导学生前往『智能体广场』进入对应的专属智能体（那里才是多轮对话的入口）。\n"
+        "- 联网工具：当学生发来 URL 链接或需要查看网页内容时，调用 read_webpage 读取；"
+        "当需要搜索公司信息、行业动态等实时数据时，调用 web_search 搜索。"
+        "如果搜索失败，引导学生自行搜索后粘贴链接，再用 read_webpage 读取。\n"
         "- 输出规范：使用 Markdown，先结论后步骤；不要输出工具调用的原始 JSON、tool_call 或隐藏推理过程。\n"
         f"- 推理强度：{effort}"
     )
@@ -1791,8 +1883,6 @@ async def _dispatch_tool(
     # 未知工具：返回结构化错误让模型自我纠正，而不是崩溃。
     if td is None:
         return {"status": "failed", "tool": name, "summary": f"未知工具「{name}」，已忽略。请只调用系统提供的工具。"}
-    if td.metadata.get("kind") == "subagent":
-        return await _dispatch_subagent(db, identity, td, args)
     if td.source == "skill":
         return _invoke_skill(td, args)
     if name == "query_student_profile":
@@ -1805,6 +1895,10 @@ async def _dispatch_tool(
         return _get_session_context(db, session, int(args.get("limit") or 8))
     if name == "export_resume_pdf":
         return _export_resume_pdf_tool(db, identity, session, assistant_message, args)
+    if name == "read_webpage":
+        return _read_webpage_tool(args)
+    if name == "web_search":
+        return _web_search_tool(args)
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
@@ -1856,127 +1950,6 @@ def _permission_decision(mode: str, name: str, td: Optional[ToolDefinition]) -> 
             "请先向学生说明将要执行的动作并征得同意。",
         )
     return "allow", ""
-
-
-# ── 子智能体派发（Coordinator → sub-agent）───────────────────────────────────────
-
-
-async def _dispatch_subagent(
-    db: Session, identity: AuthIdentity, td: ToolDefinition, args: dict[str, Any]
-) -> dict[str, Any]:
-    route_id = td.metadata.get("route_id")
-    route = db.get(MasterRouteRule, route_id) if route_id else None
-    if not route or not route.enabled or route.tenant_id != identity.tenant_id:
-        return {"status": "failed", "tool": td.name, "summary": f"子智能体「{td.metadata.get('agent_name')}」已不可用。"}
-
-    task = str(args.get("task") or "").strip()
-    if not task:
-        return {"status": "failed", "tool": td.name, "summary": "调用子智能体需要提供 task（要交办的完整任务）。"}
-
-    if route.target_provider == "dify":
-        result = await _call_dify_subagent(route, task, f"student-{identity.user_id}")
-    else:
-        result = await _run_builtin_subagent(db, route, task)
-    result.setdefault("tool", td.name)
-    result.setdefault("agent_name", route.target_agent_name)
-    return result
-
-
-def _resolve_builtin_agent(db: Session, key: str) -> Optional[Agent]:
-    """把路由的 target_agent_key 解析到平台 Agent。兼容三种写法：
-    数字 id、category（如 interview）、或语义别名（matching→岗位匹配、resume→简历优化）。"""
-    key = (key or "").strip()
-    if not key:
-        return None
-    if key.isdigit():
-        agent = db.get(Agent, int(key))
-        return agent if agent and not agent.is_deleted else None
-    agent = db.scalar(
-        select(Agent).where(Agent.category == key, Agent.is_deleted.is_(False)).order_by(Agent.id.asc())
-    )
-    if agent:
-        return agent
-    aliases = {
-        "interview": ["面试"],
-        "matching": ["匹配", "岗位"],
-        "resume": ["简历"],
-        "career": ["测评", "规划", "职业"],
-    }
-    for keyword in aliases.get(key.lower(), [key]):
-        agent = db.scalar(
-            select(Agent).where(Agent.name.ilike(f"%{keyword}%"), Agent.is_deleted.is_(False)).order_by(Agent.id.asc())
-        )
-        if agent:
-            return agent
-    return None
-
-
-async def _run_builtin_subagent(db: Session, route: MasterRouteRule, task: str) -> dict[str, Any]:
-    """真实执行平台内置子智能体：在独立上下文里用该智能体的 system prompt + 模型跑一轮，
-    只把结果摘要回流主对话（不再返回编造的占位摘要）。"""
-    agent = _resolve_builtin_agent(db, route.target_agent_key)
-    if not agent or not agent.is_enabled:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{route.target_agent_name}」不存在或已停用。"}
-    if agent.use_dify:
-        return {
-            "status": "failed",
-            "provider": "builtin",
-            "summary": f"子智能体「{agent.name}」配置为 Dify 应用，请在路由里改用 Dify provider 接入。",
-        }
-
-    model = db.get(ModelConfig, agent.model_config_id) if agent.model_config_id else None
-    if not model or model.is_deleted or not model.api_key_cipher:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{agent.name}」未配置可用模型。"}
-
-    system_prompt = (agent.system_prompt or f"你是{agent.name}。").strip()
-    reply = await _oneshot_llm(
-        model, system_prompt, task,
-        temperature=agent.temperature, max_tokens=agent.max_tokens,
-    )
-    if not reply:
-        return {"status": "failed", "provider": "builtin", "summary": f"子智能体「{agent.name}」未返回结果。"}
-    return {
-        "status": "completed",
-        "provider": "builtin",
-        "agent_name": agent.name,
-        "summary": reply[:1800],
-    }
-
-
-async def _oneshot_llm(
-    model: ModelConfig,
-    system_prompt: str,
-    user_text: str,
-    *,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-) -> str:
-    """非流式单轮调用 OpenAI 兼容 /chat/completions，返回正文。失败返回空串。"""
-    try:
-        api_key = decrypt_api_key(model.api_key_cipher or "")
-        payload = {
-            "model": model.model_identifier,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text},
-            ],
-            "temperature": temperature if temperature is not None else (model.default_temp if model.default_temp is not None else 0.7),
-            "max_tokens": max_tokens or model.max_output or 2048,
-            "stream": False,
-        }
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 60, write=30, pool=5)
-        ) as client:
-            response = await client.post(
-                f"{model.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return str((data.get("choices") or [{}])[0].get("message", {}).get("content") or "").strip()
-    except Exception:
-        return ""
 
 
 # ── Resume tools ────────────────────────────────────────────────────────────────
@@ -2069,6 +2042,22 @@ def _attachment_download_url(stored_path: Path | str) -> str:
     return "/data/" + (s[idx:] if idx >= 0 else Path(s).name)
 
 
+def _resolve_student_photo(db: Session, identity: AuthIdentity) -> Optional[str]:
+    """解析学生头像的本地文件路径，用于简历照片；找不到/非图片则返回 None。"""
+    student = db.get(StudentUser, identity.user_id)
+    avatar_url = getattr(student, "avatar_url", None) if student else None
+    if not avatar_url:
+        return None
+    name = Path(str(avatar_url)).name
+    if Path(name).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        return None
+    for base in ("/app/data/avatars", "data/avatars", "./data/avatars"):
+        candidate = Path(base) / name
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 def _export_resume_pdf_tool(
     db: Session,
     identity: AuthIdentity,
@@ -2085,9 +2074,10 @@ def _export_resume_pdf_tool(
     storage_dir = Path(settings.agent_upload_storage_dir) / str(identity.tenant_id) / str(identity.user_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
     stored_path = storage_dir / f"{uuid.uuid4().hex}.pdf"
+    photo_path = _resolve_student_photo(db, identity)
 
     try:
-        _render_resume_pdf(markdown, stored_path, title=Path(filename).stem)
+        _render_resume_pdf(markdown, stored_path, title=Path(filename).stem, photo_path=photo_path)
     except Exception as exc:  # noqa: BLE001
         return {"status": "failed", "tool": "export_resume_pdf", "summary": f"PDF 生成失败：{str(exc)[:160]}"}
 
@@ -2169,49 +2159,226 @@ def _register_cjk_font() -> str:
         return "Helvetica"
 
 
-def _render_resume_pdf(markdown_text: str, out_path: Path, title: str = "个人简历") -> None:
-    """Render a Markdown-ish resume into a PDF with an embedded CJK font."""
+_ACCENT = "#34507A"  # 板块标题左侧竖条 / 图标 的主题色
+
+
+def _contact_icon_kind(text: str) -> str:
+    """根据联系方式文本推断图标类型。"""
+    import re
+    t = (text or "").strip()
+    low = t.lower()
+    if "@" in t:
+        return "mail"
+    if low.startswith("http") or "www." in low or "://" in low:
+        return "globe"
+    if re.match(r"^\d{4}[-/.]\d{1,2}", t):
+        return "calendar"
+    if any(k in t for k in ("离职", "在职", "求职", "在校", "应届", "实习", "全职", "兼职")):
+        return "briefcase"
+    if re.fullmatch(r"[\d\-\s+()]{7,}", t):
+        return "phone"
+    return "pin"
+
+
+def _resume_icon(kind: str, color: str):
+    """用矢量图形画一个 12x12 的简约线性图标。"""
+    from reportlab.graphics.shapes import Circle, Drawing, Ellipse, Line, Polygon, Rect
+
+    d = Drawing(12, 12)
+    sw = 0.9
+
+    def rect(x, y, w, h, **kw):
+        return Rect(x, y, w, h, strokeColor=color, strokeWidth=sw, fillColor=None, **kw)
+
+    def line(x1, y1, x2, y2):
+        return Line(x1, y1, x2, y2, strokeColor=color, strokeWidth=sw)
+
+    def circ(cx, cy, r):
+        return Circle(cx, cy, r, strokeColor=color, strokeWidth=sw, fillColor=None)
+
+    if kind == "mail":
+        d.add(rect(1, 2.5, 10, 7))
+        d.add(line(1, 9.5, 6, 5.8)); d.add(line(11, 9.5, 6, 5.8))
+    elif kind == "phone":
+        d.add(rect(3.3, 1, 5.4, 10, rx=1.2, ry=1.2))
+        d.add(line(5, 2.3, 7, 2.3))
+    elif kind == "calendar":
+        d.add(rect(1, 1.5, 10, 8.5))
+        d.add(line(1, 7.6, 11, 7.6))
+        d.add(line(3.6, 9.8, 3.6, 11.4)); d.add(line(8.4, 9.8, 8.4, 11.4))
+    elif kind == "briefcase":
+        d.add(rect(1, 2.3, 10, 6.6))
+        d.add(rect(4.2, 8.6, 3.6, 1.8))
+        d.add(line(1, 5.3, 11, 5.3))
+    elif kind == "globe":
+        d.add(circ(6, 6, 5))
+        d.add(line(1, 6, 11, 6))
+        d.add(Ellipse(6, 6, 2.3, 5, strokeColor=color, strokeWidth=sw, fillColor=None))
+    else:  # pin
+        d.add(circ(6, 8, 3.1))
+        d.add(Polygon([3.4, 6.6, 8.6, 6.6, 6, 1], strokeColor=color, strokeWidth=sw, fillColor=None))
+        d.add(circ(6, 8, 1.1))
+    return d
+
+
+def _render_resume_pdf(
+    markdown_text: str, out_path: Path, title: str = "个人简历", photo_path: Optional[str] = None
+) -> None:
+    """把约定格式的 Markdown 简历渲染成「专业模板」PDF：左上照片 + 姓名 + 带图标的两列联系方式，
+    蓝色竖条 + 灰底的板块标题，三栏对齐（标题/角色/日期）的经历条目，要点带项目符号。
+    不符合约定的内容会按通用 Markdown 优雅降级，永不报错。
+    """
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     font_name = _register_cjk_font()
+    accent = colors.HexColor(_ACCENT)
+    content_w = A4[0] - 32 * mm  # 左右各 16mm 边距
 
-    body = ParagraphStyle("body", fontName=font_name, fontSize=10.5, leading=16, spaceAfter=4)
-    h1 = ParagraphStyle("h1", fontName=font_name, fontSize=18, leading=24, spaceBefore=2, spaceAfter=8)
-    h2 = ParagraphStyle(
-        "h2", fontName=font_name, fontSize=13, leading=18, spaceBefore=10, spaceAfter=4,
-        textColor=colors.HexColor("#1565C0"),
-    )
-    h3 = ParagraphStyle("h3", fontName=font_name, fontSize=11.5, leading=16, spaceBefore=6, spaceAfter=2)
-    bullet = ParagraphStyle("bullet", fontName=font_name, fontSize=10.5, leading=16, leftIndent=12, spaceAfter=2)
+    name_st = ParagraphStyle("name", fontName=font_name, fontSize=20, leading=25)
+    title_st = ParagraphStyle("title", fontName=font_name, fontSize=10.5, leading=15, textColor=colors.HexColor("#666666"))
+    contact_st = ParagraphStyle("contact", fontName=font_name, fontSize=9, leading=13, textColor=colors.HexColor("#444444"))
+    sec_st = ParagraphStyle("sec", fontName=font_name, fontSize=11.5, leading=15, textColor=colors.HexColor("#1F2937"))
+    entry_l = ParagraphStyle("el", fontName=font_name, fontSize=10.5, leading=14)
+    entry_m = ParagraphStyle("em", fontName=font_name, fontSize=10, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#444444"))
+    entry_r = ParagraphStyle("er", fontName=font_name, fontSize=9.5, leading=14, alignment=TA_RIGHT, textColor=colors.HexColor("#666666"))
+    body = ParagraphStyle("body", fontName=font_name, fontSize=9.8, leading=15, spaceAfter=2)
+    bullet = ParagraphStyle("bullet", fontName=font_name, fontSize=9.8, leading=15, leftIndent=10, spaceAfter=1)
 
+    no_pad = [
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]
+
+    lines = [ln.rstrip() for ln in markdown_text.splitlines()]
     flow: list[Any] = []
-    for raw in markdown_text.splitlines():
-        stripped = raw.strip()
-        if not stripped:
-            flow.append(Spacer(1, 4))
-            continue
-        if stripped in ("---", "***", "___"):
-            flow.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#BBBBBB"), spaceBefore=4, spaceAfter=6))
-        elif stripped.startswith("### "):
-            flow.append(Paragraph(_pdf_inline(stripped[4:]), h3))
-        elif stripped.startswith("## "):
-            flow.append(Paragraph(_pdf_inline(stripped[3:]), h2))
-        elif stripped.startswith("# "):
-            flow.append(Paragraph(_pdf_inline(stripped[2:]), h1))
-        elif stripped[:2] in ("- ", "* ") or stripped.startswith("• "):
-            flow.append(Paragraph("• " + _pdf_inline(stripped[2:].strip()), bullet))
+
+    # ── 头部：照片 + 姓名/职位 + 两列带图标联系方式 ──
+    idx = 0
+    name = None
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith("# ") and not ln.strip().startswith("## "):
+            name = ln.strip()[2:].strip()
+            idx = i + 1
+            break
+    if name:
+        extras: list[str] = []
+        while idx < len(lines) and len(extras) < 2:
+            s = lines[idx].strip()
+            if s.startswith("#"):
+                break
+            if s:
+                extras.append(s)
+            idx += 1
+        job_title = extras[0] if extras else ""
+        contacts = [c.strip() for c in extras[1].split("|") if c.strip()] if len(extras) > 1 else []
+
+        # 左：照片 + 姓名/职位
+        name_block = [Paragraph(_pdf_inline(name), name_st)]
+        if job_title:
+            name_block.append(Paragraph(_pdf_inline(job_title), title_st))
+        photo_flow = None
+        if photo_path:
+            try:
+                photo_flow = Image(photo_path, width=46, height=58)
+            except Exception:
+                photo_flow = None
+        if photo_flow is not None:
+            left_block: Any = Table([[photo_flow, name_block]], colWidths=[54, content_w * 0.42 - 54])
+            left_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
         else:
-            flow.append(Paragraph(_pdf_inline(stripped), body))
+            left_block = name_block
+
+        # 右：联系方式两列网格（图标 + 文本）
+        cell_w = content_w * 0.58 / 2
+        if contacts:
+            def contact_cell(text: str) -> Any:
+                icon = _resume_icon(_contact_icon_kind(text), _ACCENT)
+                inner = Table([[icon, Paragraph(_pdf_inline(text), contact_st)]], colWidths=[15, cell_w - 15])
+                inner.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad,
+                                           ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+                return inner
+            grid_rows: list[list[Any]] = []
+            for k in range(0, len(contacts), 2):
+                grid_rows.append([
+                    contact_cell(contacts[k]),
+                    contact_cell(contacts[k + 1]) if k + 1 < len(contacts) else "",
+                ])
+            right_block: Any = Table(grid_rows, colWidths=[cell_w, cell_w])
+            right_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
+        else:
+            right_block = Paragraph("", contact_st)
+
+        header = Table([[left_block, right_block]], colWidths=[content_w * 0.42, content_w * 0.58])
+        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad]))
+        flow.append(header)
+        flow.append(Spacer(1, 8))
+        flow.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#D0D0D0"), spaceAfter=2))
+        rest = lines[idx:]
+    else:
+        rest = lines  # 没有约定头部 → 整体走通用渲染
+
+    def section_bar(text: str) -> Table:
+        # 左侧蓝色竖条 + 灰底标题
+        t = Table([["", Paragraph(f"<b>{_pdf_inline(text)}</b>", sec_st)]], colWidths=[3.5, content_w - 3.5])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, 0), accent),
+            ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#ECEDEF")),
+            ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 9), ("RIGHTPADDING", (1, 0), (1, 0), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return t
+
+    def entry_row(text: str) -> Any:
+        parts = [p.strip() for p in text.split("|")]
+        if len(parts) == 1:
+            return Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l)
+        if len(parts) == 2:
+            cells = [[Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l), Paragraph(_pdf_inline(parts[1]), entry_r)]]
+            widths = [content_w * 0.7, content_w * 0.3]
+        else:
+            cells = [[
+                Paragraph(f"<b>{_pdf_inline(parts[0])}</b>", entry_l),
+                Paragraph(_pdf_inline(parts[1]), entry_m),
+                Paragraph(_pdf_inline(parts[2]), entry_r),
+            ]]
+            widths = [content_w * 0.52, content_w * 0.26, content_w * 0.22]
+        t = Table(cells, colWidths=widths)
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), *no_pad,
+            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        return t
+
+    for raw in rest:
+        s = raw.strip()
+        if not s:
+            flow.append(Spacer(1, 3))
+        elif s in ("---", "***", "___"):
+            flow.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#DDDDDD"), spaceBefore=2, spaceAfter=4))
+        elif s.startswith("## "):
+            flow.append(Spacer(1, 6))
+            flow.append(section_bar(s[3:]))
+            flow.append(Spacer(1, 3))
+        elif s.startswith("### "):
+            flow.append(entry_row(s[4:]))
+        elif s.startswith("# "):
+            flow.append(Paragraph(f"<b>{_pdf_inline(s[2:])}</b>", name_st))
+        elif s[:2] in ("- ", "* ") or s.startswith("• "):
+            flow.append(Paragraph("• " + _pdf_inline(s[2:].strip()), bullet))
+        else:
+            flow.append(Paragraph(_pdf_inline(s), body))
 
     if not flow:
-        flow.append(Paragraph(_pdf_inline(title), h1))
+        flow.append(Paragraph(_pdf_inline(title), name_st))
 
     doc = SimpleDocTemplate(
         str(out_path), pagesize=A4,
-        leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=18 * mm, title=title,
+        leftMargin=16 * mm, rightMargin=16 * mm, topMargin=16 * mm, bottomMargin=14 * mm, title=title,
     )
     doc.build(flow)

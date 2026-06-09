@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Tooltip } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Input, Menu, Modal, Popconfirm, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconApps,
   IconAttachment,
@@ -27,11 +27,9 @@ import {
 } from '@arco-design/web-react/icon'
 import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-
 import { ApiError, apiRequest } from '../shared/api'
 import { AnnouncementBellDropdown, AnnouncementBanner } from './StudentAnnouncementBar'
+import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { AgentPlaza } from './AgentPlaza'
 import { ProfilePage } from './ProfilePage'
 import { useAuth } from '../shared/auth'
@@ -395,7 +393,7 @@ function AssistantMessage({
 
         {message.content ? (
           <div className="assistant-answer">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <MarkdownMessage content={message.content} />
             {pending && <span className="stream-cursor" />}
           </div>
         ) : (
@@ -430,35 +428,37 @@ function SessionHistoryPanel({
   }
 
   return (
-    <div className="side-nav-history-list">
-      {sessions.map((s) => (
-        <div
-          key={s.id}
-          role="button"
-          tabIndex={0}
-          className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
-          onClick={() => onSelect(s)}
-          title={s.title}
-        >
-          <IconHistory className="side-nav-history-item-icon" />
-          <span className="side-nav-history-item-title">{s.title}</span>
-          <Popconfirm
-            title="删除这条对话记录？"
-            okText="删除"
-            cancelText="取消"
-            onOk={() => onDelete(s)}
+    <>
+      <div className="side-nav-history-list">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            role="button"
+            tabIndex={0}
+            className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
+            onClick={() => onSelect(s)}
+            title={s.title}
           >
-            <span
-              className="side-nav-history-del"
-              title="删除"
-              onClick={(e) => e.stopPropagation()}
+            <IconHistory className="side-nav-history-item-icon" />
+            <span className="side-nav-history-item-title">{s.title}</span>
+            <Popconfirm
+              title="删除这条对话记录？"
+              okText="删除"
+              cancelText="取消"
+              onOk={() => onDelete(s)}
             >
-              <IconDelete />
-            </span>
-          </Popconfirm>
-        </div>
-      ))}
-    </div>
+              <span
+                className="side-nav-history-del"
+                title="删除"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <IconDelete />
+              </span>
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -479,6 +479,9 @@ export function StudentHomePage() {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [todayEvents, setTodayEvents] = useState<{ id: number; title: string; event_time: string | null }[]>([])
+  const [remindersDismissed, setRemindersDismissed] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [bootingAgent, setBootingAgent] = useState(false)
   const [streaming, setStreaming] = useState(false)
@@ -525,8 +528,37 @@ export function StudentHomePage() {
     if (node) node.scrollTop = node.scrollHeight
   }, [messages, activities, streaming])
 
+  // 今日日程提醒：登录后拉取今天的事件，顶部横幅提示
+  useEffect(() => {
+    if (!session?.access) return
+    let alive = true
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    apiRequest<{ id: number; title: string; event_time: string | null }[]>(
+      `/api/v1/student/events?date_from=${today}&date_to=${today}`,
+    )
+      .then((list) => {
+        if (alive) {
+          setTodayEvents(list ?? [])
+          setRemindersDismissed(false)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [session?.access])
+
   const loadHistory = useCallback(async (target: AgentSession) => {
-    const history = await apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${target.id}/messages`)
+    setHistoryLoading(true)
+    setMessages([])
+    setActivities([])
+    let history: AgentHistory
+    try {
+      history = await apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${target.id}/messages`)
+    } finally {
+      setHistoryLoading(false)
+    }
     setAgentSession(history.session)
     setMessages(history.messages)
     setActivities(history.activities)
@@ -805,6 +837,8 @@ export function StudentHomePage() {
   }
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 输入法组词中（如中文输入法打拼音）按 Enter 是「确认候选」，不能当作发送
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       void submitMessage()
@@ -1028,12 +1062,36 @@ export function StudentHomePage() {
 
         {activeNav === 'agent' && (
           <main className="page-content student-chat-page">
+            {!remindersDismissed && todayEvents.length > 0 && (
+              <div className="agent-reminder-banner">
+                <IconNotification style={{ fontSize: 16, flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  今天有 {todayEvents.length} 个日程：
+                  {todayEvents
+                    .slice(0, 3)
+                    .map((e) => `${e.event_time ? e.event_time.slice(0, 5) + ' ' : ''}${e.title}`)
+                    .join('、')}
+                  {todayEvents.length > 3 ? ' 等' : ''}
+                </span>
+                <button type="button" className="agent-reminder-close" onClick={() => setRemindersDismissed(true)}>
+                  <IconClose />
+                </button>
+              </div>
+            )}
             <div ref={threadRef} className="agent-thread">
               {bootingAgent && <div className="agent-system-line">正在连接主智能体会话…</div>}
               {notice && <div className="agent-error-line">{notice}</div>}
               <AnnouncementBanner />
 
-              {!bootingAgent && messages.length === 0 && (
+              {historyLoading && (
+                <div style={{ width: 'min(980px, 100%)', margin: '0 auto', padding: '12px 0' }}>
+                  <Skeleton animation text={{ rows: 3, width: ['40%', '88%', '70%'] }} />
+                  <div style={{ height: 18 }} />
+                  <Skeleton animation text={{ rows: 4, width: ['52%', '92%', '84%', '60%'] }} />
+                </div>
+              )}
+
+              {!bootingAgent && !historyLoading && messages.length === 0 && (
                 <section className="agent-empty-state">
                   <div className="hero-icon">
                     <img className="brand-logo" alt="CareerForge" src="/baidi.png" />

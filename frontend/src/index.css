@@ -1235,6 +1235,92 @@ textarea {
   background: #f0e8e8;
 }
 
+/* 今日日程提醒横幅 */
+.agent-reminder-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px auto 0;
+  width: min(980px, calc(100% - 48px));
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: #fff7e8;
+  border: 1px solid #ffd591;
+  color: #ad6800;
+  font-size: 13px;
+}
+
+.agent-reminder-close {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: #ad6800;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.agent-reminder-close:hover {
+  background: rgba(173, 104, 0, 0.12);
+}
+
+/* Markdown 代码块：语言标签 + 一键复制 */
+.md-code-block {
+  margin: 10px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e6e8f0;
+  background: #1e2230;
+}
+
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #2a3042;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.md-code-lang {
+  font-size: 12px;
+  color: #9aa3bd;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+
+.md-code-copy {
+  border: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: #c8cfe0;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+
+.md-code-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.md-code-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.md-code-block code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e6e8f0;
+  background: transparent;
+  padding: 0;
+}
+
 /* 输入框里待发送的图片缩略图 */
 .composer-image-preview {
   position: relative;
