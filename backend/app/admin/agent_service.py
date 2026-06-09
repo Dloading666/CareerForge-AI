@@ -35,6 +35,23 @@ def _agent_to_dict(agent: Agent) -> dict:
     else: d["model_config"] = None
     return d
 
+def _validate_agent_model_capability(db, agent_category, model_config_id):
+    if not model_config_id:
+        return
+    from app.student.agent_runtime import (CHAT_CAPABLE_CAPABILITIES, INTERVIEW_AGENT_CATEGORIES, TTS_CAPABLE_CAPABILITIES)
+    model = db.get(ModelConfig, model_config_id)
+    if not model:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选模型不存在")
+    if agent_category in INTERVIEW_AGENT_CATEGORIES:
+        if model.capability not in TTS_CAPABLE_CAPABILITIES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="面试官智能体仅可关联 TTS 模型")
+    else:
+        if model.capability not in CHAT_CAPABLE_CAPABILITIES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="主智能体及其他智能体仅可关联文本/多模态模型")
+
+
+
+
 def _build_agent(agent: Agent, payload):
     data = payload.model_dump(exclude_unset=True)
     if "dify_api_key" in data:
@@ -59,11 +76,15 @@ def get_agent(db: Session, agent_id: int) -> Agent:
 
 def get_agent_dict(db: Session, agent_id: int) -> dict: return _agent_to_dict(get_agent(db, agent_id))
 def create_agent(db: Session, payload: AgentCreate) -> dict:
-    a = Agent(); _build_agent(a, payload); db.add(a); db.commit(); db.refresh(a);
+    a = Agent(); _build_agent(a, payload)
+    _validate_agent_model_capability(db, a.category, a.model_config_id)
+    db.add(a); db.commit(); db.refresh(a);
     _sync_dify_route(db, a)
     return _agent_to_dict(a)
 def update_agent(db: Session, agent_id: int, payload: AgentUpdate) -> dict:
-    a = get_agent(db, agent_id); _build_agent(a, payload); db.commit(); db.refresh(a);
+    a = get_agent(db, agent_id); _build_agent(a, payload)
+    _validate_agent_model_capability(db, a.category, a.model_config_id)
+    db.commit(); db.refresh(a);
     _sync_dify_route(db, a)
     return _agent_to_dict(a)
 def delete_agent(db: Session, agent_id: int) -> None: get_agent(db, agent_id).is_deleted = True; db.commit()
