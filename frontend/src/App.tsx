@@ -22,7 +22,7 @@ function App() {
       <Route path="/" element={<HomeRedirect />} />
       <Route path="/auth" element={<AuthPage />} />
       <Route
-        path="/student"
+        path="/student/*"
         element={
           <ProtectedRoute role="student">
             <StudentHomePage />
@@ -43,4 +43,3 @@ function App() {
 }
 
 export default App
-

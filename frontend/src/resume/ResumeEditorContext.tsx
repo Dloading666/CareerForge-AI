@@ -1,0 +1,233 @@
+import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react'
+
+import {
+  createEducation,
+  createExperience,
+  createProject,
+  createSkill,
+  getDefaultGlobalSettings,
+} from './constants'
+import type {
+  BasicInfo,
+  Education,
+  Experience,
+  GlobalSettings,
+  Project,
+  ResumeData,
+  ResumeSectionId,
+  Skill,
+  TemplateId,
+} from './types'
+
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
+type ResumeEditorState = {
+  resume: ResumeData | null
+  activeSection: ResumeSectionId
+  dirty: boolean
+  saveStatus: SaveStatus
+}
+
+type ResumeEditorContextValue = ResumeEditorState & {
+  setResume: (resume: ResumeData) => void
+  setActiveSection: (section: ResumeSectionId) => void
+  updateTitle: (title: string) => void
+  setTemplateId: (templateId: TemplateId) => void
+  setVisibility: (visibility: boolean) => void
+  updateBasic: (patch: Partial<BasicInfo>) => void
+  updateEducation: (id: string, patch: Partial<Education>) => void
+  addEducation: () => void
+  removeEducation: (id: string) => void
+  updateExperience: (id: string, patch: Partial<Experience>) => void
+  addExperience: () => void
+  removeExperience: (id: string) => void
+  updateProject: (id: string, patch: Partial<Project>) => void
+  addProject: () => void
+  removeProject: (id: string) => void
+  updateSkill: (id: string, patch: Partial<Skill>) => void
+  addSkill: () => void
+  removeSkill: (id: string) => void
+  setSelfEvaluation: (value: string) => void
+  updateGlobalSettings: (patch: Partial<GlobalSettings>) => void
+  markSaving: () => void
+  markSaved: (resume: ResumeData) => void
+  markError: () => void
+}
+
+const ResumeEditorContext = createContext<ResumeEditorContextValue | null>(null)
+
+type Action =
+  | { type: 'set_resume'; resume: ResumeData }
+  | { type: 'set_active_section'; section: ResumeSectionId }
+  | { type: 'update_title'; title: string }
+  | { type: 'set_template'; templateId: TemplateId }
+  | { type: 'set_visibility'; visibility: boolean }
+  | { type: 'update_basic'; patch: Partial<BasicInfo> }
+  | { type: 'update_education'; id: string; patch: Partial<Education> }
+  | { type: 'add_education' }
+  | { type: 'remove_education'; id: string }
+  | { type: 'update_experience'; id: string; patch: Partial<Experience> }
+  | { type: 'add_experience' }
+  | { type: 'remove_experience'; id: string }
+  | { type: 'update_project'; id: string; patch: Partial<Project> }
+  | { type: 'add_project' }
+  | { type: 'remove_project'; id: string }
+  | { type: 'update_skill'; id: string; patch: Partial<Skill> }
+  | { type: 'add_skill' }
+  | { type: 'remove_skill'; id: string }
+  | { type: 'set_self_evaluation'; value: string }
+  | { type: 'update_global_settings'; patch: Partial<GlobalSettings> }
+  | { type: 'mark_saving' }
+  | { type: 'mark_saved'; resume: ResumeData }
+  | { type: 'mark_error' }
+
+const initialState: ResumeEditorState = {
+  resume: null,
+  activeSection: 'basic',
+  dirty: false,
+  saveStatus: 'idle',
+}
+
+function updateListItem<T extends { id: string }>(items: T[], id: string, patch: Partial<T>) {
+  return items.map((item) => (item.id === id ? { ...item, ...patch } : item))
+}
+
+function reducer(state: ResumeEditorState, action: Action): ResumeEditorState {
+  switch (action.type) {
+    case 'set_resume':
+      return {
+        ...state,
+        resume: action.resume,
+        dirty: false,
+        saveStatus: 'idle',
+      }
+    case 'set_active_section':
+      return { ...state, activeSection: action.section }
+    case 'update_title':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, title: action.title } } : state
+    case 'set_template':
+      return state.resume
+        ? {
+            ...state,
+            dirty: true,
+            saveStatus: 'idle',
+            resume: {
+              ...state.resume,
+              templateId: action.templateId,
+              globalSettings: getDefaultGlobalSettings(action.templateId),
+            },
+          }
+        : state
+    case 'set_visibility':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, visibility: action.visibility } } : state
+    case 'update_basic':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, basic: { ...state.resume.basic, ...action.patch } } }
+        : state
+    case 'update_education':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, education: updateListItem(state.resume.education, action.id, action.patch) } }
+        : state
+    case 'add_education':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, education: [...state.resume.education, createEducation()] } } : state
+    case 'remove_education':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, education: state.resume.education.filter((item) => item.id !== action.id) } }
+        : state
+    case 'update_experience':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, experience: updateListItem(state.resume.experience, action.id, action.patch) } }
+        : state
+    case 'add_experience':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, experience: [...state.resume.experience, createExperience()] } } : state
+    case 'remove_experience':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, experience: state.resume.experience.filter((item) => item.id !== action.id) } }
+        : state
+    case 'update_project':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, projects: updateListItem(state.resume.projects, action.id, action.patch) } }
+        : state
+    case 'add_project':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, projects: [...state.resume.projects, createProject()] } } : state
+    case 'remove_project':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, projects: state.resume.projects.filter((item) => item.id !== action.id) } }
+        : state
+    case 'update_skill':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: updateListItem(state.resume.skills, action.id, action.patch) } }
+        : state
+    case 'add_skill':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: [...state.resume.skills, createSkill()] } } : state
+    case 'remove_skill':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: state.resume.skills.filter((item) => item.id !== action.id) } }
+        : state
+    case 'set_self_evaluation':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, selfEvaluation: action.value } } : state
+    case 'update_global_settings':
+      return state.resume
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, globalSettings: { ...state.resume.globalSettings, ...action.patch } } }
+        : state
+    case 'mark_saving':
+      return { ...state, saveStatus: 'saving' }
+    case 'mark_saved':
+      return { ...state, resume: action.resume, dirty: false, saveStatus: 'saved' }
+    case 'mark_error':
+      return { ...state, saveStatus: 'error' }
+    default:
+      return state
+  }
+}
+
+export function ResumeEditorProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(reducer, initialState)
+
+  const actions = useMemo(
+    () => ({
+      setResume: (resume: ResumeData) => dispatch({ type: 'set_resume', resume }),
+      setActiveSection: (section: ResumeSectionId) => dispatch({ type: 'set_active_section', section }),
+      updateTitle: (title: string) => dispatch({ type: 'update_title', title }),
+      setTemplateId: (templateId: TemplateId) => dispatch({ type: 'set_template', templateId }),
+      setVisibility: (visibility: boolean) => dispatch({ type: 'set_visibility', visibility }),
+      updateBasic: (patch: Partial<BasicInfo>) => dispatch({ type: 'update_basic', patch }),
+      updateEducation: (id: string, patch: Partial<Education>) => dispatch({ type: 'update_education', id, patch }),
+      addEducation: () => dispatch({ type: 'add_education' }),
+      removeEducation: (id: string) => dispatch({ type: 'remove_education', id }),
+      updateExperience: (id: string, patch: Partial<Experience>) => dispatch({ type: 'update_experience', id, patch }),
+      addExperience: () => dispatch({ type: 'add_experience' }),
+      removeExperience: (id: string) => dispatch({ type: 'remove_experience', id }),
+      updateProject: (id: string, patch: Partial<Project>) => dispatch({ type: 'update_project', id, patch }),
+      addProject: () => dispatch({ type: 'add_project' }),
+      removeProject: (id: string) => dispatch({ type: 'remove_project', id }),
+      updateSkill: (id: string, patch: Partial<Skill>) => dispatch({ type: 'update_skill', id, patch }),
+      addSkill: () => dispatch({ type: 'add_skill' }),
+      removeSkill: (id: string) => dispatch({ type: 'remove_skill', id }),
+      setSelfEvaluation: (value: string) => dispatch({ type: 'set_self_evaluation', value }),
+      updateGlobalSettings: (patch: Partial<GlobalSettings>) => dispatch({ type: 'update_global_settings', patch }),
+      markSaving: () => dispatch({ type: 'mark_saving' }),
+      markSaved: (resume: ResumeData) => dispatch({ type: 'mark_saved', resume }),
+      markError: () => dispatch({ type: 'mark_error' }),
+    }),
+    [],
+  )
+
+  const value = useMemo<ResumeEditorContextValue>(
+    () => ({
+      ...state,
+      ...actions,
+    }),
+    [state],
+  )
+
+  return <ResumeEditorContext.Provider value={value}>{children}</ResumeEditorContext.Provider>
+}
+
+export function useResumeEditor() {
+  const context = useContext(ResumeEditorContext)
+  if (!context) {
+    throw new Error('useResumeEditor must be used within ResumeEditorProvider')
+  }
+  return context
+}

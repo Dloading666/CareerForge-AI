@@ -1,10 +1,10 @@
 import { Button, Form, Input, InputNumber, Message, Modal, Radio, Select, Typography, Upload } from '@arco-design/web-react'
 import { IconBug, IconCalendar, IconCamera, IconEdit, IconUser, IconSafe, IconInfoCircle, IconRight, IconPhone, IconHome, IconBook, IconFile } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
-import { ResumeGallery } from './ResumeGallery'
 
 type Profile = {
   id: number; account: string; email: string; name: string | null
@@ -43,12 +43,12 @@ function MenuCard({ icon, label, desc, onClick, accentColor }: {
 
 export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string) => void }) {
   const { session } = useAuth()
+  const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadingBanner, setUploadingBanner] = useState(false)
   const [calendarView, setCalendarView] = useState(false)
-  const [resumeView, setResumeView] = useState(false)
   const [feedbackVisible, setFeedbackVisible] = useState(false)
   const [feedbackDesc, setFeedbackDesc] = useState('')
   const [feedbackCategory, setFeedbackCategory] = useState('bug')
@@ -199,7 +199,6 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   }
 
   if (loading) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',minHeight:300,color:'var(--text-subtle)'}}>加载中...</div>
-  if (resumeView) return <ResumeGallery onBack={() => setResumeView(false)} />
   if (calendarView) return <CalendarPage onBack={() => setCalendarView(false)} />
 
   const avatarUrl = profile?.avatar_url || ''
@@ -248,7 +247,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           desc={[profile?.name,profile?.gender&&genderLabel[profile.gender],profile?.age&&profile.age+'岁',profile?.college].filter(Boolean).join(' · ')||'完善你的个人信息'} accentColor="#165dff" onClick={openEdit}/>
         <MenuCard icon={<IconCalendar style={{fontSize:26,color:'#722ed1'}}/>} label="日程管理"
           desc="查看和管理日程安排" accentColor="#722ed1" onClick={() => setCalendarView(true)}/>
-        <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="查看已提交的简历和附件" accentColor="#f53f3f" onClick={() => setResumeView(true)}/>
+        <MenuCard icon={<IconFile style={{fontSize:26,color:"#f53f3f"}}/>} label="我的简历" desc="进入简历中心并查看附件简历" accentColor="#f53f3f" onClick={() => navigate('/student/resumes?tab=attachments')}/>
         <MenuCard icon={<IconSafe style={{fontSize:26,color:'#00b42a'}}/>} label="账号安全"
           desc={(profile?.email_verified_at?'邮箱已认证':'邮箱未认证') + ' · 修改登录密码'} accentColor="#00b42a" onClick={openSecurity}/>
         <MenuCard icon={<IconBug style={{fontSize:26,color:'#f53f3f'}}/>} label="反馈Bug" desc="提交问题截图和描述，帮助我们改进" accentColor="#f53f3f" onClick={() => setFeedbackVisible(true)}/>
