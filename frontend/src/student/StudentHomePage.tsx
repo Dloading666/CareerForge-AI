@@ -22,6 +22,8 @@ import {
   IconRobot,
   IconSearch,
   IconSend,
+  IconMenuFold,
+  IconMenuUnfold,
   IconThunderbolt,
   IconUser,
 } from '@arco-design/web-react/icon'
@@ -495,6 +497,7 @@ export function StudentHomePage() {
   const [todayEvents, setTodayEvents] = useState<{ id: number; title: string; event_time: string | null }[]>([])
   const [remindersDismissed, setRemindersDismissed] = useState(false)
   const [inputValue, setInputValue] = useState('')
+  const [navCollapsed, setNavCollapsed] = useState(false)
   const [bootingAgent, setBootingAgent] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -511,6 +514,7 @@ export function StudentHomePage() {
   const dragCounterRef = useRef(0)
 
   const abortRef = useRef<AbortController | null>(null)
+  const pendingResumeNavRef = useRef<number | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const optimisticIdRef = useRef(-1)
@@ -770,7 +774,14 @@ export function StudentHomePage() {
       return
     }
     if (event === 'activity.started' || event === 'activity.completed' || event === 'activity.failed') {
-      upsertActivity(data as AgentActivity)
+      const activity = data as AgentActivity
+      upsertActivity(activity)
+      if (event === 'activity.completed') {
+        const detail = activity.detail
+        if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
+          pendingResumeNavRef.current = detail.resume_id as number
+        }
+      }
       return
     }
     if (event === 'message.delta') {
@@ -890,6 +901,12 @@ export function StudentHomePage() {
       if (buffer.trim()) {
         const parsed = parseSseBlock(buffer)
         if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
+      }
+      // 流结束后，如果有待跳转的简历编辑器
+      if (pendingResumeNavRef.current !== null) {
+        const resumeId = pendingResumeNavRef.current
+        pendingResumeNavRef.current = null
+        navigate(`/student/resumes/${resumeId}`)
       }
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -1043,7 +1060,7 @@ export function StudentHomePage() {
 
   return (
     <div className="app-shell student-shell">
-      <aside className="side-nav">
+      <aside className={`side-nav${navCollapsed ? ' side-nav--collapsed' : ''}`}>
         <div className="brand-mark">
           <img className="brand-logo" src="/baidi.png" alt="CareerForge" />
           <div>
@@ -1095,9 +1112,18 @@ export function StudentHomePage() {
 
       <section className="content-panel">
         <header className="topbar">
-          <div className="topbar-title">
-            <h2>{topbarMeta.title}</h2>
-            <p>{topbarMeta.subtitle}</p>
+          <div className="topbar-left">
+            <button
+              className="side-nav-toggle-btn"
+              onClick={() => setNavCollapsed((v) => !v)}
+              title={navCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            >
+              {navCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+            </button>
+            <div className="topbar-title">
+              <h2>{topbarMeta.title}</h2>
+              <p>{topbarMeta.subtitle}</p>
+            </div>
           </div>
           <div className="topbar-actions">
             <AnnouncementBellDropdown />

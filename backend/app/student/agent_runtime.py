@@ -13,7 +13,9 @@ from typing import Any, AsyncIterator, Optional
 
 import httpx
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import select
+import re as _re
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.admin.master_service import DEFAULT_SYSTEM_PROMPT, get_or_create_master_config
@@ -30,6 +32,7 @@ from app.student.agent_models import (
     StudentAgentSession,
 )
 from app.student.agent_schemas import AgentActivityResponse, AgentAttachmentResponse, AgentModelOptionResponse
+from app.student.resume_models import StudentResume
 from app.student.tool_validation import parse_tool_arguments
 
 logger = logging.getLogger(__name__)
@@ -206,8 +209,133 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         },
         metadata={"kind": "web"},
     ),
+    ToolDefinition(
+        name="generate_resume_data",
+        description=(
+            "根据学生信息和目标 JD，生成一份结构化在线简历并保存到系统。"
+            "调用前必须先 query_student_profile 读取学生信息。"
+            "调用成功后会返回 editor_url，用 Markdown 链接格式呈现给学生。"
+        ),
+        source="builtin",
+        priority=970,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "简历标题，例如『张三-后端工程师简历』"},
+                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant，默认 classic"},
+                "basic": {
+                    "type": "object",
+                    "description": "基本信息",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "target_position": {"type": "string", "description": "目标职位"},
+                        "email": {"type": "string"},
+                        "phone": {"type": "string"},
+                        "location": {"type": "string"},
+                        "birth_date": {"type": "string", "description": "格式 YYYY-MM"},
+                    },
+                },
+                "education": {
+                    "type": "array",
+                    "description": "教育经历列表",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "school": {"type": "string"},
+                            "major": {"type": "string"},
+                            "degree": {"type": "string"},
+                            "start_date": {"type": "string"},
+                            "end_date": {"type": "string"},
+                            "gpa": {"type": "string"},
+                            "description": {"type": "string", "description": "每行一个亮点，换行分隔"},
+                        },
+                    },
+                },
+                "experience": {
+                    "type": "array",
+                    "description": "工作经历列表",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "company": {"type": "string"},
+                            "position": {"type": "string"},
+                            "date": {"type": "string", "description": "时间段，例如 2022.06 - 2024.12"},
+                            "details": {"type": "string", "description": "每行一个要点，换行分隔"},
+                        },
+                    },
+                },
+                "projects": {
+                    "type": "array",
+                    "description": "项目经历列表",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "role": {"type": "string"},
+                            "date": {"type": "string"},
+                            "description": {"type": "string", "description": "每行一个要点，换行分隔"},
+                        },
+                    },
+                },
+                "skills": {"type": "string", "description": "技能描述，每行一条，换行分隔"},
+                "self_evaluation": {"type": "string", "description": "自我评价，每行一段，换行分隔"},
+            },
+            "required": ["title", "basic"],
+        },
+        metadata={"kind": "resume"},
+    ),
+    ToolDefinition(
+        name="optimize_resume_data",
+        description=(
+            "基于学生已有简历内容和目标 JD，生成一份优化版简历并保存到系统。"
+            "调用前必须先 read_resume 读取学生简历内容，禁止凭空捏造。"
+            "调用成功后会返回 editor_url，用 Markdown 链接格式呈现给学生。"
+        ),
+        source="builtin",
+        priority=968,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "优化后简历标题"},
+                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant"},
+                "source_resume_id": {"type": "integer", "description": "来源的在线简历 ID（如有）"},
+                "basic": {"type": "object"},
+                "education": {"type": "array", "items": {"type": "object"}},
+                "experience": {"type": "array", "items": {"type": "object"}},
+                "projects": {"type": "array", "items": {"type": "object"}},
+                "skills": {"type": "string"},
+                "self_evaluation": {"type": "string"},
+            },
+            "required": ["title", "basic"],
+        },
+        metadata={"kind": "resume"},
+    ),
+    ToolDefinition(
+        name="update_resume_data",
+        description=(
+            "更新学生已有的在线简历（局部修改）。"
+            "调用前必须先 read_resume 确认简历内容，需要 resume_id。"
+        ),
+        source="builtin",
+        priority=966,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "resume_id": {"type": "integer", "description": "要更新的简历 ID"},
+                "title": {"type": "string"},
+                "template_id": {"type": "string"},
+                "basic": {"type": "object"},
+                "education": {"type": "array", "items": {"type": "object"}},
+                "experience": {"type": "array", "items": {"type": "object"}},
+                "projects": {"type": "array", "items": {"type": "object"}},
+                "skills": {"type": "string"},
+                "self_evaluation": {"type": "string"},
+            },
+            "required": ["resume_id"],
+        },
+        metadata={"kind": "resume"},
+    ),
 ]
-
 
 
 def _tool_safe_name(value: str) -> str:
@@ -1028,6 +1156,9 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "export_resume_pdf",
     "read_webpage",
     "web_search",
+    "generate_resume_data",
+    "optimize_resume_data",
+    "update_resume_data",
 )
 
 
@@ -1088,6 +1219,13 @@ def _harness_system_prompt(config: Any, reasoning_effort: str) -> str:
         "- 反幻觉铁律：禁止编造学生的简历内容、经历、项目、岗位、公司或任何数据。没有依据时如实说明，并向学生索取材料。\n"
         "- 简历相关：在给出任何简历修改建议或生成简历之前，必须先调用 read_resume 读取学生的真实简历；"
         "若 read_resume 返回没有简历，请直接告知并引导学生到『个人中心—我的简历』上传，绝不虚构内容。\n"
+        "- AI 简历制作流程：先调用 query_student_profile 获取学生信息，再请学生提供目标岗位 JD，"
+        "然后调用 generate_resume_data 生成结构化简历；工具返回 editor_url 时，"
+        "用 Markdown 链接 [点击查看并编辑简历](editor_url) 呈现给学生。\n"
+        "- 简历优化流程：先调用 read_resume 读取学生已有简历，再请学生提供目标 JD，"
+        "然后调用 optimize_resume_data 生成优化版本；工具返回 editor_url 时，"
+        "用 Markdown 链接 [点击查看优化后的简历](editor_url) 呈现给学生。\n"
+        "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），工具返回 editor_url 后用链接呈现。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF，然后把工具返回的 download_url 以 "
         "Markdown 链接形式给学生，例如：[点击下载优化后的简历](下载链接)。\n"
@@ -1414,6 +1552,12 @@ async def _dispatch_tool(
         return _read_webpage_tool(args)
     if name == "web_search":
         return _web_search_tool(args)
+    if name == "generate_resume_data":
+        return _generate_resume_data_tool(db, identity, args)
+    if name == "optimize_resume_data":
+        return _optimize_resume_data_tool(db, identity, args)
+    if name == "update_resume_data":
+        return _update_resume_data_tool(db, identity, args)
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
@@ -1500,24 +1644,121 @@ def _ensure_attachment_text(db: Session, attachment: StudentAgentAttachment) -> 
     return ""
 
 
+def _rich_text_to_lines(html: str) -> list[str]:
+    """Convert HTML rich text to plain text lines (mirrors frontend richTextToLines)."""
+    if not html:
+        return []
+    text = _re.sub(r"<br\s*/?>", "\n", html, flags=_re.IGNORECASE)
+    text = _re.sub(r"<li[^>]*>", "\n", text, flags=_re.IGNORECASE)
+    text = _re.sub(r"</(p|div|section|li|ul|ol|h[1-6])>", "\n", text, flags=_re.IGNORECASE)
+    text = _re.sub(r"<[^>]+>", "", text)
+    for entity, char in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'")]:
+        text = text.replace(entity, char)
+    return [ln.strip() for ln in text.split("\n") if ln.strip()]
+
+
+def _ta_to_list(text: Any) -> str:
+    """Convert newline-separated plain text to <ul><li>…</li></ul> HTML."""
+    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "<ul>" + "".join(f"<li>{esc(ln)}</li>" for ln in lines) + "</ul>"
+
+
+def _ta_to_para(text: Any) -> str:
+    """Convert newline-separated plain text to <p>…</p> HTML blocks."""
+    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "".join(f"<p>{esc(ln)}</p>" for ln in lines)
+
+
+def _structured_resume_to_text(row: StudentResume) -> str:
+    """Convert a StudentResume row to readable plain text for the AI model."""
+    try:
+        data = json.loads(row.data_json or "{}")
+    except Exception:
+        data = {}
+    basic = data.get("basic") or {}
+    parts: list[str] = []
+    for label, key in [("姓名", "name"), ("目标职位", "title"), ("邮箱", "email"), ("电话", "phone"), ("地址", "location"), ("生日", "birthDate")]:
+        val = str(basic.get(key) or "").strip()
+        if val:
+            parts.append(f"{label}: {val}")
+    skill_lines = _rich_text_to_lines(data.get("skillContent") or "")
+    if skill_lines:
+        parts.append("\n专业技能:")
+        parts.extend(f"- {ln}" for ln in skill_lines)
+    for exp in (data.get("experience") or []):
+        if exp.get("visible") is False:
+            continue
+        header = " | ".join(v for v in [exp.get("company"), exp.get("position"), exp.get("date")] if v)
+        if header:
+            parts.append(f"\n工作经历: {header}")
+        parts.extend(f"- {ln}" for ln in _rich_text_to_lines(exp.get("details") or ""))
+    for proj in (data.get("projects") or []):
+        if proj.get("visible") is False:
+            continue
+        header = " | ".join(v for v in [proj.get("name"), proj.get("role"), proj.get("date")] if v)
+        if header:
+            parts.append(f"\n项目经历: {header}")
+        parts.extend(f"- {ln}" for ln in _rich_text_to_lines(proj.get("description") or ""))
+    for edu in (data.get("education") or []):
+        if edu.get("visible") is False:
+            continue
+        header = " | ".join(v for v in [edu.get("school"), edu.get("major"), edu.get("degree"), f"{edu.get('startDate', '')}-{edu.get('endDate', '')}"] if v)
+        if header:
+            parts.append(f"\n教育经历: {header}")
+        parts.extend(f"- {ln}" for ln in _rich_text_to_lines(edu.get("description") or ""))
+    eval_lines = _rich_text_to_lines(data.get("selfEvaluationContent") or "")
+    if eval_lines:
+        parts.append("\n自我评价:")
+        parts.extend(eval_lines)
+    return "\n".join(parts)
+
+
 def _read_resume_tool(
     db: Session,
     identity: AuthIdentity,
     session: StudentAgentSession,
     attachments: list[StudentAgentAttachment],
 ) -> dict[str, Any]:
-    """Read the student's resume — this turn's uploads first, then the one stored
-    in 个人中心 (profile-level attachments with session_id/message_id == 0)."""
+    """Read the student's resume — structured online resumes (visibility=True) first,
+    then this turn's uploads, then profile-level PDF attachments."""
     resumes: list[dict[str, Any]] = []
-    seen: set[int] = set()
+    seen_att: set[int] = set()
 
+    # 1. 在线结构化简历（visibility=True）
+    structured_rows = list(
+        db.scalars(
+            select(StudentResume)
+            .where(
+                StudentResume.tenant_id == identity.tenant_id,
+                StudentResume.student_id == identity.user_id,
+                StudentResume.visibility.is_(True),
+            )
+            .order_by(StudentResume.updated_at.desc())
+            .limit(3)
+        ).all()
+    )
+    for row in structured_rows:
+        text = _structured_resume_to_text(row)
+        if text.strip():
+            resumes.append({"source": "在线简历", "name": row.title, "resume_id": row.id, "excerpt": text[:4000]})
+
+    # 2. 本轮上传附件
     for att in attachments:
-        seen.add(att.id)
+        seen_att.add(att.id)
         text = _ensure_attachment_text(db, att)
         if text:
             resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:3000]})
 
-    rows = list(
+    # 3. 个人中心 PDF 附件
+    pdf_rows = list(
         db.scalars(
             select(StudentAgentAttachment)
             .where(
@@ -1529,8 +1770,8 @@ def _read_resume_tool(
             .limit(3)
         ).all()
     )
-    for row in rows:
-        if row.id in seen:
+    for row in pdf_rows:
+        if row.id in seen_att:
             continue
         text = _ensure_attachment_text(db, row)
         if text:
@@ -1540,11 +1781,353 @@ def _read_resume_tool(
         return {
             "status": "completed",
             "tool": "read_resume",
-            "summary": "未找到简历：学生还没有在『个人中心—我的简历』上传，本轮也没有上传简历文件。",
+            "summary": "未找到简历：学生还没有上传简历，也没有开启『智能体可读取』的在线简历。",
             "resumes": [],
         }
     names = "、".join(item["name"] for item in resumes[:4])
     return {"status": "completed", "tool": "read_resume", "summary": f"已读取简历：{names}", "resumes": resumes[:4]}
+
+
+_MAX_RESUMES = 5
+_VALID_TEMPLATE_IDS = {"classic", "modern", "elegant"}
+_DEFAULT_GLOBAL_SETTINGS = {
+    "classic": {
+        "themeColor": "#000000",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 32,
+        "lineHeight": 1.5,
+        "sectionSpacing": 16,
+        "paragraphSpacing": 12,
+        "headerSize": 18,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": True,
+    },
+    "modern": {
+        "themeColor": "#000000",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 0,
+        "lineHeight": 1.5,
+        "sectionSpacing": 8,
+        "paragraphSpacing": 4,
+        "headerSize": 18,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": True,
+    },
+    "elegant": {
+        "themeColor": "#18181b",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 32,
+        "lineHeight": 1.5,
+        "sectionSpacing": 28,
+        "paragraphSpacing": 18,
+        "headerSize": 20,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": True,
+    },
+}
+_DEFAULT_MENU_SECTIONS = [
+    {"id": "basic", "title": "基本信息", "icon": "👤", "enabled": True, "order": 0},
+    {"id": "skills", "title": "专业技能", "icon": "⚡", "enabled": True, "order": 1},
+    {"id": "experience", "title": "工作经历", "icon": "💼", "enabled": True, "order": 2},
+    {"id": "projects", "title": "项目经历", "icon": "🚀", "enabled": True, "order": 3},
+    {"id": "education", "title": "教育经历", "icon": "🎓", "enabled": True, "order": 4},
+    {"id": "selfEvaluation", "title": "自我评价", "icon": "📝", "enabled": True, "order": 5},
+]
+_DEFAULT_FIELD_ORDER = [
+    {"id": "name", "key": "name", "label": "姓名", "type": "text", "visible": True},
+    {"id": "title", "key": "title", "label": "职位", "type": "text", "visible": True},
+    {"id": "birthDate", "key": "birthDate", "label": "生日", "type": "date", "visible": True},
+    {"id": "employementStatus", "key": "employementStatus", "label": "状态", "type": "text", "visible": False},
+    {"id": "email", "key": "email", "label": "邮箱", "type": "text", "visible": True},
+    {"id": "phone", "key": "phone", "label": "电话", "type": "text", "visible": True},
+    {"id": "location", "key": "location", "label": "地址", "type": "text", "visible": True},
+]
+
+
+def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, template_id: str) -> dict[str, Any]:
+    """Build a full ResumeData-compatible document from AI-provided args."""
+    basic_in = args.get("basic") or {}
+    edu_in = args.get("education") or []
+    exp_in = args.get("experience") or []
+    proj_in = args.get("projects") or []
+
+    def _edu(item: dict) -> dict:
+        raw_desc = item.get("description") or ""
+        return {
+            "id": f"edu-{uuid.uuid4().hex[:8]}",
+            "school": item.get("school") or "",
+            "major": item.get("major") or "",
+            "degree": item.get("degree") or "",
+            "startDate": item.get("start_date") or item.get("startDate") or "",
+            "endDate": item.get("end_date") or item.get("endDate") or "",
+            "gpa": item.get("gpa") or "",
+            "description": _ta_to_list(raw_desc) if raw_desc else "",
+            "visible": True,
+        }
+
+    def _exp(item: dict) -> dict:
+        raw = item.get("details") or item.get("description") or ""
+        return {
+            "id": f"exp-{uuid.uuid4().hex[:8]}",
+            "company": item.get("company") or "",
+            "position": item.get("position") or "",
+            "date": item.get("date") or "",
+            "details": _ta_to_list(raw) if raw else "",
+            "visible": True,
+        }
+
+    def _proj(item: dict) -> dict:
+        raw = item.get("description") or ""
+        return {
+            "id": f"proj-{uuid.uuid4().hex[:8]}",
+            "name": item.get("name") or "",
+            "role": item.get("role") or "",
+            "date": item.get("date") or "",
+            "description": _ta_to_list(raw) if raw else "",
+            "visible": True,
+            "link": "",
+            "linkLabel": "",
+        }
+
+    basic = {
+        "name": basic_in.get("name") or (getattr(student, "name", None) if student else None) or "",
+        "title": basic_in.get("target_position") or basic_in.get("title") or "",
+        "email": basic_in.get("email") or (getattr(student, "email", None) if student else None) or "",
+        "phone": basic_in.get("phone") or (getattr(student, "phone", None) if student else None) or "",
+        "location": basic_in.get("location") or (getattr(student, "college", None) if student else None) or "",
+        "birthDate": basic_in.get("birth_date") or basic_in.get("birthDate") or "",
+        "employementStatus": "",
+        "photo": (getattr(student, "avatar_url", None) if student else None) or "",
+        "icons": {"birthDate": "calendar", "employementStatus": "briefcase", "email": "mail", "phone": "phone", "location": "location"},
+        "photoConfig": {"width": 90, "height": 120, "aspectRatio": "1:1", "borderRadius": "none", "customBorderRadius": 0, "visible": True},
+        "fieldOrder": [dict(f) for f in _DEFAULT_FIELD_ORDER],
+        "customFields": [],
+        "githubKey": "",
+        "githubUseName": "",
+        "githubContributionsVisible": False,
+    }
+
+    skills_raw = args.get("skills") or ""
+    self_eval_raw = args.get("self_evaluation") or ""
+
+    return {
+        "title": title,
+        "templateId": template_id,
+        "visibility": False,
+        "basic": basic,
+        "education": [_edu(item) for item in edu_in if isinstance(item, dict)],
+        "experience": [_exp(item) for item in exp_in if isinstance(item, dict)],
+        "projects": [_proj(item) for item in proj_in if isinstance(item, dict)],
+        "certificates": [],
+        "customData": {},
+        "skillContent": _ta_to_list(skills_raw) if skills_raw else "",
+        "selfEvaluationContent": _ta_to_para(self_eval_raw) if self_eval_raw else "",
+        "activeSection": "basic",
+        "draggingProjectId": None,
+        "globalSettings": dict(_DEFAULT_GLOBAL_SETTINGS.get(template_id, _DEFAULT_GLOBAL_SETTINGS["classic"])),
+        "menuSections": [dict(s) for s in _DEFAULT_MENU_SECTIONS],
+    }
+
+
+def _resume_count(db: Session, identity: AuthIdentity) -> int:
+    return db.scalar(
+        select(func.count(StudentResume.id)).where(
+            StudentResume.student_id == identity.user_id,
+            StudentResume.tenant_id == identity.tenant_id,
+        )
+    ) or 0
+
+
+def _generate_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+    if _resume_count(db, identity) >= _MAX_RESUMES:
+        return {
+            "status": "failed",
+            "tool": "generate_resume_data",
+            "summary": f"简历数量已达上限（{_MAX_RESUMES} 份），请先在『我的简历』中删除一份再生成。",
+        }
+    student = db.get(StudentUser, identity.user_id)
+    title = str(args.get("title") or "AI 生成简历").strip()[:128] or "AI 生成简历"
+    template_id = str(args.get("template_id") or "classic").strip()
+    if template_id not in _VALID_TEMPLATE_IDS:
+        template_id = "classic"
+    doc = _build_resume_doc(args, student, title, template_id)
+    row = StudentResume(
+        tenant_id=identity.tenant_id,
+        student_id=identity.user_id,
+        title=title,
+        template_id=template_id,
+        visibility=False,
+        data_json=json.dumps(doc, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "status": "completed",
+        "tool": "generate_resume_data",
+        "summary": f"简历《{title}》已生成，请点击链接进入编辑器查看并调整。",
+        "resume_id": row.id,
+        "editor_url": f"/student/resumes/{row.id}",
+        "open_resume_editor": True,
+    }
+
+
+def _optimize_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+    if _resume_count(db, identity) >= _MAX_RESUMES:
+        return {
+            "status": "failed",
+            "tool": "optimize_resume_data",
+            "summary": f"简历数量已达上限（{_MAX_RESUMES} 份），请先在『我的简历』中删除一份再优化。",
+        }
+    student = db.get(StudentUser, identity.user_id)
+    title = str(args.get("title") or "优化版简历").strip()[:128] or "优化版简历"
+    template_id = str(args.get("template_id") or "classic").strip()
+    if template_id not in _VALID_TEMPLATE_IDS:
+        # 如果来源简历有模板，则继承
+        src_id = args.get("source_resume_id")
+        if src_id:
+            src_row = db.scalar(
+                select(StudentResume).where(
+                    StudentResume.id == int(src_id),
+                    StudentResume.student_id == identity.user_id,
+                    StudentResume.tenant_id == identity.tenant_id,
+                )
+            )
+            template_id = (src_row.template_id if src_row else None) or "classic"
+        else:
+            template_id = "classic"
+    doc = _build_resume_doc(args, student, title, template_id)
+    row = StudentResume(
+        tenant_id=identity.tenant_id,
+        student_id=identity.user_id,
+        title=title,
+        template_id=template_id,
+        visibility=False,
+        data_json=json.dumps(doc, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "status": "completed",
+        "tool": "optimize_resume_data",
+        "summary": f"优化版简历《{title}》已生成，请点击链接进入编辑器查看并调整。",
+        "resume_id": row.id,
+        "editor_url": f"/student/resumes/{row.id}",
+        "open_resume_editor": True,
+    }
+
+
+def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+    resume_id = args.get("resume_id")
+    if not resume_id:
+        return {"status": "failed", "tool": "update_resume_data", "summary": "缺少 resume_id 参数。"}
+    row = db.scalar(
+        select(StudentResume).where(
+            StudentResume.id == int(resume_id),
+            StudentResume.student_id == identity.user_id,
+            StudentResume.tenant_id == identity.tenant_id,
+        )
+    )
+    if not row:
+        return {"status": "failed", "tool": "update_resume_data", "summary": f"简历 ID {resume_id} 不存在或无权限。"}
+
+    try:
+        existing = json.loads(row.data_json or "{}")
+    except Exception:
+        existing = {}
+
+    # 合并标题和模板
+    if args.get("title"):
+        row.title = str(args["title"]).strip()[:128]
+        existing["title"] = row.title
+    if args.get("template_id") and args["template_id"] in _VALID_TEMPLATE_IDS:
+        row.template_id = str(args["template_id"])
+        existing["templateId"] = row.template_id
+
+    student = db.get(StudentUser, identity.user_id)
+
+    # 合并各字段（如果 AI 提供了就覆盖，否则保留原有）
+    def _to_list_if_str(val: Any) -> Any:
+        return _ta_to_list(val) if isinstance(val, str) else val
+
+    if args.get("basic"):
+        basic_in = args["basic"]
+        existing_basic = existing.get("basic") or {}
+        for key, ai_key in [("name", "name"), ("title", "target_position"), ("email", "email"), ("phone", "phone"), ("location", "location"), ("birthDate", "birth_date")]:
+            val = basic_in.get(ai_key) or basic_in.get(key)
+            if val:
+                existing_basic[key] = val
+        existing_basic.setdefault("title", basic_in.get("target_position") or basic_in.get("title") or existing_basic.get("title") or "")
+        existing["basic"] = existing_basic
+
+    if args.get("education") is not None:
+        existing["education"] = [
+            {
+                "id": item.get("id") or f"edu-{uuid.uuid4().hex[:8]}",
+                "school": item.get("school") or "",
+                "major": item.get("major") or "",
+                "degree": item.get("degree") or "",
+                "startDate": item.get("start_date") or item.get("startDate") or "",
+                "endDate": item.get("end_date") or item.get("endDate") or "",
+                "gpa": item.get("gpa") or "",
+                "description": _ta_to_list(item["description"]) if isinstance(item.get("description"), str) else item.get("description") or "",
+                "visible": item.get("visible", True),
+            }
+            for item in args["education"] if isinstance(item, dict)
+        ]
+
+    if args.get("experience") is not None:
+        existing["experience"] = [
+            {
+                "id": item.get("id") or f"exp-{uuid.uuid4().hex[:8]}",
+                "company": item.get("company") or "",
+                "position": item.get("position") or "",
+                "date": item.get("date") or "",
+                "details": _ta_to_list(item["details"]) if isinstance(item.get("details"), str) else item.get("details") or "",
+                "visible": item.get("visible", True),
+            }
+            for item in args["experience"] if isinstance(item, dict)
+        ]
+
+    if args.get("projects") is not None:
+        existing["projects"] = [
+            {
+                "id": item.get("id") or f"proj-{uuid.uuid4().hex[:8]}",
+                "name": item.get("name") or "",
+                "role": item.get("role") or "",
+                "date": item.get("date") or "",
+                "description": _ta_to_list(item["description"]) if isinstance(item.get("description"), str) else item.get("description") or "",
+                "visible": item.get("visible", True),
+                "link": item.get("link") or "",
+                "linkLabel": item.get("linkLabel") or "",
+            }
+            for item in args["projects"] if isinstance(item, dict)
+        ]
+
+    if args.get("skills") is not None:
+        existing["skillContent"] = _ta_to_list(args["skills"]) if args["skills"] else ""
+
+    if args.get("self_evaluation") is not None:
+        existing["selfEvaluationContent"] = _ta_to_para(args["self_evaluation"]) if args["self_evaluation"] else ""
+
+    row.data_json = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+    db.refresh(row)
+    return {
+        "status": "completed",
+        "tool": "update_resume_data",
+        "summary": f"简历《{row.title}》已更新，请点击链接进入编辑器查看。",
+        "resume_id": row.id,
+        "editor_url": f"/student/resumes/{row.id}",
+        "open_resume_editor": True,
+    }
 
 
 def _safe_pdf_filename(name: str) -> str:

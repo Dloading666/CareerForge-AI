@@ -1,4 +1,5 @@
 import { apiRequest } from '../shared/api'
+import { ensureResumeDefaults } from './constants'
 import type { ResumeData, ResumeSummary } from './types'
 
 type ResumeDetailEnvelope = {
@@ -12,7 +13,7 @@ type ResumeDetailEnvelope = {
 }
 
 function normalizeResume(payload: ResumeDetailEnvelope): ResumeData {
-  return {
+  return ensureResumeDefaults({
     ...payload.data,
     id: payload.id,
     title: payload.title,
@@ -20,7 +21,7 @@ function normalizeResume(payload: ResumeDetailEnvelope): ResumeData {
     visibility: payload.visibility,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
-  }
+  })
 }
 
 export async function listResumes() {

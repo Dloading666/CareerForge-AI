@@ -4,7 +4,6 @@ import {
   createEducation,
   createExperience,
   createProject,
-  createSkill,
   getDefaultGlobalSettings,
 } from './constants'
 import type {
@@ -15,7 +14,6 @@ import type {
   Project,
   ResumeData,
   ResumeSectionId,
-  Skill,
   TemplateId,
 } from './types'
 
@@ -44,11 +42,11 @@ type ResumeEditorContextValue = ResumeEditorState & {
   updateProject: (id: string, patch: Partial<Project>) => void
   addProject: () => void
   removeProject: (id: string) => void
-  updateSkill: (id: string, patch: Partial<Skill>) => void
-  addSkill: () => void
-  removeSkill: (id: string) => void
-  setSelfEvaluation: (value: string) => void
+  setSkillContent: (value: string) => void
+  setSelfEvaluationContent: (value: string) => void
   updateGlobalSettings: (patch: Partial<GlobalSettings>) => void
+  toggleSectionVisibility: (sectionId: string) => void
+  reorderSections: (sections: import('./types').MenuSection[]) => void
   markSaving: () => void
   markSaved: (resume: ResumeData) => void
   markError: () => void
@@ -72,11 +70,11 @@ type Action =
   | { type: 'update_project'; id: string; patch: Partial<Project> }
   | { type: 'add_project' }
   | { type: 'remove_project'; id: string }
-  | { type: 'update_skill'; id: string; patch: Partial<Skill> }
-  | { type: 'add_skill' }
-  | { type: 'remove_skill'; id: string }
-  | { type: 'set_self_evaluation'; value: string }
+  | { type: 'set_skill_content'; value: string }
+  | { type: 'set_self_evaluation_content'; value: string }
   | { type: 'update_global_settings'; patch: Partial<GlobalSettings> }
+  | { type: 'toggle_section_visibility'; sectionId: string }
+  | { type: 'reorder_sections'; sections: import('./types').MenuSection[] }
   | { type: 'mark_saving' }
   | { type: 'mark_saved'; resume: ResumeData }
   | { type: 'mark_error' }
@@ -98,11 +96,21 @@ function reducer(state: ResumeEditorState, action: Action): ResumeEditorState {
       return {
         ...state,
         resume: action.resume,
+        activeSection: action.resume.activeSection || 'basic',
         dirty: false,
         saveStatus: 'idle',
       }
     case 'set_active_section':
-      return { ...state, activeSection: action.section }
+      return state.resume
+        ? {
+            ...state,
+            activeSection: action.section,
+            resume: {
+              ...state.resume,
+              activeSection: action.section,
+            },
+          }
+        : { ...state, activeSection: action.section }
     case 'update_title':
       return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, title: action.title } } : state
     case 'set_template':
@@ -154,21 +162,41 @@ function reducer(state: ResumeEditorState, action: Action): ResumeEditorState {
       return state.resume
         ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, projects: state.resume.projects.filter((item) => item.id !== action.id) } }
         : state
-    case 'update_skill':
+    case 'set_skill_content':
+      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skillContent: action.value } } : state
+    case 'set_self_evaluation_content':
       return state.resume
-        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: updateListItem(state.resume.skills, action.id, action.patch) } }
+        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, selfEvaluationContent: action.value } }
         : state
-    case 'add_skill':
-      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: [...state.resume.skills, createSkill()] } } : state
-    case 'remove_skill':
-      return state.resume
-        ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, skills: state.resume.skills.filter((item) => item.id !== action.id) } }
-        : state
-    case 'set_self_evaluation':
-      return state.resume ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, selfEvaluation: action.value } } : state
     case 'update_global_settings':
       return state.resume
         ? { ...state, dirty: true, saveStatus: 'idle', resume: { ...state.resume, globalSettings: { ...state.resume.globalSettings, ...action.patch } } }
+        : state
+    case 'toggle_section_visibility':
+      return state.resume
+        ? {
+            ...state,
+            dirty: true,
+            saveStatus: 'idle',
+            resume: {
+              ...state.resume,
+              menuSections: state.resume.menuSections.map((s) =>
+                s.id === action.sectionId ? { ...s, enabled: !s.enabled } : s,
+              ),
+            },
+          }
+        : state
+    case 'reorder_sections':
+      return state.resume
+        ? {
+            ...state,
+            dirty: true,
+            saveStatus: 'idle',
+            resume: {
+              ...state.resume,
+              menuSections: action.sections.map((s, idx) => ({ ...s, order: idx })),
+            },
+          }
         : state
     case 'mark_saving':
       return { ...state, saveStatus: 'saving' }
@@ -201,11 +229,11 @@ export function ResumeEditorProvider({ children }: { children: ReactNode }) {
       updateProject: (id: string, patch: Partial<Project>) => dispatch({ type: 'update_project', id, patch }),
       addProject: () => dispatch({ type: 'add_project' }),
       removeProject: (id: string) => dispatch({ type: 'remove_project', id }),
-      updateSkill: (id: string, patch: Partial<Skill>) => dispatch({ type: 'update_skill', id, patch }),
-      addSkill: () => dispatch({ type: 'add_skill' }),
-      removeSkill: (id: string) => dispatch({ type: 'remove_skill', id }),
-      setSelfEvaluation: (value: string) => dispatch({ type: 'set_self_evaluation', value }),
+      setSkillContent: (value: string) => dispatch({ type: 'set_skill_content', value }),
+      setSelfEvaluationContent: (value: string) => dispatch({ type: 'set_self_evaluation_content', value }),
       updateGlobalSettings: (patch: Partial<GlobalSettings>) => dispatch({ type: 'update_global_settings', patch }),
+      toggleSectionVisibility: (sectionId: string) => dispatch({ type: 'toggle_section_visibility', sectionId }),
+      reorderSections: (sections: import('./types').MenuSection[]) => dispatch({ type: 'reorder_sections', sections }),
       markSaving: () => dispatch({ type: 'mark_saving' }),
       markSaved: (resume: ResumeData) => dispatch({ type: 'mark_saved', resume }),
       markError: () => dispatch({ type: 'mark_error' }),

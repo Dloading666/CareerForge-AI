@@ -1,4 +1,5 @@
-import { Button, Modal, Typography } from '@arco-design/web-react'
+import { Button, Drawer, Typography } from '@arco-design/web-react'
+import { motion } from 'framer-motion'
 
 import { TEMPLATE_REGISTRY } from '../templates/registry'
 import type { TemplateId } from '../types'
@@ -15,15 +16,39 @@ export function TemplatePicker({
   onClose: () => void
 }) {
   return (
-    <Modal visible={visible} title="选择简历模板" footer={null} onCancel={onClose} style={{ width: 760 }}>
-      <div className="resume-template-grid">
+    <Drawer
+      visible={visible}
+      title="切换简历模板"
+      footer={null}
+      onCancel={onClose}
+      placement="left"
+      width={980}
+      className="resume-template-drawer"
+    >
+      <div className="resume-template-drawer-head">
+        <div>
+          <Typography.Title heading={5} style={{ margin: 0 }}>
+            选择模板
+          </Typography.Title>
+          <Typography.Paragraph style={{ margin: '8px 0 0', color: '#6b7280' }}>
+            直接按 `magic-resume` 的模板切换体验来做，先看整页缩略图，再决定是否切换。
+          </Typography.Paragraph>
+        </div>
+      </div>
+
+      <div className="resume-template-grid workbench">
         {TEMPLATE_REGISTRY.map((template) => {
           const active = template.id === value
           return (
-            <button
+            <motion.button
               key={template.id}
               type="button"
               className={`resume-template-card${active ? ' active' : ''}`}
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.26 }}
+              whileHover={{ y: -4, scale: 1.01 }}
+              whileTap={{ scale: 0.985 }}
               onClick={() => {
                 onChange(template.id)
                 onClose()
@@ -41,10 +66,10 @@ export function TemplatePicker({
               <Button type={active ? 'primary' : 'outline'} size="small" style={{ marginTop: 14 }}>
                 {active ? '当前模板' : '使用此模板'}
               </Button>
-            </button>
+            </motion.button>
           )
         })}
       </div>
-    </Modal>
+    </Drawer>
   )
 }

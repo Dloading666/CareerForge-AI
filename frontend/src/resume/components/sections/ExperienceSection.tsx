@@ -2,6 +2,7 @@ import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
 import { useResumeEditor } from '../../ResumeEditorContext'
+import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
 
 export function ExperienceSection() {
   const { resume, addExperience, removeExperience, updateExperience } = useResumeEditor()
@@ -34,7 +35,12 @@ export function ExperienceSection() {
               <Input value={item.date} onChange={(value) => updateExperience(item.id, { date: value })} placeholder="如 2023.06 - 至今" />
             </Form.Item>
             <Form.Item label="工作内容与成果">
-              <Input.TextArea value={item.details} onChange={(value) => updateExperience(item.id, { details: value })} autoSize={{ minRows: 5 }} />
+              <Input.TextArea
+                value={richTextToTextarea(item.details)}
+                onChange={(value) => updateExperience(item.id, { details: textareaToListHtml(value) })}
+                autoSize={{ minRows: 5 }}
+                placeholder="每行一条，保存后会按魔方简历的列表结构写入"
+              />
             </Form.Item>
             <Form.Item label="显示在简历中">
               <Switch checked={item.visible} onChange={(checked) => updateExperience(item.id, { visible: checked })} />

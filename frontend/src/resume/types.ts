@@ -1,5 +1,6 @@
 export type TemplateId = 'classic' | 'modern' | 'elegant'
-export type ResumeSectionId = 'basic' | 'skills' | 'experience' | 'projects' | 'education' | 'selfEvaluation'
+export type ResumeSectionId = string
+export type BasicFieldKey = 'name' | 'title' | 'birthDate' | 'employementStatus' | 'email' | 'phone' | 'location'
 
 export type ResumeSummary = {
   id: number
@@ -19,22 +20,66 @@ export type MenuSection = {
 }
 
 export type GlobalSettings = {
-  themeColor: string
-  baseFontSize: number
-  pagePadding: number
-  lineHeight: number
-  sectionSpacing: number
+  themeColor?: string
+  fontFamily?: string
+  baseFontSize?: number
+  pagePadding?: number
+  paragraphSpacing?: number
+  lineHeight?: number
+  sectionSpacing?: number
+  headerSize?: number
+  subheaderSize?: number
+  useIconMode?: boolean
+  centerSubtitle?: boolean
+  flexibleHeaderLayout?: boolean
+  autoOnePage?: boolean
+}
+
+export type PhotoConfig = {
+  width: number
+  height: number
+  aspectRatio: '1:1' | '4:3' | '3:4' | '16:9' | 'custom'
+  borderRadius: 'none' | 'medium' | 'full' | 'custom'
+  customBorderRadius: number
+  visible?: boolean
+}
+
+export type BasicFieldType = {
+  id: string
+  key: keyof BasicInfo
+  label: string
+  type?: 'text' | 'date' | 'textarea' | 'editor'
+  visible: boolean
+  custom?: boolean
+}
+
+export type CustomFieldType = {
+  id: string
+  label: string
+  value: string
+  icon?: string
+  visible?: boolean
+  custom?: boolean
+  displayLabel?: boolean
 }
 
 export type BasicInfo = {
+  birthDate: string
   name: string
   title: string
+  employementStatus: string
   email: string
   phone: string
   location: string
-  birthDate: string
-  gender: string
+  icons: Record<string, string>
   photo: string
+  photoConfig: PhotoConfig
+  fieldOrder?: BasicFieldType[]
+  customFields: CustomFieldType[]
+  githubKey: string
+  githubUseName: string
+  githubContributionsVisible: boolean
+  layout?: 'left' | 'center' | 'right'
 }
 
 export type Education = {
@@ -65,12 +110,23 @@ export type Project = {
   date: string
   description: string
   visible: boolean
+  link?: string
+  linkLabel?: string
 }
 
-export type Skill = {
+export type Certificate = {
   id: string
-  name: string
-  level: number
+  url: string
+  width: number
+}
+
+export type CustomItem = {
+  id: string
+  title: string
+  subtitle: string
+  dateRange: string
+  description: string
+  visible: boolean
 }
 
 export type ResumeData = {
@@ -82,10 +138,14 @@ export type ResumeData = {
   education: Education[]
   experience: Experience[]
   projects: Project[]
-  skills: Skill[]
-  selfEvaluation: string
-  globalSettings: GlobalSettings
+  certificates: Certificate[]
+  customData: Record<string, CustomItem[]>
+  skillContent: string
+  selfEvaluationContent: string
+  activeSection: string
+  draggingProjectId: string | null
   menuSections: MenuSection[]
+  globalSettings: GlobalSettings
   createdAt: string
   updatedAt: string
 }
@@ -115,7 +175,7 @@ export type TemplateViewModel = {
     title: string
     contacts: string[]
   }
-  skills: ViewListItem[]
+  skills: string[]
   education: ViewListItem[]
   experience: ViewListItem[]
   projects: ViewListItem[]

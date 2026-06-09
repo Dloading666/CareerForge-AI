@@ -1,5 +1,3 @@
-import { Card } from '@arco-design/web-react'
-
 import { useResumeEditor } from '../ResumeEditorContext'
 import { BasicInfoSection } from './sections/BasicInfoSection'
 import { EducationSection } from './sections/EducationSection'
@@ -12,7 +10,7 @@ export function EditPanel() {
   const { activeSection, resume } = useResumeEditor()
   if (!resume) return null
 
-  const title = resume.menuSections.find((item) => item.id === activeSection)?.title || '编辑'
+  const activeMenuSection = resume.menuSections.find((s) => s.id === activeSection)
 
   let content = <BasicInfoSection />
   if (activeSection === 'education') content = <EducationSection />
@@ -22,8 +20,14 @@ export function EditPanel() {
   if (activeSection === 'selfEvaluation') content = <SelfEvaluationSection />
 
   return (
-    <Card className="resume-editor-panel" title={title}>
-      {content}
-    </Card>
+    <div className="wb-edit-inner">
+      <div className="wb-edit-section-header">
+        <span className="wb-edit-section-icon">{activeMenuSection?.icon}</span>
+        <span className="wb-edit-section-title">{activeMenuSection?.title ?? '编辑'}</span>
+      </div>
+      <div className="wb-edit-content">
+        {content}
+      </div>
+    </div>
   )
 }
