@@ -84,14 +84,7 @@ export function ResumeCenterPage() {
   return (
     <div className="resume-center-page">
       <div className="resume-center-header">
-        <div>
-          <Typography.Title heading={4} style={{ margin: 0 }}>
-            我的简历
-          </Typography.Title>
-          <Typography.Paragraph style={{ margin: '8px 0 0', color: '#6b7280' }}>
-            在线简历和附件简历放在同一个中心管理。在线简历负责编辑排版，附件简历负责上传既有 PDF / Word。
-          </Typography.Paragraph>
-        </div>
+
         <div className="resume-center-actions">
           <Button icon={<IconRefresh />} onClick={() => void refresh()} loading={loading}>
             刷新
@@ -170,7 +163,7 @@ export function ResumeCenterPage() {
         <div className="resume-center-block-head">
           <div>
             <h3>我的在线简历</h3>
-            <p>创建完成后，会保留在这里继续编辑、导出和交给主智能体后续接入。</p>
+            
           </div>
           <Tag color="blue">已创建 {countLabel}</Tag>
         </div>
