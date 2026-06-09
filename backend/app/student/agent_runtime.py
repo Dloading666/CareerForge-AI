@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import time
 import mimetypes
 import uuid
 from dataclasses import dataclass
@@ -14,10 +16,9 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.admin.master_models import MasterRouteRule
 from app.admin.master_service import DEFAULT_SYSTEM_PROMPT, get_or_create_master_config
 from app.admin.model_service import decrypt_api_key
-from app.admin.models import Agent, ModelConfig
+from app.admin.models import ModelConfig
 from app.auth.models import StudentUser
 from app.auth.service import AuthIdentity
 from app.core.config import get_settings
@@ -30,6 +31,8 @@ from app.student.agent_models import (
 )
 from app.student.agent_schemas import AgentActivityResponse, AgentAttachmentResponse, AgentModelOptionResponse
 from app.student.tool_validation import parse_tool_arguments
+
+logger = logging.getLogger(__name__)
 
 
 # ── Value objects ──────────────────────────────────────────────────────────────
@@ -51,12 +54,6 @@ class ToolDefinition:
     priority: int
     input_schema: dict[str, Any]
     metadata: dict[str, Any]
-
-
-@dataclass
-class PlannedToolCall:
-    tool: ToolDefinition
-    arguments: dict[str, Any]
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -212,42 +209,6 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
 ]
 
 
-# ── Tool pool assembly ─────────────────────────────────────────────────────────
-
-
-def assemble_tool_pool(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    pool: dict[str, ToolDefinition] = {}
-    for tool in BUILTIN_TOOLS:
-        pool[tool.name] = tool
-
-    for skill in list_skills(db, include_disabled=False):
-        data = serialize_skill(skill)
-        name = _tool_safe_name(str(data["slug"]))
-        if name in pool:
-            continue
-        pool[name] = ToolDefinition(
-            name=name,
-            description=str(data.get("description") or data.get("name") or "Skill 工具"),
-            source="skill",
-            priority=500,
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "context": {"type": "string"},
-                },
-                "required": ["task"],
-            },
-            metadata=data,
-        )
-
-    for tool in _discover_mcp_tools(db, identity.tenant_id):
-        if tool.name in pool:
-            continue
-        pool[tool.name] = tool
-
-    return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
-
 
 def _tool_safe_name(value: str) -> str:
     clean = "".join(ch if ch.isalnum() else "_" for ch in value.lower()).strip("_")
@@ -281,6 +242,7 @@ def _extract_attachment_text(path: Path, content_type: str, ext: str) -> str:
         if content_type.startswith("image/"):
             return _extract_image_summary(path)
     except Exception as exc:
+        logger.exception("附件解析失败: %s", path)
         return f"附件已保存，但自动解析失败：{str(exc)[:200]}"
     return "附件已保存，当前格式需要专用 Skill 或外部工具进一步解析。"
 
@@ -331,19 +293,6 @@ def _extract_image_summary(path: Path) -> str:
         width, height = image.size
         mode = image.mode
     return f"图片附件已保存：{width}x{height}，色彩模式 {mode}。如所选模型支持视觉输入，将随请求一并传入。"
-
-
-def _discover_mcp_tools(db: Session, tenant_id: int) -> list[ToolDefinition]:
-    return [
-        ToolDefinition(
-            name="mcp__reserved__tool_discovery",
-            description="MCP 工具发现占位，支持后续接入 stdio/SSE/Streamable HTTP MCP 服务。",
-            source="mcp",
-            priority=100,
-            input_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": []},
-            metadata={"tenant_id": tenant_id, "status": "reserved"},
-        )
-    ]
 
 
 # ── Session CRUD ───────────────────────────────────────────────────────────────
@@ -698,48 +647,6 @@ def _claim_message_attachments(
     return rows
 
 
-# ── Tool planning ──────────────────────────────────────────────────────────────
-
-
-async def _run_tool_planning(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    message: StudentAgentMessage,
-    attachments: list[StudentAgentAttachment],
-    tool_pool: list[ToolDefinition],
-) -> AsyncIterator[tuple[str, dict[str, Any], Optional[RuntimeObservation]]]:
-    text = message.content
-    for planned in _plan_tool_calls(db, identity, session, text, tool_pool, attachments):
-        activity_kind = planned.tool.metadata.get("kind") or planned.tool.source
-        started = _save_activity(
-            db,
-            session,
-            message,
-            kind=str(activity_kind),
-            name=planned.tool.name,
-            status_value="started",
-            summary=_tool_start_label(planned.tool, planned.arguments),
-            detail={"source": planned.tool.source, "arguments": planned.arguments},
-        )
-        yield "activity.started", serialize_activity(started).model_dump(mode="json"), None
-
-        result = await _execute_tool_call(db, identity, session, text, planned, attachments)
-        completed = _complete_activity(
-            db,
-            started,
-            status_value=result["status"],
-            summary=result["summary"],
-            detail=result,
-        )
-        event_name = "activity.completed" if result["status"] == "completed" else "activity.failed"
-        yield event_name, serialize_activity(completed).model_dump(mode="json"), RuntimeObservation(
-            kind=str(activity_kind),
-            name=planned.tool.name,
-            summary=result["summary"],
-            detail=result,
-        )
-
 
 def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
     """Human-readable 'in progress' label shown in the activity chip."""
@@ -769,181 +676,6 @@ def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
         return "正在探索 MCP 工具…"
     return f"正在执行 {tool.name}…"
 
-
-def _plan_tool_calls(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    text: str,
-    tool_pool: list[ToolDefinition],
-    attachments: list[StudentAgentAttachment],
-) -> list[PlannedToolCall]:
-    by_name = {tool.name: tool for tool in tool_pool}
-    calls: list[PlannedToolCall] = []
-    lowered = text.lower()
-
-    if session.summary or _message_count(db, session.id) > 1:
-        calls.append(PlannedToolCall(by_name["get_session_context"], {"limit": 8}))
-
-    if any(word in lowered for word in ["我", "我的", "背景", "专业", "简历", "岗位", "面试", "求职", "匹配"]):
-        calls.append(PlannedToolCall(by_name["query_student_profile"], {}))
-
-    if any(word in lowered for word in ["简历", "经历", "项目", "resume"]):
-        calls.append(PlannedToolCall(by_name["read_resume"], {}))
-
-    if attachments:
-        calls.append(
-            PlannedToolCall(
-                by_name["analyze_uploaded_file"],
-                {"attachment_ids": [attachment.id for attachment in attachments]},
-            )
-        )
-
-    if any(word in lowered for word in ["岗位", "职位", "jd", "公司", "字节", "腾讯", "阿里", "后端", "前端"]):
-        calls.append(PlannedToolCall(by_name["query_job_positions"], {"keyword": text[:80]}))
-
-    if any(word in lowered for word in ["政策", "三方", "网申", "秋招", "春招", "行业", "公司简介"]):
-        calls.append(PlannedToolCall(by_name["query_knowledge_base"], {"query": text[:120]}))
-
-    skill_tool = _select_file_skill_tool(attachments, tool_pool) or _select_skill_tool(text, tool_pool)
-    if skill_tool:
-        calls.append(PlannedToolCall(skill_tool, {"task": text, "context": "学生端主智能体请求"}))
-
-    route = _select_route(db, identity.tenant_id, text)
-    if route:
-        calls.append(PlannedToolCall(by_name["invoke_agent"], {"agent_key": route.target_agent_key, "task": text}))
-
-    if _looks_like_mcp_need(text):
-        mcp_tool = next((tool for tool in tool_pool if tool.source == "mcp"), None)
-        if mcp_tool:
-            calls.append(PlannedToolCall(mcp_tool, {"query": text[:120]}))
-
-    unique: dict[str, PlannedToolCall] = {}
-    for call in calls:
-        unique.setdefault(call.tool.name, call)
-    return list(unique.values())
-
-
-def _message_count(db: Session, session_id: int) -> int:
-    return len(
-        list(
-            db.scalars(
-                select(StudentAgentMessage.id).where(StudentAgentMessage.session_id == session_id).limit(3)
-            ).all()
-        )
-    )
-
-
-def _select_skill_tool(text: str, tool_pool: list[ToolDefinition]) -> Optional[ToolDefinition]:
-    skills = [tool for tool in tool_pool if tool.source == "skill"]
-    if not skills:
-        return None
-    lowered = text.lower()
-    keyword_groups = [
-        ["简历", "经历", "项目", "resume"],
-        ["面试", "自我介绍", "追问", "interview"],
-        ["岗位", "jd", "匹配", "职位", "job"],
-        ["测评", "mbti", "霍兰德", "职业路径", "规划"],
-    ]
-    for keywords in keyword_groups:
-        if any(keyword.lower() in lowered for keyword in keywords):
-            for tool in skills:
-                haystack = f"{tool.name} {tool.description} {' '.join(tool.metadata.get('tags', []))}".lower()
-                if any(keyword.lower() in haystack for keyword in keywords):
-                    return tool
-    return skills[0] if any(word in lowered for word in ["帮我", "分析", "优化", "生成", "规划"]) else None
-
-
-def _select_file_skill_tool(
-    attachments: list[StudentAgentAttachment],
-    tool_pool: list[ToolDefinition],
-) -> Optional[ToolDefinition]:
-    if not attachments:
-        return None
-    skills = [tool for tool in tool_pool if tool.source == "skill"]
-    if not skills:
-        return None
-    ext_text = " ".join(attachment.file_ext for attachment in attachments).lower()
-    file_keywords: list[str] = []
-    if any(ext in ext_text for ext in ["pdf", "doc", "docx"]):
-        file_keywords.extend(["文档", "简历", "pdf", "word", "doc"])
-    if any(ext in ext_text for ext in ["xls", "xlsx", "csv"]):
-        file_keywords.extend(["表格", "excel", "xlsx", "数据"])
-    if any(attachment.content_type.startswith("image/") for attachment in attachments):
-        file_keywords.extend(["图片", "照片", "image", "视觉"])
-    for tool in skills:
-        haystack = f"{tool.name} {tool.description} {' '.join(tool.metadata.get('tags', []))}".lower()
-        if any(keyword.lower() in haystack for keyword in file_keywords):
-            return tool
-    return None
-
-
-# ── Tool execution ─────────────────────────────────────────────────────────────
-
-
-async def _execute_tool_call(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    user_text: str,
-    planned: PlannedToolCall,
-    attachments: list[StudentAgentAttachment],
-) -> dict[str, Any]:
-    tool = planned.tool
-    if tool.source == "skill":
-        return _invoke_skill(tool, planned.arguments)
-    if tool.source == "mcp":
-        return _invoke_mcp_placeholder(tool)
-    if tool.name == "invoke_agent":
-        route = _select_route_by_key(db, identity.tenant_id, str(planned.arguments.get("agent_key") or ""))
-        if not route:
-            return {"status": "failed", "summary": "没有找到可调用的子智能体。", "tool": tool.name}
-        result = await _call_subagent_provider(
-            route, str(planned.arguments.get("task") or user_text), f"student-{identity.user_id}"
-        )
-        return {"tool": tool.name, "agent_key": route.target_agent_key, "agent_name": route.target_agent_name, **result}
-    if tool.name == "query_student_profile":
-        return _query_student_profile(db, identity)
-    if tool.name == "query_job_positions":
-        keyword = str(planned.arguments.get("keyword") or user_text)
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": f"已检索岗位库：围绕「{keyword[:30]}」生成岗位匹配上下文（岗位库后端待接入真实数据源）。",
-            "keyword": keyword,
-        }
-    if tool.name == "query_knowledge_base":
-        query = str(planned.arguments.get("query") or user_text)
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": f"已检索知识库：{query[:40]}（知识库 RAG adapter 已预留）。",
-            "query": query,
-        }
-    if tool.name == "read_resume":
-        if attachments:
-            names = "、".join(attachment.original_name for attachment in attachments[:4])
-            return {
-                "status": "completed",
-                "tool": tool.name,
-                "summary": f"已读取本轮材料：{names}。",
-            }
-        return {
-            "status": "completed",
-            "tool": tool.name,
-            "summary": "已检查简历材料：当前会话还没有上传简历文件，请学生补充材料。",
-        }
-    if tool.name == "analyze_uploaded_file":
-        return _analyze_uploaded_files(attachments)
-    if tool.name == "send_notification":
-        return {
-            "status": "failed",
-            "tool": tool.name,
-            "summary": "通知发送属于需要确认的动作，当前对话未获得学生确认，已跳过。",
-        }
-    if tool.name == "get_session_context":
-        return _get_session_context(db, session, int(planned.arguments.get("limit") or 8))
-    return {"status": "failed", "tool": tool.name, "summary": f"工具 {tool.name} 尚未实现 handler。"}
 
 
 def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -995,15 +727,6 @@ def _analyze_uploaded_files(attachments: list[StudentAgentAttachment]) -> dict[s
     }
 
 
-def _invoke_mcp_placeholder(tool: ToolDefinition) -> dict[str, Any]:
-    return {
-        "status": "completed",
-        "tool": tool.name,
-        "summary": "已探索 MCP 工具池（管理端接入具体 MCP 服务后动态发现）。",
-        "adapter": "reserved",
-        "supported_transports": ["stdio", "sse", "streamable_http"],
-    }
-
 
 # ── Web tools (Jina Reader) ───────────────────────────────────────────────────
 
@@ -1035,6 +758,7 @@ def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
     except httpx.HTTPStatusError as exc:
         return {"status": "failed", "tool": "read_webpage", "summary": f"HTTP {exc.response.status_code}：{url}"}
     except Exception as exc:
+        logger.warning("read_webpage 失败: %s", exc)
         return {"status": "failed", "tool": "read_webpage", "summary": f"读取失败：{exc}"}
 
 
@@ -1067,6 +791,7 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
                 "content": content,
             }
         except Exception:
+            logger.debug("Jina Search API 调用失败，回退到 DuckDuckGo")
             pass  # 回退到方式二
 
     # 方式二：通过 Jina Reader 抓 DuckDuckGo 搜索结果页（免费）
@@ -1087,6 +812,7 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
             "content": content,
         }
     except Exception:
+        logger.warning("web_search 所有方式均失败: query=%s", query)
         pass  # 回退到方式三
 
     # 方式三：回退到 read_webpage，让模型用已知 URL 自行补充
@@ -1101,15 +827,6 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
         "fallback_hint": "read_webpage",
     }
 
-
-def _select_route_by_key(db: Session, tenant_id: int, agent_key: str) -> Optional[MasterRouteRule]:
-    return db.scalar(
-        select(MasterRouteRule).where(
-            MasterRouteRule.tenant_id == tenant_id,
-            MasterRouteRule.enabled.is_(True),
-            MasterRouteRule.target_agent_key == agent_key,
-        )
-    )
 
 
 def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any]:
@@ -1150,101 +867,7 @@ def _get_session_context(db: Session, session: StudentAgentSession, limit: int) 
     }
 
 
-def _select_route(db: Session, tenant_id: int, text: str) -> Optional[MasterRouteRule]:
-    routes = list(
-        db.scalars(
-            select(MasterRouteRule)
-            .where(MasterRouteRule.tenant_id == tenant_id, MasterRouteRule.enabled.is_(True))
-            .order_by(MasterRouteRule.priority.desc(), MasterRouteRule.id.asc())
-        ).all()
-    )
-    if not routes:
-        return None
-    lowered = text.lower()
-    for route in routes:
-        haystack = f"{route.intent} {route.target_agent_name} {route.target_agent_key}".lower()
-        if any(token in haystack for token in _query_tokens(lowered)):
-            return route
-    return routes[0] if any(word in lowered for word in ["面试", "岗位", "简历", "jd", "求职"]) else None
 
-
-def _query_tokens(text: str) -> list[str]:
-    tokens = ["面试", "岗位", "职位", "匹配", "简历", "项目", "jd", "求职", "三方", "网申", "interview", "resume", "job"]
-    return [token for token in tokens if token in text]
-
-
-def _looks_like_mcp_need(text: str) -> bool:
-    lowered = text.lower()
-    return any(word in lowered for word in ["查询", "搜索", "日历", "宣讲", "岗位数据", "实时", "mcp", "网申", "公司信息"])
-
-
-async def _call_subagent_provider(route: MasterRouteRule, task: str, user_key: str) -> dict[str, Any]:
-    if route.target_provider == "dify":
-        return await _call_dify_subagent(route, task, user_key)
-    return {
-        "status": "completed",
-        "provider": "builtin",
-        "summary": f"已运行子智能体「{route.target_agent_name}」，建议围绕「{task[:30]}」继续拆解目标。",
-    }
-
-
-async def _call_dify_subagent(route: MasterRouteRule, task: str, user_key: str) -> dict[str, Any]:
-    try:
-        config = json.loads(route.provider_config_json or "{}")
-    except json.JSONDecodeError:
-        config = {}
-    base_url = str(config.get("api_base_url") or config.get("base_url") or "").rstrip("/")
-    api_key = str(config.get("api_key") or "")
-    if not base_url or not api_key:
-        return {
-            "status": "failed",
-            "provider": "dify",
-            "summary": f"Dify sub-agent [{route.target_agent_name}] missing api_base_url/api_key",
-        }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    inputs = config.get("inputs") or {}
-    
-    # Try multiple endpoints to support different Dify app modes
-    endpoints = [
-        ("/chat-messages", {"inputs": inputs, "query": task, "response_mode": "blocking", "user": user_key}),
-        ("/completion-messages", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
-        ("/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_key}),
-    ]
-    if config.get("conversation_id"):
-        for _, body in endpoints:
-            body["conversation_id"] = config["conversation_id"]
-    
-    last_error = ""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(float(config.get("timeout_sec", 45)))) as client:
-        for path, body in endpoints:
-            try:
-                response = await client.post(f"{base_url}{path}", headers=headers, json=body)
-                if response.status_code == 200:
-                    data = response.json()
-                    answer = str(data.get("answer") or data.get("data", {}).get("answer") or data.get("data", {}).get("outputs", {}).get("text", "") or "").strip()
-                    return {
-                        "status": "completed",
-                        "provider": "dify",
-                        "summary": answer[:500] or f"Dify sub-agent [{route.target_agent_name}] completed (no text returned)",
-                        "conversation_id": data.get("conversation_id"),
-                        "message_id": data.get("message_id"),
-                    }
-                elif response.status_code == 401:
-                    return {"status": "failed", "provider": "dify", "summary": f"Dify sub-agent [{route.target_agent_name}] invalid API Secret (401)"}
-                else:
-                    try:
-                        detail = response.json()
-                        last_error = detail.get("message", "") or str(detail)[:100]
-                    except Exception:
-                        last_error = f"HTTP {response.status_code}"
-            except Exception as exc:
-                last_error = str(exc)[:100]
-    
-    return {
-        "status": "failed",
-        "provider": "dify",
-        "summary": f"Dify sub-agent [{route.target_agent_name}] failed: {last_error}",
-    }
 
 def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional[int]) -> Optional[ModelConfig]:
     if requested_model_id:
@@ -1285,121 +908,6 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
     )
 
 
-# ── LLM streaming ─────────────────────────────────────────────────────────────
-
-
-async def _stream_llm_response(
-    model: ModelConfig,
-    messages: list[dict[str, Any]],
-    reasoning_effort: str,
-) -> AsyncIterator[str]:
-    """Stream tokens from an OpenAI-compatible chat/completions endpoint."""
-    try:
-        api_key = decrypt_api_key(model.api_key_cipher or "")
-        payload: dict[str, Any] = {
-            "model": model.model_identifier,
-            "messages": messages,
-            "temperature": model.default_temp if model.default_temp is not None else 0.7,
-            "max_tokens": model.max_output or 4096,
-            "stream": True,
-        }
-        if _supports_reasoning_effort(model):
-            payload["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort
-
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 60, write=30, pool=5)
-        ) as client:
-            async with client.stream(
-                "POST",
-                f"{model.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(raw)
-                        delta = (obj.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
-                        if delta:
-                            yield delta
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-    except Exception:
-        return
-
-
-# ── Prompt composition ────────────────────────────────────────────────────────
-
-
-def _compose_prompt(
-    db: Session,
-    identity: AuthIdentity,
-    session: StudentAgentSession,
-    user_text: str,
-    observations: list[RuntimeObservation],
-    reasoning_effort: str,
-    model: ModelConfig,
-    attachments: list[StudentAgentAttachment],
-) -> list[dict[str, Any]]:
-    config = get_or_create_master_config(db, identity.tenant_id)
-    system_prompt = (config.system_prompt or DEFAULT_SYSTEM_PROMPT).strip()
-    effort_text = _effort_instruction(reasoning_effort)
-
-    system_content = (
-        system_prompt
-        + "\n\n## 回答规范\n"
-        "- 工具调用已由 Harness 完成，你直接综合结果给出最终回答。\n"
-        "- 使用 Markdown 格式（标题、加粗、列表、代码块），让回答清晰可读。\n"
-        "- 先给结论，再给可执行步骤，简洁有力。\n"
-        "- 禁止输出工具调用 JSON、thoughts 字段或任何内部推理链。\n"
-        f"- 推理强度：{effort_text}"
-    )
-
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
-
-    # Load historical conversation as proper multi-turn pairs (excluding current user msg)
-    history_rows = list(
-        db.scalars(
-            select(StudentAgentMessage)
-            .where(StudentAgentMessage.session_id == session.id)
-            .order_by(StudentAgentMessage.id.asc())
-            .limit(24)
-        ).all()
-    )
-    for msg in history_rows[:-1]:
-        if msg.role not in ("user", "assistant"):
-            continue
-        content = msg.content
-        if len(content) > 4000:
-            content = content[:4000] + "\n…[已截断]"
-        messages.append({"role": msg.role, "content": content})
-
-    inline_images = _has_image_attachments(attachments) and _supports_image_input(model)
-
-    # Build current user turn with tool observations appended
-    parts: list[str] = [user_text]
-    if observations:
-        obs_lines = "\n".join(f"- **{o.name}**: {o.summary}" for o in observations)
-        parts.append(f"\n---\n**工具执行摘要**\n{obs_lines}")
-    if attachments:
-        parts.append(f"\n---\n**附件内容**\n{_attachment_prompt_text(attachments, inline_images)}")
-    current_text = "\n".join(parts)
-
-    if inline_images:
-        image_parts = _attachment_image_parts(attachments)
-        messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": current_text}, *image_parts],
-        })
-    else:
-        messages.append({"role": "user", "content": current_text})
-
-    return messages
 
 
 def _effort_instruction(reasoning_effort: str) -> str:
@@ -1660,8 +1168,14 @@ async def run_agent_loop(
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """The harness-owned ReAct loop. Yields (sse_event_name, data) tuples."""
     assistant_id = assistant_message.id
+    deadline = time.monotonic() + 300  # 5 分钟总超时
+    logger.info("agent_loop 开始 session=%s model=%s max_iter=%s", session.id, model.model_identifier, max_iterations)
 
     for iteration in range(max_iterations):
+        if time.monotonic() > deadline:
+            logger.warning("agent_loop 超时 session=%s iteration=%s", session.id, iteration)
+            yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[回复超时，请重试]"}
+            break
         turn_content = ""
         turn_tool_calls: list[dict[str, Any]] = []
         turn_error = False
@@ -1859,6 +1373,7 @@ async def _stream_llm_turn(
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
     except Exception as exc:  # noqa: BLE001 — surfaced to caller for graceful fallback
+        logger.exception("LLM 流式调用失败")
         yield "error", str(exc)[:200]
         return
 
@@ -1902,11 +1417,16 @@ async def _dispatch_tool(
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
+_TOOL_RESULT_KEYS_TO_STRIP = {"tool", "status", "iteration", "tool_call_id", "arguments"}
+
+
 def _tool_result_for_model(result: dict[str, Any]) -> str:
+    """序列化工具结果发给模型，去掉内部元数据字段以节省 context window。"""
+    filtered = {k: v for k, v in result.items() if k not in _TOOL_RESULT_KEYS_TO_STRIP}
     try:
-        text = json.dumps(result, ensure_ascii=False)
+        text = json.dumps(filtered, ensure_ascii=False)
     except (TypeError, ValueError):
-        text = str(result)
+        text = str(filtered)
     return text[:6000]
 
 

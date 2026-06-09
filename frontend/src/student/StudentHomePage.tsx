@@ -101,7 +101,7 @@ type AgentModelOption = {
   timeout_sec: number | null
 }
 
-type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type ReasoningEffort = 'low' | 'medium' | 'high'
 
 type StreamEvent = {
   event: string
@@ -123,7 +123,6 @@ const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
-  { value: 'xhigh', label: '超高' },
 ]
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -393,6 +392,15 @@ function AssistantMessage({
 
         {message.content ? (
           <div className="assistant-answer">
+            {!pending && (
+              <button
+                className="msg-copy-btn"
+                title="复制"
+                onClick={() => navigator.clipboard.writeText(message.content)}
+              >
+                <IconCopy />
+              </button>
+            )}
             <MarkdownMessage content={message.content} />
             {pending && <span className="stream-cursor" />}
           </div>
@@ -502,6 +510,8 @@ export function StudentHomePage() {
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const optimisticIdRef = useRef(-1)
+  const isNearBottomRef = useRef(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
 
   const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
     { key: 'agent', icon: <IconRobot />, label: '主智能体' },
@@ -522,10 +532,22 @@ export function StudentHomePage() {
 
 
 
-  // Auto-scroll
+  // Smart auto-scroll: only scroll if user is near bottom
   useEffect(() => {
     const node = threadRef.current
-    if (node) node.scrollTop = node.scrollHeight
+    if (!node) return
+    const onScroll = () => {
+      const near = node.scrollHeight - node.scrollTop - node.clientHeight < 100
+      isNearBottomRef.current = near
+      setShowScrollBtn(!near)
+    }
+    node.addEventListener('scroll', onScroll, { passive: true })
+    return () => node.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    const node = threadRef.current
+    if (node && isNearBottomRef.current) node.scrollTop = node.scrollHeight
   }, [messages, activities, streaming])
 
   // 今日日程提醒：登录后拉取今天的事件，顶部横幅提示
@@ -829,6 +851,7 @@ export function StudentHomePage() {
       if (!controller.signal.aborted) {
         setNotice(error instanceof Error ? error.message : '主智能体回复失败')
         setPendingAttachments((prev) => [...sendingAttachments, ...prev])
+        setInputValue(content) // 失败时恢复输入框内容，方便重试
       }
     } finally {
       setStreaming(false)
@@ -878,6 +901,13 @@ export function StudentHomePage() {
   const stopStreaming = () => {
     abortRef.current?.abort()
     setStreaming(false)
+    setMessages((prev) => {
+      const last = prev[prev.length - 1]
+      if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
+        return [...prev.slice(0, -1), { ...last, content: last.content + '\n\n*[已停止]*' }]
+      }
+      return prev
+    })
   }
 
   const handleSelectSession = async (s: AgentSession) => {
@@ -897,6 +927,7 @@ export function StudentHomePage() {
       if (!sess) sess = await createAgentSession()
       setUploadingAttachment(true)
       setNotice(null)
+      if (files.length > 8) setNotice('最多同时上传 8 个文件，已自动选择前 8 个。')
       for (const file of files.slice(0, 8)) {
         const form = new FormData()
         form.append('file', file)
@@ -1080,7 +1111,14 @@ export function StudentHomePage() {
             )}
             <div ref={threadRef} className="agent-thread">
               {bootingAgent && <div className="agent-system-line">正在连接主智能体会话…</div>}
-              {notice && <div className="agent-error-line">{notice}</div>}
+              {notice && (
+                <div className="agent-error-line">
+                  <span>{notice}</span>
+                  <button className="agent-error-close" onClick={() => setNotice(null)}>
+                    <IconClose />
+                  </button>
+                </div>
+              )}
               <AnnouncementBanner />
 
               {historyLoading && (
@@ -1124,7 +1162,7 @@ export function StudentHomePage() {
                         })}
                       </div>
                     )}
-                    {message.content && <div className="message-bubble user">{message.content}</div>}
+                    {message.content && <div className="message-bubble user"><MarkdownMessage content={message.content} /></div>}
                   </div>
                 ) : (
                   <AssistantMessage
@@ -1150,6 +1188,18 @@ export function StudentHomePage() {
                 />
               )}
             </div>
+
+            {showScrollBtn && (
+              <button
+                className="scroll-to-bottom-btn"
+                onClick={() => {
+                  const node = threadRef.current
+                  if (node) node.scrollTop = node.scrollHeight
+                }}
+              >
+                <IconCaretDown />
+              </button>
+            )}
 
             <div
               className={`agent-composer${isDraggingOver ? ' drag-over' : ''}`}
