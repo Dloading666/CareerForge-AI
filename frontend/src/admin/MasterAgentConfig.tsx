@@ -153,10 +153,11 @@ export function MasterAgentConfig() {
       void fetchRoutes()
 
       // 加载模型列表（用于模型选择器）
-      void apiRequest<{ list: ModelOption[] }>('/api/v1/admin/models?size=100&capability=chat')
+      void apiRequest<{ list: ModelOption[] }>('/api/v1/admin/models?size=100')
         .then((r) => {
           if (alive) {
-            setModelOptions(r.list)
+            // 主智能体不可使用 TTS 模型，过滤掉
+            setModelOptions(r.list.filter((m) => m.capability !== 'tts'))
           }
         })
         .catch(() => {})
@@ -343,7 +344,7 @@ export function MasterAgentConfig() {
           <div className="form-surface">
             {/* 认知层 */}
             <label>
-              默认模型
+              默认模型（仅文本/多模态，TTS 不可用）
               <Select
                 value={config.model_id ?? undefined}
                 placeholder="继承系统默认"
