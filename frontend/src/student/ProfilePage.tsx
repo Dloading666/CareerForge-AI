@@ -1144,9 +1144,9 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           <MenuCard
             icon={<IconFile style={{ fontSize: 26, color: '#f53f3f' }} />}
             label="我的简历"
-            desc="进入简历中心并查看附件简历"
+            desc="进入简历中心编辑、导出与模板切换"
             accentColor="#f53f3f"
-            onClick={() => navigate('/student/resumes?tab=attachments')}
+            onClick={() => navigate('/student/resumes')}
           />
           <MenuCard
             icon={<IconSafe style={{ fontSize: 26, color: '#00b42a' }} />}

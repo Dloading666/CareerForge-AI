@@ -1,13 +1,12 @@
-import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag, Typography } from '@arco-design/web-react'
+import { Button, Empty, Image, Message, Modal, Popconfirm, Spin, Switch, Tag, Typography } from '@arco-design/web-react'
 import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
-import { ResumeGallery } from '../student/ResumeGallery'
 import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
-import { TEMPLATE_REGISTRY } from './templates/registry'
+import { TEMPLATE_REGISTRY, getTemplateConfig } from './templates/registry'
 import type { ResumeData, ResumeSummary } from './types'
 
 export function ResumeCenterPage() {
@@ -188,6 +187,17 @@ export function ResumeCenterPage() {
           <div className="resume-card-grid">
             {resumes.map((resume) => (
               <article key={resume.id} className="resume-card-item">
+                <div className="resume-card-item-thumb">
+                  <Image
+                    src={getTemplateConfig(resume.templateId).thumbnailSrc}
+                    alt={resume.title}
+                    title={resume.title}
+                    description='点击图片放大查看'
+                    width="100%"
+                    height="100%"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                </div>
                 <div className="resume-card-item-head">
                   <div>
                     <h3>{resume.title}</h3>
@@ -222,16 +232,6 @@ export function ResumeCenterPage() {
             ))}
           </div>
         )}
-      </section>
-
-      <section className="resume-center-block">
-        <div className="resume-center-block-head">
-          <div>
-            <h3>附件简历</h3>
-            <p>上传已有 PDF / Word，用于参考、存档或后续做简历优化。</p>
-          </div>
-        </div>
-        <ResumeGallery embedded />
       </section>
 
       <Modal
