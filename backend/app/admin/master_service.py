@@ -119,6 +119,19 @@ def get_or_create_master_config(db: Session, tenant_id: int = 0) -> MasterConfig
 def update_master_config(
     db: Session, payload: MasterConfigUpdate, tenant_id: int = 0
 ) -> MasterConfigResponse:
+    from app.admin.models import ModelConfig
+    from app.student.agent_runtime import CHAT_CAPABLE_CAPABILITIES, TTS_CAPABLE_CAPABILITIES
+    from fastapi import HTTPException, status
+    data = payload.model_dump(exclude_unset=True)
+    model_id = data.get("model_id")
+    if model_id:
+        model = db.get(ModelConfig, model_id)
+        if not model:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选模型不存在")
+        if model.capability in TTS_CAPABLE_CAPABILITIES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="主智能体不可使用 TTS 模型")
+        if model.capability not in CHAT_CAPABLE_CAPABILITIES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="主智能体仅可使用文本/多模态模型")
     row = db.scalar(
         select(MasterAgentConfig).where(MasterAgentConfig.tenant_id == tenant_id)
     )
@@ -126,7 +139,7 @@ def update_master_config(
         row = MasterAgentConfig(tenant_id=tenant_id, system_prompt=DEFAULT_SYSTEM_PROMPT)
         db.add(row)
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in data.items():
         setattr(row, field, value)
 
     db.commit()

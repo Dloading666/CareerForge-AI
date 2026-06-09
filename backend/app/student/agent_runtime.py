@@ -63,6 +63,17 @@ class ToolDefinition:
 # "chat" option in the admin form), so the student side must accept those — plus
 # "chat" for backward compatibility. Embedding / rerank models are excluded.
 CHAT_CAPABLE_CAPABILITIES = ("text", "multimodal", "chat")
+
+# TTS 模型仅供面试官类智能体使用，与聊天模型互斥
+TTS_CAPABLE_CAPABILITIES = ("tts",)
+INTERVIEW_AGENT_CATEGORIES = ("interview",)
+
+
+def _agent_allowed_capabilities(category: str | None) -> tuple[str, ...]:
+    """根据智能体类别返回允许使用的模型 capability 集合。"""
+    if category in INTERVIEW_AGENT_CATEGORIES:
+        return TTS_CAPABLE_CAPABILITIES
+    return CHAT_CAPABLE_CAPABILITIES
 AUTO_ATTACHMENT_PROMPT = "请帮我分析上传的附件。"
 
 
@@ -310,14 +321,18 @@ def create_session(db: Session, identity: AuthIdentity, title: Optional[str]) ->
     return session
 
 
-def list_available_models(db: Session, identity: AuthIdentity) -> list[AgentModelOptionResponse]:
+def list_available_models(
+    db: Session,
+    identity: AuthIdentity,
+    allowed_capabilities: tuple[str, ...] = CHAT_CAPABLE_CAPABILITIES,
+) -> list[AgentModelOptionResponse]:
     rows = db.scalars(
         select(ModelConfig)
         .where(
             ModelConfig.tenant_id == identity.tenant_id,
             ModelConfig.is_deleted.is_(False),
             ModelConfig.open_to_student.is_(True),
-            ModelConfig.capability.in_(CHAT_CAPABLE_CAPABILITIES),
+            ModelConfig.capability.in_(allowed_capabilities),
             ModelConfig.status == "active",
         )
         .order_by(ModelConfig.id.asc())
@@ -869,7 +884,12 @@ def _get_session_context(db: Session, session: StudentAgentSession, limit: int) 
 
 
 
-def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional[int]) -> Optional[ModelConfig]:
+def _select_chat_model(
+    db: Session,
+    tenant_id: int,
+    requested_model_id: Optional[int],
+    allowed_capabilities: tuple[str, ...] = CHAT_CAPABLE_CAPABILITIES,
+) -> Optional[ModelConfig]:
     if requested_model_id:
         model = db.get(ModelConfig, requested_model_id)
         if (
@@ -877,7 +897,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             and model.tenant_id == tenant_id
             and not model.is_deleted
             and model.open_to_student
-            and model.capability in CHAT_CAPABLE_CAPABILITIES
+            and model.capability in allowed_capabilities
             and model.status == "active"
         ):
             return model
@@ -891,7 +911,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             and model.tenant_id == tenant_id
             and not model.is_deleted
             and model.open_to_student
-            and model.capability in CHAT_CAPABLE_CAPABILITIES
+            and model.capability in allowed_capabilities
             and model.status == "active"
         ):
             return model
@@ -901,7 +921,7 @@ def _select_chat_model(db: Session, tenant_id: int, requested_model_id: Optional
             ModelConfig.tenant_id == tenant_id,
             ModelConfig.is_deleted.is_(False),
             ModelConfig.open_to_student.is_(True),
-            ModelConfig.capability.in_(CHAT_CAPABLE_CAPABILITIES),
+            ModelConfig.capability.in_(allowed_capabilities),
             ModelConfig.status == "active",
         )
         .order_by(ModelConfig.id.asc())
