@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
-import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
+import { deleteResume, downloadResumePdf, getResume, getResumeThumbnailUrl, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
-import { getTemplateConfig } from './templates/registry'
+
 import type { ResumeData, ResumeSummary } from './types'
 
 export function ResumeCenterPage() {
@@ -134,7 +134,7 @@ export function ResumeCenterPage() {
               <article key={resume.id} className="resume-card-item">
                 <div className="resume-card-item-thumb">
                   <Image
-                    src={getTemplateConfig(resume.templateId).thumbnailSrc}
+                    src={getResumeThumbnailUrl(resume.id)}
                     alt={resume.title}
                     title={resume.title}
                     description='点击图片放大查看'

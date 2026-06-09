@@ -13,6 +13,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.graphics.shapes import Drawing, Rect, String, Line
+from reportlab.graphics import renderPM
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -473,3 +475,109 @@ def export_resume_pdf(
         "Content-Disposition": f'attachment; filename="{filename}.pdf"',
     }
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+
+
+_THUMB_W = 360
+_THUMB_H = 510
+
+def _safe_short(text, limit=36):
+    value = _escape_text(text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
+def _render_resume_thumbnail_png(row):
+    data = _merge_resume_payload(row)
+    basic = data.get("basic") or {}
+    theme = TEMPLATE_COLORS.get(row.template_id, TEMPLATE_COLORS[DEFAULT_TEMPLATE_ID])
+    text_dark = colors.HexColor("#0f172a")
+    text_muted = colors.HexColor("#64748b")
+    rule = colors.HexColor("#e2e8f0")
+    surface = colors.HexColor("#ffffff")
+    d = Drawing(_THUMB_W, _THUMB_H)
+    d.add(Rect(0, 0, _THUMB_W, _THUMB_H, fillColor=surface, strokeColor=None))
+    d.add(Rect(0, _THUMB_H - 70, _THUMB_W, 70, fillColor=theme, strokeColor=None))
+    name = _safe_short(basic.get("name") or row.title, 18)
+    d.add(String(20, _THUMB_H - 35, name, fontName="Helvetica-Bold", fontSize=18, fillColor=surface))
+    title_text = _safe_short(basic.get("title"), 30)
+    if title_text:
+        d.add(String(20, _THUMB_H - 55, title_text, fontName="Helvetica", fontSize=9, fillColor=surface))
+    contact_parts = [v for v in [basic.get("phone"), basic.get("email"), basic.get("location")] if v]
+    contact_line = "  ".join(_safe_short(p, 22) for p in contact_parts[:3])
+    y = _THUMB_H - 88
+    if contact_line:
+        d.add(String(20, y, contact_line, fontName="Helvetica", fontSize=7, fillColor=text_muted))
+    body_top = _THUMB_H - 110
+    line_height = 11
+    max_y = 40
+    def draw_section(title, lines):
+        nonlocal y
+        if y < max_y + 30:
+            return
+        d.add(Rect(14, y - 2, 4, 11, fillColor=theme, strokeColor=None))
+        d.add(String(24, y, _safe_short(title, 16), fontName="Helvetica-Bold", fontSize=9, fillColor=theme))
+        y -= 14
+        if not lines:
+            d.add(String(24, y, _safe_short("（暂无内容）", 32), fontName="Helvetica-Oblique", fontSize=7, fillColor=text_muted))
+            y -= line_height
+            return
+        for line in lines[:5]:
+            if y < max_y:
+                break
+            d.add(String(24, y, _safe_short(line, 56), fontName="Helvetica", fontSize=7, fillColor=text_dark))
+            y -= line_height
+        y -= 4
+    skill_lines = []
+    for item in (data.get("skills") or []):
+        if not item.get("name"):
+            continue
+        level = item.get("level") or 3
+        skill_lines.append(f"{item.get('name')}  Lv.{level}")
+    draw_section("专业技能", skill_lines)
+    exp_lines = []
+    for item in (data.get("experience") or []):
+        if item.get("visible") is False:
+            continue
+        header = " / ".join(part for part in [item.get("company"), item.get("position"), item.get("date")] if part)
+        if header:
+            exp_lines.append(header)
+        for line in _split_lines(item.get("details"))[:2]:
+            exp_lines.append("• " + line)
+    draw_section("工作经历", exp_lines)
+    proj_lines = []
+    for item in (data.get("projects") or []):
+        if item.get("visible") is False:
+            continue
+        header = " / ".join(part for part in [item.get("name"), item.get("role"), item.get("date")] if part)
+        if header:
+            proj_lines.append(header)
+        for line in _split_lines(item.get("description"))[:2]:
+            proj_lines.append("• " + line)
+    draw_section("项目经历", proj_lines)
+    edu_lines = []
+    for item in (data.get("education") or []):
+        if item.get("visible") is False:
+            continue
+        header = " / ".join(part for part in [item.get("school"), item.get("major"), item.get("degree"), item.get("endDate") or item.get("startDate")] if part)
+        if header:
+            edu_lines.append(header)
+    draw_section("教育经历", edu_lines)
+    eval_lines = _split_lines(data.get("selfEvaluation"))[:3]
+    draw_section("自我评价", eval_lines)
+    d.add(Line(14, 22, _THUMB_W - 14, 22, strokeColor=rule, strokeWidth=0.6))
+    d.add(String(20, 10, _safe_short(row.title, 36), fontName="Helvetica-Oblique", fontSize=6.5, fillColor=text_muted))
+    buf = BytesIO()
+    renderPM.drawToFile(d, buf, fmt="PNG", bg=0xffffff, dpi=120)
+    return buf.getvalue()
+
+@router.get("/{resume_id}/thumbnail")
+def get_resume_thumbnail(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
+    png_bytes = _render_resume_thumbnail_png(row)
+    headers = {"Cache-Control": "private, max-age=60"}
+    return StreamingResponse(BytesIO(png_bytes), media_type="image/png", headers=headers)

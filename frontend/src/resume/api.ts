@@ -93,3 +93,8 @@ export async function downloadResumePdf(resumeId: number, filename: string) {
   link.click()
   URL.revokeObjectURL(url)
 }
+
+
+export function getResumeThumbnailUrl(resumeId: number): string {
+  return '/api/v1/student/resumes/' + resumeId + '/thumbnail'
+}
