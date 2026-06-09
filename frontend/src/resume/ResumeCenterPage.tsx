@@ -20,7 +20,7 @@ export function ResumeCenterPage() {
 
   const mode = searchParams.get('mode')
 
-  const countLabel = useMemo(() => `${resumes.length}/5`, [resumes.length])
+  const countLabel = useMemo(() => `${resumes.length}/6`, [resumes.length])
 
 
   const refresh = async () => {
@@ -89,7 +89,7 @@ export function ResumeCenterPage() {
           <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
             导入 JSON
           </Button>
-          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 5} onClick={() => navigate('/student/resumes/new')}>
+          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 6} onClick={() => navigate('/student/resumes/new')}>
             新建简历
           </Button>
           <input
@@ -115,7 +115,7 @@ export function ResumeCenterPage() {
       <section className="resume-center-block">
         <div className="resume-center-block-head">
           <div>
-            <h3>我的在线简历</h3>
+            <h3>我的简历</h3>
           </div>
           <Tag color="blue">已创建 {countLabel}</Tag>
         </div>
