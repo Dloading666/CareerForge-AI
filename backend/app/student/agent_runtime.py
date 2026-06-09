@@ -1808,7 +1808,7 @@ def _read_resume_tool(
     return {"status": "completed", "tool": "read_resume", "summary": f"已读取简历：{names}", "resumes": resumes[:4]}
 
 
-_MAX_RESUMES = 5
+_MAX_RESUMES = 6
 _VALID_TEMPLATE_IDS = {"classic", "modern", "elegant"}
 _DEFAULT_GLOBAL_SETTINGS = {
     "classic": {
