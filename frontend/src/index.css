@@ -1870,6 +1870,20 @@ textarea {
   background: #eceef8;
 }
 
+.admin-bell {
+  position: relative;
+}
+
+.admin-bell .arco-badge-count,
+.admin-bell .arco-badge {
+  z-index: 1;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+.admin-bell .arco-btn {
+  font-size: 18px;
+}
+
 .admin-avatar {
   width: 36px;
   height: 36px;
