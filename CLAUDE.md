@@ -67,11 +67,11 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 ### 学生端主智能体运行时（`student/agent_runtime.py`）—— 项目最复杂的部分
 一个自研的 **Agentic Loop（Model + Harness）**：模型用 OpenAI function-calling 自主决定调哪些工具，Harness 负责执行/校验/审计并把结果回灌，直到模型给出最终答复或触顶 `max_iterations`。设计纲领见仓库 `Agent = Model + Harness ...docx`（“Harness 提供信任”）。
 
-1. `assemble_active_tools()` 组装**克制的安全工具池**：内置工具白名单 `ACTIVE_BUILTIN_TOOL_NAMES`（query_student_profile / read_resume / analyze_uploaded_file / get_session_context / export_resume_pdf）+ 已启用 Skill（`skill__<slug>`）+ 已启用子智能体（`subagent__<key>`，真实执行）。**会编造结果的占位工具（岗位库 / 知识库 / MCP）刻意不进池**——对应准则「禁止编造」。
+1. `assemble_active_tools()` 组装**克制的安全工具池**：内置工具白名单 `ACTIVE_BUILTIN_TOOL_NAMES`（query_student_profile / read_resume / analyze_uploaded_file / get_session_context / export_resume_pdf）+ 已启用 Skill（`skill__<slug>`）。**主智能体只调 Skill，不调子智能体**（设计决策 2026-06，见下 4.5）；会编造结果的占位工具（岗位库 / 知识库 / MCP）也刻意不进池——对应准则「禁止编造」。
 2. `stream_master_reply()` 是 SSE 入口：保存用户消息 → 选模型 → `_build_initial_messages()`（硬化 system prompt + 历史多轮 + 附件）→ 创建空 assistant 行 → 进入 `run_agent_loop()`。
 3. `run_agent_loop()` 是 Harness 主循环（**模型不控制循环**）：`_stream_llm_turn()` 带 `tools` 流式调用 → 若返回 `tool_calls` 则先过 `_permission_decision()` 四态权限裁决、再 `_dispatch_tool()` 逐个执行（发 `activity.*` 事件、写 `StudentAgentActivity` 审计）并把结果作为 `role=tool` 回灌 → 否则直接流式输出最终答复。`max_iterations` 取 `MasterAgentConfig.max_iterations`（默认 8，安全上限 20）。模型不支持 `tools`（请求报错）时自动降级为无工具纯文本回答。
-4. **Harness 护栏**：未知工具名 / 非法参数 → 返回结构化错误让模型自我纠正而非崩溃；只暴露能诚实兑现的工具；`permission_mode`（auto/ask/strict）`strict` 时只放行内置工具、拒绝 Skill 与子智能体；`_harness_system_prompt()` 把反幻觉铁律写进 system（简历建议必须先 `read_resume`、禁止虚构经历）。
-4.5. **子智能体**：每条启用的 `MasterRouteRule` 经 `assemble_active_tools()` 暴露为 `subagent__<key>` 工具（描述=`intent`）。`builtin` 走 `_run_builtin_subagent()`（`_resolve_builtin_agent()` 把 key 解析到平台 `agent`，独立上下文跑一轮 `_oneshot_llm`，仅回流摘要），`dify` 走 `_call_dify_subagent()`。
+4. **Harness 护栏**：未知工具名 / 非法参数 → 返回结构化错误让模型自我纠正而非崩溃；只暴露能诚实兑现的工具；`permission_mode`（auto/ask/strict）`strict` 时只放行内置工具、拒绝 Skill；`_harness_system_prompt()` 把反幻觉铁律写进 system（简历建议必须先 `read_resume`、禁止虚构经历），并要求把「面试官 / 职业规划」等沉浸式需求引导到智能体广场。
+4.5. **主智能体与子智能体解耦（2026-06 决策）**：主智能体**不再调用子智能体**，只编排 Skill + 内置工具。任务型能力（简历优化 / 岗位匹配）应做成 Skill；沉浸型人格（AI 面试官 / 职业规划师 / 岗位推荐师）是「智能体广场」里的独立 `Agent`，由学生从广场直接进入**流式多轮对话**（`agent/router.py` 的 `POST /agents/{id}/chat/stream` + 前端 `StudentAgentChat`）。`MasterRouteRule` 仍存在但已不被主循环消费。
 5. **简历工具**：`read_resume` 读取学生在「个人中心—我的简历」已存的 PDF（profile 级附件 `session_id=0`），缺 `extracted_text` 时用 `_ensure_attachment_text()` 现抽现存；`export_resume_pdf` 用 reportlab + **内嵌 CJK 字体**（`_register_cjk_font()` 优先嵌入真实 TTF/TTC，Docker 靠 `fonts-noto-cjk`）渲染可下载 PDF，存为附件并返回 `/data/...` 下载链接，模型以 Markdown 链接呈现给学生。
 6. 模型选择 `_select_chat_model()`：请求指定 model_id > 主智能体配置 model > 第一个对学生开放的 chat 模型。只接受 `capability in ("text","multimodal","chat")` 且 `open_to_student` 且 `status=="active"`。
 
