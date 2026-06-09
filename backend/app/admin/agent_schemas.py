@@ -29,7 +29,6 @@ class AgentCreate(BaseModel):
     use_dify: bool = False
     dify_api_key: Optional[str] = Field(default=None, max_length=256)
     dify_api_base_url: Optional[str] = Field(default=None, max_length=512)
-    dify_app_id: Optional[str] = Field(default=None, max_length=128)
     is_enabled: bool = True; is_published: bool = True
 
 class AgentUpdate(BaseModel):
@@ -53,7 +52,6 @@ class AgentUpdate(BaseModel):
     use_dify: Optional[bool] = None
     dify_api_key: Optional[str] = Field(default=None, max_length=256)
     dify_api_base_url: Optional[str] = Field(default=None, max_length=512)
-    dify_app_id: Optional[str] = Field(default=None, max_length=128)
     is_enabled: Optional[bool] = None; is_published: Optional[bool] = None
 
 class AgentToggle(BaseModel): is_enabled: bool

@@ -18,7 +18,7 @@ def _agent_to_dict(agent: Agent) -> dict:
          "top_p": agent.top_p, "frequency_penalty": agent.frequency_penalty,
          "presence_penalty": agent.presence_penalty, "memory_window": agent.memory_window,
          "use_dify": agent.use_dify, "dify_api_key_cipher": agent.dify_api_key_cipher,
-         "dify_app_id": agent.dify_app_id,
+         "dify_api_base_url": agent.dify_api_base_url,
          "is_enabled": agent.is_enabled, "is_published": agent.is_published,
          "created_at": agent.created_at.isoformat() if agent.created_at else None,
          "updated_at": agent.updated_at.isoformat() if agent.updated_at else None}
@@ -73,7 +73,7 @@ def toggle_agent(db: Session, agent_id: int, *, is_enabled: bool) -> dict:
 
 def _sync_dify_route(db: Session, agent: Agent) -> None:
     """Sync agent Dify config to MasterRouteRule so master agent can call it."""
-    if not agent.use_dify or not agent.dify_api_key_cipher or not agent.dify_app_id:
+    if not agent.use_dify or not agent.dify_api_key_cipher:
         return
     from app.admin.master_models import MasterRouteRule
     from app.admin.model_service import decrypt_api_key
@@ -93,18 +93,25 @@ def _sync_dify_route(db: Session, agent: Agent) -> None:
     provider_config = json.dumps({
         "api_base_url": base_url,
         "api_key": api_key,
-        "app_id": agent.dify_app_id or "",
     }, ensure_ascii=False)
     
+    # intent 是主智能体用来判断「何时调用该子智能体」的工具描述，必须是可读的、
+    # 能体现该子智能体能力的中文。结合名称 + 简介，给模型足够的路由信号。
+    description = (agent.description or "专项就业辅助子智能体").strip()
+    intent_text = (
+        f"{agent.name}：{description}。"
+        f"当学生的需求与「{agent.name}」的能力匹配时，调用该 Dify 子智能体处理并汇总结果。"
+    )
+
     if existing:
-        existing.intent = f"??Dify????{agent.name}???????"
+        existing.intent = intent_text
         existing.target_agent_name = agent.name
         existing.provider_config_json = provider_config
         existing.enabled = agent.is_enabled
     else:
         db.add(MasterRouteRule(
             tenant_id=0,
-            intent=f"??Dify????{agent.name}???????",
+            intent=intent_text,
             target_agent_key=agent_key,
             target_agent_name=agent.name,
             target_provider="dify",

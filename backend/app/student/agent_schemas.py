@@ -70,6 +70,7 @@ class AgentAttachmentResponse(BaseModel):
     file_size: int
     status: str
     created_at: datetime
+    download_url: str | None = None
     model_config = {"from_attributes": True}
 
 
