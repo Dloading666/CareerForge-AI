@@ -1179,6 +1179,34 @@ export function AdminHomePage() {
         agentOptionsLoading={agentOptionsLoading}
         onClose={() => setDrawerVisible(false)}
       />
+      <Modal
+        title="收到新的用户反馈"
+        visible={showNewFeedbackModal}
+        onCancel={() => { setShowNewFeedbackModal(false); markFeedbackSeen() }}
+        onOk={goToFeedbackPage}
+        okText="前往查看"
+        cancelText="稍后处理"
+        maskClosable={false}
+      >
+        {latestFeedbackPreview ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ color: '#4e5969' }}>
+              <strong>{latestFeedbackPreview.student_name || '匿名用户'}</strong>
+              <span style={{ marginLeft: 8 }}>提交了新的反馈</span>
+            </div>
+            <div style={{ padding: 12, background: '#f7f8fa', borderRadius: 8, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              {latestFeedbackPreview.description}
+            </div>
+            {latestFeedbackPreview.created_at ? (
+              <div style={{ color: '#86909c', fontSize: 12 }}>
+                {new Date(latestFeedbackPreview.created_at).toLocaleString('zh-CN')}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div>有新的用户反馈待处理</div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -1231,34 +1259,6 @@ function renderMasterPage(openDrawer: (mode: DrawerMode) => void) {
         </div>
       </section>
 
-      <Modal
-        title="收到新的用户反馈"
-        visible={showNewFeedbackModal}
-        onCancel={() => { setShowNewFeedbackModal(false); markFeedbackSeen() }}
-        onOk={goToFeedbackPage}
-        okText="前往查看"
-        cancelText="稍后处理"
-        maskClosable={false}
-      >
-        {latestFeedbackPreview ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ color: '#4e5969' }}>
-              <strong>{latestFeedbackPreview.student_name || '匿名用户'}</strong>
-              <span style={{ marginLeft: 8 }}>提交了新的反馈</span>
-            </div>
-            <div style={{ padding: 12, background: '#f7f8fa', borderRadius: 8, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-              {latestFeedbackPreview.description}
-            </div>
-            {latestFeedbackPreview.created_at ? (
-              <div style={{ color: '#86909c', fontSize: 12 }}>
-                {new Date(latestFeedbackPreview.created_at).toLocaleString('zh-CN')}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div>有新的用户反馈待处理</div>
-        )}
-      </Modal>
     </div>
   )
 }
