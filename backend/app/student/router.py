@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.service import require_role
@@ -40,6 +40,14 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 MAX_AVATAR_SIZE = 2 * 1024 * 1024
 MAX_BANNER_SIZE = 5 * 1024 * 1024
 
+JOB_SEARCH_STATUS_VALUES = {
+    "unemployed",
+    "employed",
+    "considering",
+    "not_looking",
+}
+
+
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     gender: Optional[str] = None
@@ -49,6 +57,11 @@ class ProfileUpdateRequest(BaseModel):
     grade: Optional[str] = None
     phone: Optional[str] = None
     signature: Optional[str] = None
+    personal_advantages: Optional[str] = None
+    job_search_status: Optional[str] = Field(default=None, max_length=32)
+    expected_position: Optional[str] = Field(default=None, max_length=128)
+    expected_salary: Optional[str] = Field(default=None, max_length=64)
+    expected_location: Optional[str] = Field(default=None, max_length=128)
 
 
 @router.get("/home")
@@ -161,18 +174,35 @@ async def stream_master_message(
     )
 
 
+def _serialize_profile(student) -> dict:
+    return {
+        "id": student.id,
+        "account": student.account,
+        "email": student.email,
+        "name": student.name,
+        "gender": student.gender,
+        "age": student.age,
+        "college": student.college,
+        "major": student.major,
+        "grade": student.grade,
+        "phone": student.phone,
+        "avatar_url": student.avatar_url,
+        "banner_url": student.banner_url,
+        "signature": student.signature,
+        "personal_advantages": student.personal_advantages,
+        "job_search_status": student.job_search_status,
+        "expected_position": student.expected_position,
+        "expected_salary": student.expected_salary,
+        "expected_location": student.expected_location,
+        "email_verified_at": student.email_verified_at.isoformat() if student.email_verified_at else None,
+        "created_at": student.created_at.isoformat() if student.created_at else None,
+    }
+
+
 @router.get("/profile")
 def get_student_profile(current=Depends(require_role("student"))):
     _, student = current
-    return ok({
-        "id": student.id, "account": student.account, "email": student.email,
-        "name": student.name, "gender": student.gender, "age": student.age,
-        "college": student.college, "major": student.major, "grade": student.grade,
-        "phone": student.phone, "avatar_url": student.avatar_url,
-        "banner_url": student.banner_url, "signature": student.signature,
-        "email_verified_at": student.email_verified_at.isoformat() if student.email_verified_at else None,
-        "created_at": student.created_at.isoformat() if student.created_at else None,
-    })
+    return ok(_serialize_profile(student))
 
 
 @router.put("/profile")
@@ -183,17 +213,21 @@ def update_student_profile(
 ):
     _, student = current
     update_data = payload.model_dump(exclude_unset=True)
+    if "job_search_status" in update_data:
+        value = update_data["job_search_status"]
+        if value is not None and value not in JOB_SEARCH_STATUS_VALUES:
+            return error("job_search_status 取值不合法")
     if not update_data:
-        return ok(msg="no fields to update")
+        return ok(_serialize_profile(student), msg="no fields to update")
     for field, value in update_data.items():
+        if value is None:
+            continue
+        if not hasattr(student, field):
+            return error(f"不支持的字段：{field}")
         setattr(student, field, value)
     db.commit()
     db.refresh(student)
-    return ok({
-        "id": student.id, "name": student.name, "gender": student.gender,
-        "age": student.age, "college": student.college, "major": student.major,
-        "grade": student.grade, "phone": student.phone, "signature": student.signature,
-    })
+    return ok(_serialize_profile(student))
 
 
 @router.post("/profile/avatar")
