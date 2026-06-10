@@ -1,6 +1,7 @@
 """模型广场 + 系统设置 — 业务逻辑层"""
 from __future__ import annotations
 
+import json
 import base64
 import time
 from typing import Optional
@@ -102,6 +103,7 @@ async def test_model_connection(db, model_id):
     api_key = decrypt_api_key(model.api_key_cipher) if model.api_key_cipher else None
     success, latency_ms = False, None
     error_message = None
+    error_summary = None
     http_status = None
     response_body = None
     request_url = ''
@@ -132,15 +134,44 @@ async def test_model_connection(db, model_id):
             response_body = resp.text[:8000]
         except Exception:
             response_body = ''
+
+        parsed = None
+        try:
+            parsed = resp.json()
+        except Exception:
+            parsed = None
+
         success = 200 <= resp.status_code < 300
-        if not success:
+
+        if success and isinstance(parsed, dict):
+            err_obj = parsed.get('error')
+            if err_obj:
+                success = False
+                if isinstance(err_obj, dict):
+                    err_msg = err_obj.get('message') or err_obj.get('type') or json.dumps(err_obj, ensure_ascii=False)[:300]
+                    err_code = err_obj.get('code') or err_obj.get('type')
+                else:
+                    err_msg = str(err_obj)[:300]
+                    err_code = None
+                error_summary = err_msg
+                error_message = (f'[{err_code}] {err_msg}' if err_code else err_msg)
+            elif not (parsed.get('choices') or parsed.get('content') or parsed.get('message')):
+                success = False
+                error_summary = '响应缺少 choices/content 字段'
+                error_message = error_summary
+
+        if not success and not error_message:
             error_message = 'HTTP ' + str(resp.status_code)
+            error_summary = error_message
     except httpx.TimeoutException:
-        error_message = f'连接超时 ({model.timeout_sec or 30}s)'
+        msg = f'连接超时 ({model.timeout_sec or 30}s)'
+        error_message = msg; error_summary = msg
     except httpx.ConnectError as e:
-        error_message = f'无法连接到目标地址: {str(e)[:200]}'
+        msg = f'无法连接到目标地址: {str(e)[:200]}'
+        error_message = msg; error_summary = msg
     except Exception as e:
-        error_message = str(e)[:500]
+        msg = str(e)[:500]
+        error_message = msg; error_summary = msg
 
     log_entry = ModelTestLog(model_id=model.id, success=success, latency_ms=latency_ms, error_message=error_message)
     db.add(log_entry); db.commit(); db.refresh(log_entry)
@@ -148,8 +179,8 @@ async def test_model_connection(db, model_id):
         success=log_entry.success, latency_ms=log_entry.latency_ms, error_message=log_entry.error_message,
         model_id=log_entry.model_id, tested_at=log_entry.tested_at,
         http_status=http_status, response_body=response_body, request_url=request_url,
+        error_summary=error_summary,
     )
-
 
 async def test_batch(db: Session) -> list[ModelTestResponse]:
     models = db.scalars(select(ModelConfig).where(ModelConfig.is_deleted == False)).all()
