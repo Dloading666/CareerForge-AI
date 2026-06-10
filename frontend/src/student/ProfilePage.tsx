@@ -19,6 +19,7 @@ import {
   IconBug,
   IconCalendar,
   IconCamera,
+  IconCheck,
   IconCode,
   IconCommon,
   IconDelete,
@@ -112,13 +113,6 @@ type Certification = {
   description: string
 }
 
-type Skill = {
-  id: number | null
-  name: string
-  level: number
-  description: string
-}
-
 const genderLabel: Record<string, string> = { male: '男', female: '女', other: '其他' }
 
 const jobStatusOptions = [
@@ -131,6 +125,13 @@ const jobStatusOptions = [
 const jobStatusLabel: Record<string, string> = Object.fromEntries(
   jobStatusOptions.map((o) => [o.value, o.label]),
 )
+
+function formatSavedTime(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return (
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+  )
+}
 
 const emptyWorkExperience = (): WorkExperience => ({
   id: null,
@@ -164,13 +165,6 @@ const emptyCertification = (): Certification => ({
   issuer: '',
   issue_date: '',
   expire_date: '',
-  description: '',
-})
-
-const emptySkill = (): Skill => ({
-  id: null,
-  name: '',
-  level: 3,
   description: '',
 })
 
@@ -490,6 +484,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [editVisible, setEditVisible] = useState(false)
   const [editTab, setEditTab] = useState<string>('basic')
   const [saving, setSaving] = useState(false)
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
   const [securityVisible, setSecurityVisible] = useState(false)
   const [pwdCode, setPwdCode] = useState('')
   const [pwdNew, setPwdNew] = useState('')
@@ -515,7 +510,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [honors, setHonors] = useState<Honor[]>([])
   const [educations, setEducations] = useState<Education[]>([])
   const [certifications, setCertifications] = useState<Certification[]>([])
-  const [skills, setSkills] = useState<Skill[]>([])
+  const [skillText, setSkillText] = useState<string>('')
 
   const fetchProfile = async () => {
     try {
@@ -579,6 +574,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
     setExpectedPosition(profile?.expected_position ?? '')
     setExpectedSalary(profile?.expected_salary ?? '')
     setExpectedLocation(profile?.expected_location ?? '')
+    setLastSavedAt(null)
     try {
       const details = await apiRequest<{
         work_experiences?: WorkExperience[]
@@ -586,7 +582,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
         educations?: Education[]
         honors?: Honor[]
         certifications?: Certification[]
-        skills?: Skill[]
+        skills?: { name?: string | null }[]
       }>('/api/v1/student/profile/details', {
         headers: { Authorization: `Bearer ${session?.access}` },
       })
@@ -639,13 +635,11 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           description: it.description ?? '',
         })),
       )
-      setSkills(
-        (details.skills ?? []).map((it) => ({
-          id: it.id ?? null,
-          name: it.name ?? '',
-          level: it.level ?? 3,
-          description: it.description ?? '',
-        })),
+      setSkillText(
+        (details.skills ?? [])
+          .map((it) => (it.name ?? '').trim())
+          .filter(Boolean)
+          .join('\n'),
       )
     } catch {
       setWorkExperiences([])
@@ -653,7 +647,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       setHonors([])
       setEducations([])
       setCertifications([])
-      setSkills([])
+      setSkillText('')
     }
     setEditTab('basic')
     setEditVisible(true)
@@ -663,6 +657,16 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
     try {
       const values = await basicForm.validate()
       setSaving(true)
+      const skillItems = skillText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((name) => ({
+          id: null,
+          name,
+          level: 3,
+          description: '',
+        }))
       await apiRequest('/api/v1/student/profile', {
         method: 'PUT',
         headers: {
@@ -690,11 +694,11 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           honors: honors,
           educations: educations,
           certifications: certifications,
-          skills: skills,
+          skills: skillItems,
         }),
       })
       Message.success('保存成功')
-      setEditVisible(false)
+      setLastSavedAt(new Date())
       void fetchProfile()
     } catch (e) {
       Message.error(e instanceof Error ? e.message : '保存失败')
@@ -705,6 +709,14 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
 
   // ---- Hooks above any early returns (Rules of Hooks) ----
   const jobStatusText = profile?.job_search_status ? jobStatusLabel[profile.job_search_status] : null
+  const skillItemCount = useMemo(
+    () =>
+      skillText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean).length,
+    [skillText],
+  )
   const profileSummary = useMemo(() => {
     const parts: string[] = []
     if (profile?.expected_position) parts.push(`期望：${profile.expected_position}`)
@@ -1244,7 +1256,29 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
 
       {/* 编辑个人中心 (8 标签) */}
       <Modal
-        title="编辑个人中心"
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>编辑个人中心</span>
+            {lastSavedAt && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 12,
+                  fontWeight: 400,
+                  color: '#00b42a',
+                  background: 'rgba(0, 180, 42, 0.1)',
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                }}
+              >
+                <IconCheck style={{ fontSize: 12 }} />
+                <span>已保存 {formatSavedTime(lastSavedAt)}</span>
+              </span>
+            )}
+          </div>
+        }
         visible={editVisible}
         onCancel={() => setEditVisible(false)}
         onOk={handleSave}
@@ -1747,65 +1781,40 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
             title={
               <span>
                 <IconThunderbolt /> 专业技能
+                {skillItemCount > 0 && (
+                  <Tag color="arcoblue" size="small" style={{ marginLeft: 6 }}>
+                    {skillItemCount}
+                  </Tag>
+                )}
               </span>
             }
           >
             <div style={{ marginTop: 12 }}>
-              <SectionHeader
-                icon={<IconThunderbolt />}
-                title="专业技能"
-                hint="如编程语言、工具、框架"
-                onAdd={() => setSkills((arr) => [...arr, emptySkill()])}
-              />
-              <ListSection
-                items={skills}
-                setItems={setSkills}
-                renderItem={(item, idx, total, update, remove, move) => (
-                  <CardShell
-                    key={`skill-${idx}`}
-                    index={idx}
-                    total={total}
-                    onMoveUp={() => move(-1)}
-                    onMoveDown={() => move(1)}
-                    onRemove={remove}
-                  >
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 120px 2fr',
-                        gap: 12,
-                      }}
-                    >
-                      <FieldRow label="技能名称" required>
-                        <Input
-                          value={item.name}
-                          onChange={(v) => update({ ...item, name: v })}
-                          placeholder="如：Python / Figma / React"
-                        />
-                      </FieldRow>
-                      <FieldRow label="熟练度 (1-5)">
-                        <InputNumber
-                          min={1}
-                          max={5}
-                          value={item.level ?? 3}
-                          onChange={(v) =>
-                            update({ ...item, level: v ? Number(v) : 3 })
-                          }
-                          style={{ width: '100%' }}
-                        />
-                      </FieldRow>
-                      <FieldRow label="使用经验 / 描述">
-                        <Input
-                          value={item.description}
-                          onChange={(v) => update({ ...item, description: v })}
-                          placeholder="如：使用 3 年，熟悉异步与微服务"
-                          allowClear
-                        />
-                      </FieldRow>
-                    </div>
-                  </CardShell>
-                )}
-              />
+              <FieldRow label="专业技能" required>
+                <Input.TextArea
+                  value={skillText}
+                  onChange={setSkillText}
+                  placeholder={'每行填写一个专业技能，例如：' + '\n' + 'Python / 熟练使用 3 年' + '\n' + 'React / 熟悉 Hooks 与状态管理' + '\n' + 'Figma / 可独立完成交互原型'}
+                  autoSize={{ minRows: 6, maxRows: 14 }}
+                  maxLength={2000}
+                  showWordLimit
+                />
+              </FieldRow>
+              <div
+                style={{
+                  marginTop: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                  color: 'var(--text-subtle)',
+                }}
+              >
+                <IconInfoCircle style={{ fontSize: 13 }} />
+                <span>
+                  共 {skillItemCount} 项技能，保存后按换行自动拆分为多条记录；如需调整顺序请重新整理行序。
+                </span>
+              </div>
             </div>
           </Tabs.TabPane>
         </Tabs>
