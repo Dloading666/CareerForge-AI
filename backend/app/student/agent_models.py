@@ -17,6 +17,7 @@ class StudentAgentSession(Base):
     student_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(128), default="新对话", nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(32), default="resume", nullable=False)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

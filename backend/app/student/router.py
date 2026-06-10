@@ -86,7 +86,8 @@ def create_master_session(
     current=Depends(require_role("student")),
 ):
     identity, _ = current
-    session = create_session(db, identity, payload.title if payload else None)
+    agent_type = (payload.agent_type if payload else None) or "resume"
+    session = create_session(db, identity, payload.title if payload else None, agent_type=agent_type)
     return ok(AgentSessionResponse.model_validate(session).model_dump(mode="json"), msg="created")
 
 

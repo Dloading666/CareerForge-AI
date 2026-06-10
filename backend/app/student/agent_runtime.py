@@ -233,7 +233,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "简历标题，例如『张三-后端工程师简历』"},
-                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant，默认 classic"},
+                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant/left-right/timeline/minimalist/creative/editorial/swiss，默认 classic"},
                 "basic": {
                     "type": "object",
                     "description": "基本信息",
@@ -299,7 +299,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="optimize_resume_data",
         description=(
             "基于学生已有简历内容和目标 JD，生成一份优化版简历并保存到系统。"
-            "调用前必须先 read_resume 读取学生简历内容，禁止凭空捏造。"
+            "调用前必须已获取简历内容（通过 read_resume 或本轮上传的文档附件），禁止凭空捏造。"
             "调用成功后会返回 editor_url，用 Markdown 链接格式呈现给学生。"
         ),
         source="builtin",
@@ -308,7 +308,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "优化后简历标题"},
-                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant"},
+                "template_id": {"type": "string", "description": "模板ID: classic/modern/elegant/left-right/timeline/minimalist/creative/editorial/swiss，优先继承原简历模板"},
                 "source_resume_id": {"type": "integer", "description": "来源的在线简历 ID（如有）"},
                 "basic": {"type": "object"},
                 "education": {"type": "array", "items": {"type": "object"}},
@@ -437,11 +437,12 @@ def _extract_image_summary(path: Path) -> str:
 # ── Session CRUD ───────────────────────────────────────────────────────────────
 
 
-def create_session(db: Session, identity: AuthIdentity, title: Optional[str]) -> StudentAgentSession:
+def create_session(db: Session, identity: AuthIdentity, title: Optional[str], agent_type: str = "resume") -> StudentAgentSession:
     session = StudentAgentSession(
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
         title=(title or "新对话").strip() or "新对话",
+        agent_type=agent_type,
     )
     db.add(session)
     db.commit()
@@ -725,14 +726,19 @@ async def stream_master_reply(
 
     # Curated, safe tool registry. Only tools the Harness can honestly fulfil
     # are exposed — fabricating stubs are intentionally excluded.
-    tool_defs = assemble_active_tools(db, identity)
+    agent_type = getattr(session, "agent_type", "resume") or "resume"
+    if agent_type == "interviewer":
+        tool_defs = assemble_interviewer_tools(db, identity)
+    else:
+        tool_defs = assemble_active_tools(db, identity)
     registry = {tool.name: tool for tool in tool_defs}
     openai_tools = _build_openai_tools(tool_defs)
 
     # Build initial messages BEFORE creating the empty assistant row, so the
     # history loader does not pick up a blank assistant turn.
     messages = _build_initial_messages(
-        db, identity, session, content, reasoning_effort, model, attachments, config
+        db, identity, session, content, reasoning_effort, model, attachments, config,
+        agent_type=agent_type,
     )
 
     assistant_message = StudentAgentMessage(session_id=session.id, role="assistant", content="")
@@ -844,7 +850,7 @@ def _analyze_uploaded_files(attachments: list[StudentAgentAttachment]) -> dict[s
     file_summaries = []
     for attachment in attachments:
         text = (attachment.extracted_text or "").strip()
-        excerpt = text[:700] if text else "未提取到文本内容"
+        excerpt = text[:10000] if text else "未提取到文本内容"
         file_summaries.append(
             {
                 "id": attachment.id,
@@ -1082,7 +1088,7 @@ def _attachment_prompt_text(
             # model to look at it directly instead of relying on metadata.
             body = "（图片已随本条消息一并传入，请直接观察图片内容进行分析，不要回答“只能看到元数据”。）"
         else:
-            extracted = (attachment.extracted_text or "").strip()[:3000]
+            extracted = (attachment.extracted_text or "").strip()[:20000]
             body = f"提取内容:\n{extracted or '未提取到文本内容。'}"
         chunks.append(
             "\n".join(
@@ -1166,6 +1172,49 @@ def _configured_fallback_answer(config: Any, user_text: str) -> str:
 # Agentic Loop（Model + Harness）—— Model 只提议工具，Harness 负责执行/校验/审计
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── AI 面试官工具池 ────────────────────────────────────────────────────────────
+
+INTERVIEWER_SYSTEM_PROMPT = """你是一位经验丰富的 AI 面试官，专门帮助求职学生进行模拟面试训练。
+
+## 面试官行为准则
+- 每次只提一个问题，等学生作答后再继续，不要连续抛出多个问题
+- 对每次回答给出专业、具体的点评：指出亮点、指出改进方向、示范更好的表达方式
+- 涵盖：自我介绍 → 行为类问题（STAR 法则）→ 专业技能考察 → 反问环节
+- 保持专业、温和的面试官语气，营造真实面试氛围
+
+## 面试流程
+1. 开始时立即调用 query_student_profile 了解学生的背景和求职意向
+2. 若学生已开启简历可读取，调用 read_resume 了解具体经历以便定制问题
+3. 欢迎学生，确认目标岗位，然后从「请做一下自我介绍」开始面试
+4. 逐步展开 3-5 轮提问与点评，循序渐进
+5. 最后给出整体评价和针对性提升建议
+
+## 注意事项
+- 不要帮学生生成、修改或导出简历，这不是面试官的职责
+- 若学生偏题，礼貌引回正轨
+- 点评要有实质内容，给出更好表达方式的示例
+"""
+
+INTERVIEWER_ACTIVE_TOOL_NAMES = (
+    "query_student_profile",
+    "read_resume",
+    "get_session_context",
+    "analyze_uploaded_file",
+)
+
+
+def assemble_interviewer_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
+    """AI 面试官精简工具池：只读取学生信息，不包含生成/修改简历类工具。"""
+    by_name = {tool.name: tool for tool in BUILTIN_TOOLS}
+    pool: dict[str, ToolDefinition] = {}
+    for name in INTERVIEWER_ACTIVE_TOOL_NAMES:
+        tool = by_name.get(name)
+        if tool:
+            pool[name] = tool
+    return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
+
+
+# ── AI 简历助手工具池 ──────────────────────────────────────────────────────────
 # 仅暴露 Harness 能够「诚实兑现」的工具。会编造结果的占位工具（岗位库 / 知识库 /
 # 子智能体 / MCP）在内核稳定前一律不进工具池——对应准则「禁止编造经营结果」。
 ACTIVE_BUILTIN_TOOL_NAMES = (
@@ -1229,7 +1278,9 @@ def _build_openai_tools(tool_defs: list[ToolDefinition]) -> list[dict[str, Any]]
     ]
 
 
-def _harness_system_prompt(config: Any, reasoning_effort: str) -> str:
+def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str = "resume") -> str:
+    if agent_type == "interviewer":
+        return INTERVIEWER_SYSTEM_PROMPT
     persona = (getattr(config, "system_prompt", None) or DEFAULT_SYSTEM_PROMPT).strip()
     effort = _effort_instruction(reasoning_effort)
     rules = (
@@ -1237,14 +1288,22 @@ def _harness_system_prompt(config: Any, reasoning_effort: str) -> str:
         "- 你只负责理解需求、规划步骤、选择工具、综合结果；工具的执行、校验与权限由 Harness 负责，你无需也不能自行控制循环。\n"
         "- 工具纪律：只能调用系统提供给你的工具，并严格按其参数 schema 传参；不要臆测不存在的能力，也不要伪造任何工具的返回结果。\n"
         "- 反幻觉铁律：禁止编造学生的简历内容、经历、项目、岗位、公司或任何数据。没有依据时如实说明，并向学生索取材料。\n"
-        "- 简历相关：在给出任何简历修改建议或生成简历之前，必须先调用 read_resume 读取学生的真实简历；"
-        "若 read_resume 返回没有简历，请直接告知并引导学生到『个人中心—我的简历』上传，绝不虚构内容。\n"
-        "- AI 简历制作流程：先调用 query_student_profile 获取学生信息，再请学生提供目标岗位 JD，"
-        "然后调用 generate_resume_data 生成结构化简历；工具返回 editor_url 时，"
-        "用 Markdown 链接 [点击查看并编辑简历](editor_url) 呈现给学生。\n"
-        "- 简历优化流程：先调用 read_resume 读取学生已有简历，再请学生提供目标 JD，"
-        "然后调用 optimize_resume_data 生成优化版本；工具返回 editor_url 时，"
-        "用 Markdown 链接 [点击查看优化后的简历](editor_url) 呈现给学生。\n"
+        "- 简历相关：给出简历修改建议、或对已有简历进行优化/导出时，必须先调用 read_resume 读取学生的真实简历；"
+        "若 read_resume 返回无简历，告知学生并引导其在『简历助手』中新建，绝不虚构内容。\n"
+        "- AI 简历制作流程（全新生成，无需 read_resume）：\n"
+        "  1. 立即调用 query_student_profile 读取学生信息；\n"
+        "  2. 回复『已读取您的个人信息，请提供目标岗位的 JD（职位描述）』；\n"
+        "  3. 用户粘贴 JD 后，调用 generate_resume_data 生成结构化简历；\n"
+        "  4. 工具返回 editor_url 时，回复：简历已生成，用 Markdown 链接 [点击查看并编辑简历](editor_url) 呈现。\n"
+        "- 简历优化流程：\n"
+        "  ▸ 若本轮消息已有文档附件（PDF / Word 等），附件内容已在上方「本轮附件」区域展示，\n"
+        "    直接以此为简历素材，无需再调用 read_resume 或 analyze_uploaded_file；\n"
+        "    若学生尚未提供目标岗位 JD，回复：『已读取您上传的简历，请提供目标岗位的 JD（可直接粘贴文本，或发来招聘链接）』。\n"
+        "  ▸ 若本轮无附件，调用 read_resume 读取学生的在线简历；若无在线简历，\n"
+        "    引导学生『上传简历 PDF 并重新发送，或前往简历制作新建一份在线简历』。\n"
+        "  ▸ 获得简历和 JD 后，输出结构化优化建议（针对 JD 的关键词补充、量化成就、结构调整等），\n"
+        "    然后调用 optimize_resume_data（title/basic 必填）将优化版本保存到学生的「简历制作」模块；\n"
+        "    工具返回 editor_url 后，在回复末尾附上 Markdown 链接：[点击查看并编辑优化后的简历](editor_url)。\n"
         "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），工具返回 editor_url 后用链接呈现。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF，然后把工具返回的 download_url 以 "
@@ -1269,9 +1328,10 @@ def _build_initial_messages(
     model: ModelConfig,
     attachments: list[StudentAgentAttachment],
     config: Any,
+    agent_type: str = "resume",
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _harness_system_prompt(config, reasoning_effort)}
+        {"role": "system", "content": _harness_system_prompt(config, reasoning_effort, agent_type)}
     ]
 
     # 取最近 24 条（desc 后反转为 asc），最后一条即本轮 user 消息，丢弃避免重复。
@@ -1591,7 +1651,7 @@ def _tool_result_for_model(result: dict[str, Any]) -> str:
         text = json.dumps(filtered, ensure_ascii=False)
     except (TypeError, ValueError):
         text = str(filtered)
-    return text[:6000]
+    return text[:30000]
 
 
 # ── 四态权限裁决（allow / ask / deny）────────────────────────────────────────────
@@ -1747,9 +1807,32 @@ def _read_resume_tool(
     session: StudentAgentSession,
     attachments: list[StudentAgentAttachment],
 ) -> dict[str, Any]:
-    """Read the student's resume — structured online resumes (visibility=True) first,
-    then this turn's uploads, then profile-level PDF attachments."""
-    resumes: list[dict[str, Any]] = []
+    """Read the student's resume.
+
+    Priority:
+    - If the current turn has document attachments (PDF/Word/etc.), use ONLY those
+      and skip online resumes entirely — the user explicitly uploaded their own resume.
+    - Otherwise fall back to: online structured resumes → profile-level PDF attachments.
+    """
+    # ── 本轮有文档附件（非图片）→ 直接用上传文件，跳过在线简历 ─────────────────────
+    session_docs = [att for att in attachments if not att.content_type.startswith("image/")]
+    if session_docs:
+        resumes: list[dict[str, Any]] = []
+        for att in session_docs:
+            text = _ensure_attachment_text(db, att)
+            if text:
+                resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:12000]})
+        if resumes:
+            names = "、".join(r["name"] for r in resumes)
+            return {
+                "status": "completed",
+                "tool": "read_resume",
+                "summary": f"已读取本轮上传的文件：{names}（已跳过在线简历，以上传内容为准）",
+                "resumes": resumes,
+            }
+
+    # ── 无本轮附件 → 读在线简历 + 个人中心 PDF ──────────────────────────────────
+    resumes = []
     seen_att: set[int] = set()
 
     # 1. 在线结构化简历（visibility=True）
@@ -1768,14 +1851,14 @@ def _read_resume_tool(
     for row in structured_rows:
         text = _structured_resume_to_text(row)
         if text.strip():
-            resumes.append({"source": "在线简历", "name": row.title, "resume_id": row.id, "excerpt": text[:4000]})
+            resumes.append({"source": "在线简历", "name": row.title, "resume_id": row.id, "excerpt": text[:8000]})
 
     # 2. 本轮上传附件
     for att in attachments:
         seen_att.add(att.id)
         text = _ensure_attachment_text(db, att)
         if text:
-            resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:3000]})
+            resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:12000]})
 
     # 3. 个人中心 PDF 附件
     pdf_rows = list(
@@ -1795,7 +1878,7 @@ def _read_resume_tool(
             continue
         text = _ensure_attachment_text(db, row)
         if text:
-            resumes.append({"source": "个人中心", "name": row.original_name, "excerpt": text[:3000]})
+            resumes.append({"source": "个人中心", "name": row.original_name, "excerpt": text[:8000]})
 
     if not resumes:
         return {
@@ -1809,7 +1892,11 @@ def _read_resume_tool(
 
 
 _MAX_RESUMES = 6
-_VALID_TEMPLATE_IDS = {"classic", "modern", "elegant"}
+_VALID_TEMPLATE_IDS = {
+    "classic", "modern", "elegant",
+    "left-right", "timeline", "minimalist",
+    "creative", "editorial", "swiss",
+}
 _DEFAULT_GLOBAL_SETTINGS = {
     "classic": {
         "themeColor": "#000000",
@@ -1849,6 +1936,84 @@ _DEFAULT_GLOBAL_SETTINGS = {
         "subheaderSize": 16,
         "useIconMode": True,
         "centerSubtitle": True,
+    },
+    "left-right": {
+        "themeColor": "#2563eb",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 32,
+        "lineHeight": 1.5,
+        "sectionSpacing": 24,
+        "paragraphSpacing": 16,
+        "headerSize": 18,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": False,
+    },
+    "timeline": {
+        "themeColor": "#18181b",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 24,
+        "lineHeight": 1.5,
+        "sectionSpacing": 1,
+        "paragraphSpacing": 12,
+        "headerSize": 18,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": False,
+    },
+    "minimalist": {
+        "themeColor": "#171717",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 40,
+        "lineHeight": 1.5,
+        "sectionSpacing": 32,
+        "paragraphSpacing": 24,
+        "headerSize": 16,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": True,
+    },
+    "creative": {
+        "themeColor": "#7c3aed",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 14,
+        "lineHeight": 1.5,
+        "sectionSpacing": 16,
+        "paragraphSpacing": 16,
+        "headerSize": 16,
+        "subheaderSize": 16,
+        "useIconMode": False,
+        "centerSubtitle": False,
+    },
+    "editorial": {
+        "themeColor": "#8e8e8e",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 36,
+        "lineHeight": 1.5,
+        "sectionSpacing": 32,
+        "paragraphSpacing": 16,
+        "headerSize": 13,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": False,
+    },
+    "swiss": {
+        "themeColor": "#E31C24",
+        "fontFamily": '"Alibaba PuHuiTi", sans-serif',
+        "baseFontSize": 16,
+        "pagePadding": 36,
+        "lineHeight": 1.5,
+        "sectionSpacing": 36,
+        "paragraphSpacing": 12,
+        "headerSize": 18,
+        "subheaderSize": 16,
+        "useIconMode": True,
+        "centerSubtitle": False,
     },
 }
 _DEFAULT_MENU_SECTIONS = [
