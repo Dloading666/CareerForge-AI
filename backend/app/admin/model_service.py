@@ -97,33 +97,58 @@ def toggle_open(db: Session, model_id: int, open_flag: bool) -> ModelResponse:
 
 # ── 测试连接 ────────────────────────────────────
 
-async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse:
+async def test_model_connection(db, model_id):
     model = _get_model(db, model_id)
     api_key = decrypt_api_key(model.api_key_cipher) if model.api_key_cipher else None
-    success, latency_ms, error_message = False, None, None
+    success, latency_ms = False, None
+    error_message = None
+    http_status = None
+    response_body = None
+    request_url = ''
 
-    headers = {"User-Agent": "CareerForge-ModelTest/1.0"}
+    base_url = (model.base_url or '').rstrip('/')
+    if model.protocols and 'anthropic' in (model.protocols or '').lower():
+        request_url = base_url + '/v1/messages'
+    else:
+        request_url = base_url + '/chat/completions'
+    payload = {
+        'model': model.model_identifier,
+        'messages': [{'role': 'user', 'content': 'hi'}],
+        'max_tokens': 16,
+        'temperature': 0,
+    }
+
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'CareerForge-ModelTest/1.0'}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        headers['Authorization'] = 'Bearer ' + api_key
 
     try:
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=httpx.Timeout(model.timeout_sec or 30)) as client:
-            resp = await client.get(model.base_url.rstrip("/"), headers=headers)
+            resp = await client.post(request_url, headers=headers, json=payload)
         latency_ms = int((time.perf_counter() - start) * 1000)
-        success = resp.status_code < 500
+        http_status = resp.status_code
+        try:
+            response_body = resp.text[:8000]
+        except Exception:
+            response_body = ''
+        success = 200 <= resp.status_code < 300
         if not success:
-            error_message = f"HTTP {resp.status_code}"
+            error_message = 'HTTP ' + str(resp.status_code)
     except httpx.TimeoutException:
-        error_message = f"连接超时 ({model.timeout_sec or 30}s)"
-    except httpx.ConnectError:
-        error_message = "无法连接到目标地址"
+        error_message = f'连接超时 ({model.timeout_sec or 30}s)'
+    except httpx.ConnectError as e:
+        error_message = f'无法连接到目标地址: {str(e)[:200]}'
     except Exception as e:
         error_message = str(e)[:500]
 
     log_entry = ModelTestLog(model_id=model.id, success=success, latency_ms=latency_ms, error_message=error_message)
     db.add(log_entry); db.commit(); db.refresh(log_entry)
-    return ModelTestResponse(success=log_entry.success, latency_ms=log_entry.latency_ms, error_message=log_entry.error_message, model_id=log_entry.model_id, tested_at=log_entry.tested_at)
+    return ModelTestResponse(
+        success=log_entry.success, latency_ms=log_entry.latency_ms, error_message=log_entry.error_message,
+        model_id=log_entry.model_id, tested_at=log_entry.tested_at,
+        http_status=http_status, response_body=response_body, request_url=request_url,
+    )
 
 
 async def test_batch(db: Session) -> list[ModelTestResponse]:

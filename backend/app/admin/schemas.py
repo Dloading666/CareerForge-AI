@@ -69,6 +69,9 @@ class ModelResponse(BaseModel):
 class ModelTestResponse(BaseModel):
     success: bool; latency_ms: Optional[int] = None; error_message: Optional[str] = None
     model_id: int; tested_at: datetime
+    http_status: Optional[int] = None
+    response_body: Optional[str] = None
+    request_url: Optional[str] = None
 
 
 

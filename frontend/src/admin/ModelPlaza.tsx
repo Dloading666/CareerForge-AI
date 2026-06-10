@@ -1,6 +1,6 @@
 import {
   Alert, Button, Card, Drawer, Form, Input, InputNumber,
-  Popconfirm, Select, Space, Switch, Tag,
+  Modal, Popconfirm, Select, Space, Switch, Tag,
 } from '@arco-design/web-react'
 import { IconEdit, IconDelete, IconPlayArrow, IconPlus, IconThunderbolt } from '@arco-design/web-react/icon'
 import { useCallback, useEffect, useState } from 'react'
@@ -22,6 +22,7 @@ export function ModelPlaza() {
   const [latencyMap, setLatencyMap] = useState<Record<number, { ms: number | null; ok: boolean }>>({})
   const [batchTesting, setBatchTesting] = useState(false)
   const [notify, setNotify] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null)
+  const [testResult, setTestResult] = useState<{ provider: string; modelName: string; success: boolean; latencyMs: number | null; httpStatus: number | null; requestUrl: string; responseBody: string; errorMessage: string | null } | null>(null)
   const showNotify = (type: 'success' | 'error' | 'warning' | 'info', text: string) => { setNotify({ type, text }); setTimeout(() => setNotify(null), 3000) }
 
   const fetchModels = useCallback(async () => {
@@ -71,8 +72,18 @@ export function ModelPlaza() {
 
   const handleTest = async (id: number) => {
     setTestingIds(prev => new Set(prev).add(id))
-    try { const r = await apiRequest<{ success: boolean; latency_ms: number | null }>(`/api/v1/admin/models/${id}/test`, { method: 'POST' }); setLatencyMap(prev => ({ ...prev, [id]: { ms: r.latency_ms, ok: r.success } })); showNotify(r.success ? 'success' : 'warning', r.success ? `延迟 ${r.latency_ms}ms` : '连接失败') }
-    catch { setLatencyMap(prev => ({ ...prev, [id]: { ms: null, ok: false } })) }
+    const model = models.find(m => m.id === id)
+    const provider = model?.provider ?? ''
+    const modelName = model?.model_identifier ?? ''
+    try {
+      const r = await apiRequest<{ success: boolean; latency_ms: number | null; http_status: number | null; response_body: string | null; request_url: string | null; error_message: string | null }>(`/api/v1/admin/models/${id}/test`, { method: 'POST' })
+      setLatencyMap(prev => ({ ...prev, [id]: { ms: r.latency_ms, ok: r.success } }))
+      setTestResult({ provider, modelName, success: r.success, latencyMs: r.latency_ms, httpStatus: r.http_status, requestUrl: r.request_url ?? '', responseBody: r.response_body ?? '', errorMessage: r.error_message })
+    }
+    catch (e) {
+      setLatencyMap(prev => ({ ...prev, [id]: { ms: null, ok: false } }))
+      setTestResult({ provider, modelName, success: false, latencyMs: null, httpStatus: null, requestUrl: '', responseBody: '', errorMessage: e instanceof Error ? e.message : '请求失败' })
+    }
     finally { setTestingIds(prev => { const n = new Set(prev); n.delete(id); return n }) }
   }
 
@@ -125,6 +136,29 @@ export function ModelPlaza() {
           <Form.Item label="对学生开放"><Switch checked={form.open_to_student} onChange={v => setForm(p => ({...p, open_to_student: v}))} /></Form.Item>
         </Form>
       </Drawer>
+      <Modal
+        title="供应商测试"
+        visible={Boolean(testResult)}
+        onCancel={() => setTestResult(null)}
+        footer={null}
+        style={{ width: 720 }}
+      >
+        {testResult ? (
+          <div>
+            <div style={{ marginBottom: 12, color: "#4e5969" }}>
+              已向 <strong>[{testResult.provider}]</strong> 用模型 <strong>[{testResult.modelName}]</strong> 发送 <code>hi</code>，HTTP <strong style={{ color: testResult.success ? "#00b42a" : "#f53f3f" }}>{testResult.httpStatus ?? "--"}</strong>
+              {testResult.latencyMs !== null ? `，耗时 ${testResult.latencyMs}ms` : ``}
+            </div>
+            {testResult.errorMessage ? (
+              <div style={{ marginBottom: 12, color: "#f53f3f" }}>错误：{testResult.errorMessage}</div>
+            ) : null}
+            {testResult.requestUrl ? (
+              <div style={{ marginBottom: 8, fontSize: 12, color: "#86909c" }}>POST {testResult.requestUrl}</div>
+            ) : null}
+            <pre style={{ background: "#0f172a", color: "#e6edf3", padding: 16, borderRadius: 8, maxHeight: 420, overflow: "auto", fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>{(testResult.responseBody || "（无响应体）")}</pre>
+          </div>
+        ) : null}
+      </Modal>
     </>
   )
 }
