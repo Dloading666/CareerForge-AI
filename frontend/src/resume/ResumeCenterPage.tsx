@@ -1,4 +1,4 @@
-import { Button, Empty, Image, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
+import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
 import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
-import { TEMPLATE_REGISTRY } from './templates/registry'
+import { ResumeTemplatePreview, TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
 
 export function ResumeCenterPage() {
@@ -14,6 +14,8 @@ export function ResumeCenterPage() {
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [resumes, setResumes] = useState<ResumeSummary[]>([])
+  const [resumeDataMap, setResumeDataMap] = useState<Record<number, ResumeData>>({})
+  const [previewingId, setPreviewingId] = useState<number | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [newResumeModalVisible, setNewResumeModalVisible] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>('classic')
@@ -21,7 +23,7 @@ export function ResumeCenterPage() {
 
   const mode = searchParams.get('mode')
 
-  const countLabel = useMemo(() => `${resumes.length}/5`, [resumes.length])
+  const countLabel = useMemo(() => `${resumes.length}/6`, [resumes.length])
 
 
   const refresh = async () => {
@@ -29,6 +31,13 @@ export function ResumeCenterPage() {
     try {
       const list = await listResumes()
       setResumes(list)
+      const results = await Promise.allSettled(list.map((r) => getResume(r.id)))
+      const next: Record<number, ResumeData> = {}
+      list.forEach((r, idx) => {
+        const res = results[idx]
+        if (res.status === 'fulfilled') next[r.id] = res.value
+      })
+      setResumeDataMap(next)
     } catch {
       Message.error('加载简历列表失败')
     } finally {
@@ -39,6 +48,38 @@ export function ResumeCenterPage() {
   useEffect(() => {
     void refresh()
   }, [])
+
+  // ---- Resume preview modal: user-controlled zoom (default = fit viewport) ----
+  const A4_W = 794
+  const A4_H = 1123
+  const previewCanvasRef = useRef<HTMLDivElement | null>(null)
+  const [previewScale, setPreviewScale] = useState(1)
+  const fitScaleRef = useRef(1)
+
+  const computeFitScale = () => {
+    const maxH = Math.max(320, window.innerHeight - 24 * 2 - 57 - 24)
+    const maxW = Math.max(320, window.innerWidth - 24 * 2)
+    return Math.min(maxW / A4_W, maxH / A4_H)
+  }
+
+  useEffect(() => {
+    if (previewingId === null) return
+    const fit = computeFitScale()
+    fitScaleRef.current = fit
+    setPreviewScale(fit)
+    window.addEventListener('resize', recomputeOnResize)
+    return () => window.removeEventListener('resize', recomputeOnResize)
+  }, [previewingId])
+
+  const recomputeOnResize = () => {
+    const fit = computeFitScale()
+    fitScaleRef.current = fit
+    setPreviewScale((prev) => (prev === fitScaleRef.current ? fit : prev))
+  }
+
+  const zoomIn = () => setPreviewScale((s) => Math.min(2, +(s + 0.1).toFixed(3)))
+  const zoomOut = () => setPreviewScale((s) => Math.max(0.2, +(s - 0.1).toFixed(3)))
+  const zoomReset = () => setPreviewScale(fitScaleRef.current)
 
   const handleDelete = async (resumeId: number) => {
     setBusyId(resumeId)
@@ -90,7 +131,7 @@ export function ResumeCenterPage() {
           <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
             导入 JSON
           </Button>
-          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 5} onClick={() => setNewResumeModalVisible(true)}>
+          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 6} onClick={() => setNewResumeModalVisible(true)}>
             新建简历
           </Button>
           <input
@@ -128,22 +169,50 @@ export function ResumeCenterPage() {
           </div>
         ) : resumes.length === 0 ? (
           <div className="resume-center-empty">
-            <Empty description='还没有在线简历，点击右上角"新建简历"开始。' />
+            <Empty description="还没有在线简历，点击右上角「新建简历」开始。" />
           </div>
         ) : (
           <div className="resume-card-grid">
             {resumes.map((resume) => (
               <article key={resume.id} className="resume-card-item">
-                <div className="resume-card-item-thumb">
-                  <Image
-                    src={TEMPLATE_REGISTRY.find((t) => t.id === resume.templateId)?.thumbnailSrc}
-                    alt={resume.title}
-                    title={resume.title}
-                    description='点击图片放大查看'
-                    width="100%"
-                    height="100%"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
+                <div
+                  className="resume-card-item-thumb"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setPreviewingId(resume.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') setPreviewingId(resume.id)
+                  }}
+                >
+                  {resumeDataMap[resume.id] ? (
+                    <div className="resume-card-item-thumb-frame">
+                      {(() => {
+                        // A4 portrait: 210mm x 297mm @ 96dpi ~= 794 x 1123 px
+                        // Card frame is 360 x 510 (CSS px). Scale uniformly so the full A4 fits inside.
+                        const A4_W = 794
+                        const A4_H = 1123
+                        const scale = Math.min(360 / A4_W, 510 / A4_H)
+                        return (
+                          <div
+                            className="resume-card-item-thumb-scaler"
+                            style={{
+                              width: A4_W,
+                              height: A4_H,
+                              transform: `scale(${scale})`,
+                              transformOrigin: 'top left',
+                            }}
+                          >
+                            <ResumeTemplatePreview resume={resumeDataMap[resume.id]} />
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="resume-card-item-thumb-loading">
+                      <Spin />
+                    </div>
+                  )}
+                  <div className="resume-card-item-thumb-hint">点击放大查看</div>
                 </div>
                 <div className="resume-card-item-head">
                   <div>
@@ -216,6 +285,47 @@ export function ResumeCenterPage() {
             </button>
           ))}
         </div>
+      </Modal>
+
+      <Modal
+        visible={previewingId !== null}
+        title={previewingId !== null ? resumes.find((r) => r.id === previewingId)?.title || '简历预览' : '简历预览'}
+        footer={null}
+        onCancel={() => setPreviewingId(null)}
+        className="resume-preview-modal"
+        style={{ width: 'auto', maxWidth: 'none', top: 24, paddingBottom: 24 }}
+      >
+        <div className="resume-preview-modal-toolbar">
+          <Button size="mini" onClick={zoomOut} disabled={previewScale <= 0.2} aria-label="缩小">
+            −
+          </Button>
+          <span className="resume-preview-modal-scale-label">{Math.round(previewScale * 100)}%</span>
+          <Button size="mini" onClick={zoomIn} disabled={previewScale >= 2} aria-label="放大">
+            +
+          </Button>
+          <Button size="mini" type="secondary" onClick={zoomReset}>
+            适窗
+          </Button>
+        </div>
+        {previewingId !== null && resumeDataMap[previewingId] ? (
+          <div className="resume-preview-modal-canvas" ref={previewCanvasRef}>
+            <div
+              className="resume-preview-modal-scaler"
+              style={{
+                width: A4_W,
+                height: A4_H,
+                transform: `scale(${previewScale})`,
+                transformOrigin: 'top left',
+                marginBottom: -((A4_H) * (1 - previewScale)),
+                marginRight: -((A4_W) * (1 - previewScale)),
+              }}
+            >
+              <ResumeTemplatePreview resume={resumeDataMap[previewingId]} />
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: 48, textAlign: 'center' }}><Spin /></div>
+        )}
       </Modal>
     </div>
   )

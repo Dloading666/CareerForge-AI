@@ -93,3 +93,18 @@ export async function downloadResumePdf(resumeId: number, filename: string) {
   link.click()
   URL.revokeObjectURL(url)
 }
+
+
+export function getResumeThumbnailUrl(resumeId: number): string {
+  const base = '/api/v1/student/resumes/' + resumeId + '/thumbnail'
+  if (typeof window === "undefined") return base
+  try {
+    const raw = window.localStorage.getItem("zhipei-auth-session")
+    if (!raw) return base
+    const session = JSON.parse(raw) as { access?: string }
+    if (!session.access) return base
+    return base + '?access=' + encodeURIComponent(session.access)
+  } catch {
+    return base
+  }
+}

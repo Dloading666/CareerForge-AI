@@ -1,4 +1,4 @@
-﻿"""模型广场 + 系统设置 — Pydantic Schemas"""
+"""模型广场 + 系统设置 — Pydantic Schemas"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -69,6 +69,10 @@ class ModelResponse(BaseModel):
 class ModelTestResponse(BaseModel):
     success: bool; latency_ms: Optional[int] = None; error_message: Optional[str] = None
     model_id: int; tested_at: datetime
+    http_status: Optional[int] = None
+    response_body: Optional[str] = None
+    request_url: Optional[str] = None
+    error_summary: Optional[str] = None
 
 
 
