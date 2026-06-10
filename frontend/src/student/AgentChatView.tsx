@@ -512,31 +512,6 @@ function RuntimeStatusline({
   )
 }
 
-function RunDetails({ info }: { info?: RuntimeInfo }) {
-  const [expanded, setExpanded] = useState(false)
-  if (!info) return null
-  const hasUsage = info.total_tokens > 0
-  return (
-    <div className="run-details">
-      <button type="button" className="run-details-toggle" onClick={() => setExpanded((value) => !value)}>
-        <IconDashboard />
-        <span>{hasUsage ? `${info.total_tokens.toLocaleString()} tokens` : '运行详情'}</span>
-        <span>· {formatDuration(info.duration_ms)}</span>
-        {expanded ? <IconCaretDown /> : <IconCaretRight />}
-      </button>
-      {expanded && (
-        <div className="run-details-panel">
-          <span><b>模型</b>{info.model_name}</span>
-          <span><b>输入</b>{info.prompt_tokens.toLocaleString()} tokens</span>
-          <span><b>输出</b>{info.completion_tokens.toLocaleString()} tokens</span>
-          <span><b>总计</b>{info.total_tokens.toLocaleString()} tokens</span>
-          <span><b>耗时</b>{formatDuration(info.duration_ms)}</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
 function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
   const editorLinks = useMemo(() => {
     const links: { resumeId: number; label: string }[] = []
@@ -667,7 +642,6 @@ function AssistantMessage({
             elapsedTick={elapsedTick ?? 0}
           />
         )}
-        {!pending && <RunDetails info={runtimeInfo} />}
       </div>
     </div>
   )
