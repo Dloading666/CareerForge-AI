@@ -14,6 +14,9 @@ import { ApiError } from '../shared/api'
 import type { TemplateId } from './types'
 import { printResumeElement } from './utils/printResume'
 
+// → 简历编辑器自动保存 debounce：半分钟。改动后重置定时器，到期才推送 updateResume。
+const AUTOSAVE_DEBOUNCE_MS = 30_000
+
 function PanelLeftIcon({ active }: { active: boolean }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -116,7 +119,7 @@ function ResumeEditorInner() {
       } catch {
         markError()
       }
-    }, 1500)
+    }, AUTOSAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [dirty, markError, markSaved, markSaving, resume])
 
