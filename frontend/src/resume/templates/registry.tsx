@@ -13,7 +13,7 @@ import { richTextToLines } from '../utils/content'
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
     id: 'classic',
-    name: '经典',
+    name: '经典模板',
     description: '传统简约的简历布局，适合大多数求职场景。',
     accentColor: '#000000',
     secondaryColor: '#4b5563',
@@ -24,8 +24,8 @@ export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   },
   {
     id: 'modern',
-    name: '现代',
-    description: '经典两栏布局，突出个人特色。',
+    name: '两栏布局',
+    description: '经典两栏，突出个人特色。',
     accentColor: '#000000',
     secondaryColor: '#6b7280',
     background: '#ffffff',
@@ -34,8 +34,41 @@ export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
     layout: 'split',
   },
   {
+    id: 'left-right',
+    name: '模块标题背景色',
+    description: '模块标题背景鲜明，突出美观特色。',
+    accentColor: '#2563eb',
+    secondaryColor: '#9ca3af',
+    background: '#ffffff',
+    textColor: '#212529',
+    thumbnailSrc: '/resume-template-thumbs/left-right.png',
+    layout: 'single',
+  },
+  {
+    id: 'timeline',
+    name: '时间轴布局',
+    description: '时间线布局，突出经历的时间顺序。',
+    accentColor: '#18181b',
+    secondaryColor: '#64748b',
+    background: '#ffffff',
+    textColor: '#212529',
+    thumbnailSrc: '/resume-template-thumbs/timeline.png',
+    layout: 'single',
+  },
+  {
+    id: 'minimalist',
+    name: '极简模板',
+    description: '大面积留白，干净纯粹的排版风格。',
+    accentColor: '#171717',
+    secondaryColor: '#737373',
+    background: '#ffffff',
+    textColor: '#171717',
+    thumbnailSrc: '/resume-template-thumbs/minimalist.png',
+    layout: 'center',
+  },
+  {
     id: 'elegant',
-    name: '优雅',
+    name: '优雅模板',
     description: '居中标题单列设计，具有高级感的分隔线。',
     accentColor: '#18181b',
     secondaryColor: '#71717a',
@@ -43,6 +76,39 @@ export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
     textColor: '#27272a',
     thumbnailSrc: '/resume-template-thumbs/elegant.png',
     layout: 'center',
+  },
+  {
+    id: 'creative',
+    name: '创意模板',
+    description: '视觉错落设计，灵动活泼展现个性。',
+    accentColor: '#7c3aed',
+    secondaryColor: '#64748b',
+    background: '#ffffff',
+    textColor: '#1e293b',
+    thumbnailSrc: '/resume-template-thumbs/creative.png',
+    layout: 'single',
+  },
+  {
+    id: 'editorial',
+    name: '画报风',
+    description: '高端画报风，精美衬线体与专属侧边时光轴设计。',
+    accentColor: '#000000',
+    secondaryColor: '#666666',
+    background: '#ffffff',
+    textColor: '#1a1a1a',
+    thumbnailSrc: '/resume-template-thumbs/editorial.png',
+    layout: 'single',
+  },
+  {
+    id: 'swiss',
+    name: '瑞士美学',
+    description: '包豪斯国际排版，超粗字重对比与几何色块点缀。',
+    accentColor: '#E31C24',
+    secondaryColor: '#64748b',
+    background: '#ffffff',
+    textColor: '#0f172a',
+    thumbnailSrc: '/resume-template-thumbs/swiss.png',
+    layout: 'single',
   },
 ]
 
@@ -91,18 +157,21 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
     },
     skills: richTextToLines(resume.skillContent),
     education: mapItems(resume.education, (item) => ({
+      itemId: item.id,
       title: item.school || '学校',
       subtitle: [item.major, item.degree, item.gpa ? `GPA ${item.gpa}` : ''].filter(Boolean).join(' · '),
       meta: [item.startDate, item.endDate].filter(Boolean).join(' - '),
       lines: richTextToLines(item.description ?? ''),
     })),
     experience: mapItems(resume.experience, (item) => ({
+      itemId: item.id,
       title: item.company || '公司',
       subtitle: item.position,
       meta: item.date,
       lines: richTextToLines(item.details),
     })),
     projects: mapItems(resume.projects, (item) => ({
+      itemId: item.id,
       title: item.name || '项目',
       subtitle: item.role,
       meta: item.date,
@@ -270,43 +339,227 @@ function ModernHeader({ resume }: { resume: ResumeData }) {
   )
 }
 
+type TitleVariant = 'classic' | 'elegant' | 'left-right' | 'minimalist' | 'creative' | 'editorial' | 'swiss' | 'timeline'
+
+/** Creative template: header on colored background, text all white */
+function ClassicHeaderInverse({ resume }: { resume: ResumeData }) {
+  const basicFontSize = resume.globalSettings.baseFontSize ?? 16
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+      <ResumePhoto resume={resume} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.25, fontWeight: 700, color: '#ffffff' }}>{resume.basic.name}</h1>
+        <h2 style={{ margin: '4px 0 8px', fontSize: 16, lineHeight: 1.5, fontWeight: 400, color: 'rgba(255,255,255,.85)' }}>{resume.basic.title}</h2>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: Math.max(12, basicFontSize - 3), color: 'rgba(255,255,255,.8)' }}>
+          {getContacts(resume).map((f) => (
+            <span key={f.key}>{f.value}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Editorial template: large name + divider bar header */
+function EditorialHeader({ resume }: { resume: ResumeData }) {
+  const themeColor = resume.globalSettings.themeColor || '#000000'
+  return (
+    <div style={{ marginBottom: resume.globalSettings.sectionSpacing ?? 32 }}>
+      <h1 style={{ margin: 0, fontSize: 44, lineHeight: 1.1, fontWeight: 800, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
+        {resume.basic.name || '姓名'}
+      </h1>
+      {resume.basic.title && (
+        <h2 style={{ margin: '6px 0 0', fontSize: 18, fontWeight: 400, color: themeColor, letterSpacing: '0.04em' }}>
+          {resume.basic.title}
+        </h2>
+      )}
+      <div
+        style={{
+          margin: '14px 0 10px',
+          height: 3,
+          background: `linear-gradient(90deg, ${themeColor} 0%, transparent 100%)`,
+        }}
+      />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 20px', fontSize: 13, color: '#555' }}>
+        {getContacts(resume).map((f) => (
+          <span key={f.key}>{f.value}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SectionTitle({
   title,
   resume,
-  elegant = false,
+  variant = 'classic',
   inverse = false,
 }: {
   title: string
   resume: ResumeData
-  elegant?: boolean
+  variant?: TitleVariant
   inverse?: boolean
 }) {
   const color = inverse ? '#ffffff' : resume.globalSettings.themeColor || '#000000'
-  const size = elegant ? resume.globalSettings.headerSize || 20 : resume.globalSettings.headerSize || 18
+  const size = resume.globalSettings.headerSize || 18
+  const paragraphSpacing = resume.globalSettings.paragraphSpacing ?? 12
 
-  if (elegant) {
+  if (inverse) {
+    return (
+      <h3
+        style={{
+          margin: 0,
+          marginBottom: 12,
+          paddingBottom: 4,
+          borderBottom: '1px solid rgba(255,255,255,.2)',
+          color: '#ffffff',
+          fontSize: size - 2,
+          lineHeight: 1.4,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+        }}
+      >
+        {title}
+      </h3>
+    )
+  }
+
+  if (variant === 'elegant') {
     return (
       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
         <div style={{ position: 'absolute', left: 0, right: 0, borderTop: `1px solid ${color}`, opacity: 0.3 }} />
-        <h3 style={{ position: 'relative', margin: 0, padding: '0 16px', background: '#ffffff', color, fontSize: size, lineHeight: 1.4, fontWeight: 700 }}>
+        <h3 style={{ position: 'relative', margin: 0, padding: '0 16px', background: '#ffffff', color, fontSize: size + 2, lineHeight: 1.4, fontWeight: 700 }}>
           {title}
         </h3>
       </div>
     )
   }
 
+  if (variant === 'left-right') {
+    return (
+      <div style={{ position: 'relative', marginBottom: paragraphSpacing }}>
+        <div style={{ position: 'absolute', inset: 0, background: color, opacity: 0.08, borderRadius: 2 }} />
+        <h3
+          style={{
+            position: 'relative',
+            margin: 0,
+            padding: '6px 12px 6px 16px',
+            borderLeft: `3px solid ${color}`,
+            color,
+            fontSize: size,
+            lineHeight: 1.4,
+            fontWeight: 700,
+          }}
+        >
+          {title}
+        </h3>
+      </div>
+    )
+  }
+
+  if (variant === 'minimalist') {
+    return (
+      <h3
+        style={{
+          margin: 0,
+          marginBottom: paragraphSpacing,
+          color,
+          fontSize: Math.max(12, size - 2),
+          lineHeight: 1.4,
+          fontWeight: 700,
+          letterSpacing: '0.15em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {title}
+      </h3>
+    )
+  }
+
+  if (variant === 'creative') {
+    return (
+      <h3
+        style={{
+          display: 'inline-block',
+          margin: 0,
+          marginBottom: paragraphSpacing,
+          padding: '4px 12px',
+          borderRadius: 6,
+          background: color,
+          color: '#ffffff',
+          fontSize: size,
+          lineHeight: 1.4,
+          fontWeight: 700,
+        }}
+      >
+        {title}
+      </h3>
+    )
+  }
+
+  if (variant === 'editorial') {
+    return (
+      <div style={{ marginBottom: paragraphSpacing }}>
+        <h3
+          style={{
+            margin: 0,
+            color: color || '#8e8e8e',
+            fontSize: Math.max(11, size - 2),
+            lineHeight: 1.4,
+            fontWeight: 700,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {title}
+        </h3>
+      </div>
+    )
+  }
+
+  if (variant === 'swiss') {
+    return (
+      <div style={{ marginBottom: paragraphSpacing }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div
+            style={{
+              width: 6,
+              height: size * 1.1,
+              background: color,
+              borderRadius: 2,
+              flexShrink: 0,
+            }}
+          />
+          <h3
+            style={{
+              margin: 0,
+              fontSize: size,
+              fontWeight: 900,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              color: '#0f172a',
+            }}
+          >
+            {title}
+          </h3>
+        </div>
+        <div style={{ height: 1, background: '#0f172a', opacity: 0.15, marginTop: 8 }} />
+      </div>
+    )
+  }
+
+  // default classic
   return (
     <h3
       style={{
         margin: 0,
-        marginBottom: inverse ? 12 : resume.globalSettings.paragraphSpacing ?? 12,
-        paddingBottom: inverse ? 4 : 8,
-        borderBottom: `1px solid ${inverse ? 'rgba(255,255,255,.2)' : color}`,
+        marginBottom: paragraphSpacing,
+        paddingBottom: 8,
+        borderBottom: `1px solid ${color}`,
         color,
-        fontSize: inverse ? size - 2 : size,
+        fontSize: size,
         lineHeight: 1.4,
         fontWeight: 700,
-        letterSpacing: inverse ? '0.08em' : undefined,
       }}
     >
       {title}
@@ -357,38 +610,53 @@ function Paragraphs({ lines, resume }: { lines: string[]; resume: ResumeData }) 
   )
 }
 
-function EntryList({ items, resume }: { items: ViewListItem[]; resume: ResumeData }) {
+function EntryList({
+  items,
+  resume,
+  offsets,
+}: {
+  items: ViewListItem[]
+  resume: ResumeData
+  offsets?: Record<string, { x: number; y: number }>
+}) {
   const centerSubtitle = resume.globalSettings.centerSubtitle ?? false
   const subheaderSize = resume.globalSettings.subheaderSize ?? 16
   return (
     <>
-      {items.map((item, index) => (
-        <article
-          key={`${item.title}-${index}`}
-          style={{
-            marginTop: resume.globalSettings.paragraphSpacing ?? 12,
-            breakInside: 'avoid',
-            pageBreakInside: 'avoid',
-          }}
-        >
-          <div
+      {items.map((item, index) => {
+        const dragId = item.itemId ? `item:${item.itemId}` : undefined
+        const off = dragId ? offsets?.[dragId] : undefined
+        return (
+          <article
+            key={`${item.title}-${index}`}
+            data-drag-id={dragId}
             style={{
-              display: 'grid',
-              gridTemplateColumns: centerSubtitle ? '1.5fr 1fr 1fr' : '1.5fr 1fr',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: subheaderSize,
-              lineHeight: 1.45,
+              marginTop: resume.globalSettings.paragraphSpacing ?? 12,
+              breakInside: 'avoid',
+              pageBreakInside: 'avoid',
+              position: 'relative',
+              transform: off ? `translate(${off.x}px, ${off.y}px)` : undefined,
             }}
           >
-            <strong>{item.title}</strong>
-            {centerSubtitle ? <span>{item.subtitle}</span> : null}
-            <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{item.meta}</span>
-          </div>
-          {!centerSubtitle && item.subtitle ? <div style={{ marginTop: 2, fontSize: subheaderSize }}>{item.subtitle}</div> : null}
-          <RichList lines={item.lines} resume={resume} />
-        </article>
-      ))}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: centerSubtitle ? '1.5fr 1fr 1fr' : '1.5fr 1fr',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: subheaderSize,
+                lineHeight: 1.45,
+              }}
+            >
+              <strong>{item.title}</strong>
+              {centerSubtitle ? <span>{item.subtitle}</span> : null}
+              <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{item.meta}</span>
+            </div>
+            {!centerSubtitle && item.subtitle ? <div style={{ marginTop: 2, fontSize: subheaderSize }}>{item.subtitle}</div> : null}
+            <RichList lines={item.lines} resume={resume} />
+          </article>
+        )
+      })}
     </>
   )
 }
@@ -429,19 +697,20 @@ function StandardSection({
   title,
   resume,
   model,
-  elegant = false,
+  variant = 'classic',
 }: {
   id: string
   title: string
   resume: ResumeData
   model: TemplateViewModel
-  elegant?: boolean
+  variant?: TitleVariant
 }) {
+  const offsets = resume.globalSettings.sectionOffsets ?? {}
   let content: ReactNode = null
   if (id === 'skills') content = <RichList lines={model.skills} resume={resume} />
-  if (id === 'experience') content = <EntryList items={model.experience} resume={resume} />
-  if (id === 'projects') content = <EntryList items={model.projects} resume={resume} />
-  if (id === 'education') content = <EntryList items={model.education} resume={resume} />
+  if (id === 'experience') content = <EntryList items={model.experience} resume={resume} offsets={offsets} />
+  if (id === 'projects') content = <EntryList items={model.projects} resume={resume} offsets={offsets} />
+  if (id === 'education') content = <EntryList items={model.education} resume={resume} offsets={offsets} />
   if (id === 'selfEvaluation') content = <Paragraphs lines={model.selfEvaluation} resume={resume} />
   if (id === 'certificates' && resume.certificates.length) {
     content = (
@@ -463,7 +732,7 @@ function StandardSection({
         pageBreakInside: 'avoid',
       }}
     >
-      <SectionTitle title={title} resume={resume} elegant={elegant} />
+      <SectionTitle title={title} resume={resume} variant={variant} />
       {content}
     </section>
   )
@@ -496,37 +765,191 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
   const template = getTemplateConfig(resume.templateId)
   const model = buildTemplateViewModel(resume)
   const sections = enabledSections(resume)
+  const sectionOffsets = resume.globalSettings.sectionOffsets ?? {}
+  const themeColor = resume.globalSettings.themeColor || '#000000'
 
+  // Section-level offsets are keyed as "section:<id>"; item-level as "item:<itemId>"
+  const sectionWrapStyle = (id: string): CSSProperties => {
+    const off = sectionOffsets[`section:${id}`]
+    return off ? { transform: `translate(${off.x}px, ${off.y}px)`, position: 'relative' } : {}
+  }
+
+  // ── modern: two-column with dark sidebar ──────────────────────────────
   if (resume.templateId === 'modern') {
-    const rightSections = sections.filter((section) => section.id !== 'basic' && section.id !== 'education')
+    const rightSections = sections.filter((s) => s.id !== 'basic' && s.id !== 'education')
     return (
       <div
         data-resume-print-root
         className="resume-document"
         style={{ ...basePageStyle(resume, template), display: 'grid', gridTemplateColumns: '33.333333% 66.666667%', padding: 0, overflow: 'hidden' }}
       >
-        <aside style={{ minHeight: '297mm', padding: 16, paddingTop: resume.globalSettings.sectionSpacing ?? 8, background: resume.globalSettings.themeColor || '#000000', color: '#ffffff' }}>
-          <ModernHeader resume={resume} />
-          <SidebarEducation resume={resume} items={model.education} />
+        <aside style={{ minHeight: '297mm', padding: 16, paddingTop: resume.globalSettings.sectionSpacing ?? 8, background: themeColor, color: '#ffffff' }}>
+          <div data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+            <ModernHeader resume={resume} />
+          </div>
+          <div data-drag-id="section:education" style={sectionWrapStyle('education')}>
+            <SidebarEducation resume={resume} items={model.education} />
+          </div>
         </aside>
         <main style={{ padding: '0 16px 24px', background: '#ffffff' }}>
           {rightSections.map((section) => (
-            <StandardSection key={section.id} id={section.id} title={section.title} resume={resume} model={model} />
+            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+              <StandardSection id={section.id} title={section.title} resume={resume} model={model} />
+            </div>
           ))}
         </main>
       </div>
     )
   }
 
-  const isElegant = resume.templateId === 'elegant'
-  return (
-    <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
-      <div style={isElegant ? { width: '100%', maxWidth: 896, margin: '0 auto' } : undefined}>
+  // ── timeline: left-side vertical line with dot markers ────────────────
+  if (resume.templateId === 'timeline') {
+    const nonBasicSections = sections.filter((s) => s.id !== 'basic')
+    return (
+      <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
+        {sections.find((s) => s.id === 'basic') && (
+          <div data-drag-id="section:basic" style={{ ...sectionWrapStyle('basic'), marginBottom: 16 }}>
+            <ClassicHeader resume={resume} />
+          </div>
+        )}
+        <div style={{ paddingLeft: 6 }}>
+          {nonBasicSections.map((section) => (
+            <div
+              key={section.id}
+              data-drag-id={`section:${section.id}`}
+              style={{
+                ...sectionWrapStyle(section.id),
+                position: 'relative',
+                paddingLeft: 28,
+                marginTop: resume.globalSettings.sectionSpacing ?? 16,
+              }}
+            >
+              {/* vertical line */}
+              <div style={{ position: 'absolute', left: 6, top: 14, bottom: -8, width: 2, background: '#e5e7eb' }} />
+              {/* dot */}
+              <div style={{
+                position: 'absolute',
+                left: 0,
+                top: 14,
+                width: 14,
+                height: 14,
+                borderRadius: '50%',
+                background: themeColor,
+                border: '2px solid #ffffff',
+                boxShadow: `0 0 0 2px ${themeColor}`,
+              }} />
+              {/* section title & content */}
+              <div
+                style={{
+                  fontSize: resume.globalSettings.headerSize || 18,
+                  fontWeight: 700,
+                  color: themeColor,
+                  marginBottom: 10,
+                  lineHeight: 1.4,
+                }}
+              >
+                {section.title}
+              </div>
+              {/* reuse StandardSection without its own title */}
+              <div style={{ fontSize: resume.globalSettings.baseFontSize ?? 14 }}>
+                {section.id === 'skills' && <RichList lines={model.skills} resume={resume} />}
+                {section.id === 'experience' && <EntryList items={model.experience} resume={resume} />}
+                {section.id === 'projects' && <EntryList items={model.projects} resume={resume} />}
+                {section.id === 'education' && <EntryList items={model.education} resume={resume} />}
+                {section.id === 'selfEvaluation' && <Paragraphs lines={model.selfEvaluation} resume={resume} />}
+                {section.id === 'certificates' && resume.certificates.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    {resume.certificates.map((cert) => (
+                      <img key={cert.id} src={cert.url} alt="证书" style={{ width: `${cert.width}%`, maxWidth: '100%' }} />
+                    ))}
+                  </div>
+                )}
+                {section.id in resume.customData && <CustomEntries items={resume.customData[section.id]} resume={resume} />}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ── creative: full-width colored header block ──────────────────────────
+  if (resume.templateId === 'creative') {
+    const otherSections = sections.filter((s) => s.id !== 'basic')
+    const padding = resume.globalSettings.pagePadding ?? 14
+    return (
+      <div
+        data-resume-print-root
+        className="resume-document"
+        style={{ ...basePageStyle(resume, template), padding: 0, overflow: 'hidden' }}
+      >
+        {/* colored header block */}
+        <div
+          data-drag-id="section:basic"
+          style={{
+            ...sectionWrapStyle('basic'),
+            background: themeColor,
+            color: '#ffffff',
+            padding: `24px ${padding}px`,
+            borderBottomRightRadius: 32,
+          }}
+        >
+          <ClassicHeaderInverse resume={resume} />
+        </div>
+        {/* content area */}
+        <div style={{ padding: `0 ${padding}px ${padding}px` }}>
+          {otherSections.map((section) => (
+            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+              <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant="creative" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ── editorial: magazine-style header + uppercase gray section titles ───
+  if (resume.templateId === 'editorial') {
+    return (
+      <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
         {sections.map((section) =>
           section.id === 'basic' ? (
-            <ClassicHeader key={section.id} resume={resume} centered={isElegant} />
+            <div key={section.id} data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+              <EditorialHeader resume={resume} />
+            </div>
           ) : (
-            <StandardSection key={section.id} id={section.id} title={section.title} resume={resume} model={model} elegant={isElegant} />
+            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+              <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant="editorial" />
+            </div>
+          ),
+        )}
+      </div>
+    )
+  }
+
+  // ── single-column variants: left-right / minimalist / elegant / swiss / classic ──
+  const variantMap: Partial<Record<string, TitleVariant>> = {
+    'left-right': 'left-right',
+    minimalist: 'minimalist',
+    elegant: 'elegant',
+    swiss: 'swiss',
+    classic: 'classic',
+  }
+  const titleVariant: TitleVariant = variantMap[resume.templateId] ?? 'classic'
+  const isCentered = resume.templateId === 'elegant' || resume.templateId === 'minimalist'
+
+  return (
+    <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
+      <div style={isCentered ? { width: '100%', maxWidth: 896, margin: '0 auto' } : undefined}>
+        {sections.map((section) =>
+          section.id === 'basic' ? (
+            <div key={section.id} data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+              <ClassicHeader resume={resume} centered={isCentered} />
+            </div>
+          ) : (
+            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+              <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant={titleVariant} />
+            </div>
           ),
         )}
       </div>

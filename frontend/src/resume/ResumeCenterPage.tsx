@@ -2,13 +2,12 @@ import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag, Typograph
 import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { motion } from 'framer-motion'
 
 import { ResumeGallery } from '../student/ResumeGallery'
 import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { TEMPLATE_REGISTRY } from './templates/registry'
-import type { ResumeData, ResumeSummary } from './types'
+import type { ResumeData, ResumeSummary, TemplateId } from './types'
 
 export function ResumeCenterPage() {
   const navigate = useNavigate()
@@ -16,16 +15,13 @@ export function ResumeCenterPage() {
   const [loading, setLoading] = useState(true)
   const [resumes, setResumes] = useState<ResumeSummary[]>([])
   const [busyId, setBusyId] = useState<number | null>(null)
-  const [previewTemplateId, setPreviewTemplateId] = useState<ResumeSummary['templateId'] | null>(null)
+  const [newResumeModalVisible, setNewResumeModalVisible] = useState(false)
+  const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>('classic')
   const importRef = useRef<HTMLInputElement | null>(null)
 
   const mode = searchParams.get('mode')
 
   const countLabel = useMemo(() => `${resumes.length}/5`, [resumes.length])
-  const previewTemplate = useMemo(
-    () => TEMPLATE_REGISTRY.find((item) => item.id === previewTemplateId) ?? null,
-    [previewTemplateId],
-  )
 
   const refresh = async () => {
     setLoading(true)
@@ -100,7 +96,7 @@ export function ResumeCenterPage() {
           <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
             导入 JSON
           </Button>
-          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 5} onClick={() => navigate('/student/resumes/new')}>
+          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 5} onClick={() => setNewResumeModalVisible(true)}>
             新建简历
           </Button>
           <input
@@ -123,49 +119,6 @@ export function ResumeCenterPage() {
         </div>
       ) : null}
 
-      <section className="resume-template-workbench">
-        <div className="resume-template-workbench-head">
-          <div>
-            <span className="resume-template-workbench-kicker">Template Studio</span>
-            <h3>先选模板，再进入创作</h3>
-            <p>直接参考 magic-resume 的模板工作台体验，先看完整缩略图和质感，再开始新建简历。</p>
-          </div>
-          <Tag color="blue">3 套模板已接入</Tag>
-        </div>
-
-        <div className="resume-template-workbench-grid">
-          {TEMPLATE_REGISTRY.map((template, index) => (
-            <motion.article
-              key={template.id}
-              className="resume-template-workbench-card"
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.08 }}
-              whileHover={{ y: -6, scale: 1.01 }}
-            >
-              <button
-                type="button"
-                className="resume-template-workbench-image"
-                onClick={() => setPreviewTemplateId(template.id)}
-              >
-                <img src={template.thumbnailSrc} alt={template.name} />
-              </button>
-              <div className="resume-template-workbench-body">
-                <div>
-                  <h4>{template.name}</h4>
-                  <p>{template.description}</p>
-                </div>
-                <div className="resume-template-workbench-actions">
-                  <Button onClick={() => setPreviewTemplateId(template.id)}>预览模板</Button>
-                  <Button type="primary" onClick={() => navigate(`/student/resumes/new?template=${template.id}`)}>
-                    使用模板
-                  </Button>
-                </div>
-              </div>
-            </motion.article>
-          ))}
-        </div>
-      </section>
 
       <section className="resume-center-block">
         <div className="resume-center-block-head">
@@ -234,32 +187,40 @@ export function ResumeCenterPage() {
         <ResumeGallery embedded />
       </section>
 
+      {/* 新建简历 — 选择模板弹窗 */}
       <Modal
-        visible={Boolean(previewTemplate)}
-        footer={null}
-        onCancel={() => setPreviewTemplateId(null)}
-        style={{ width: 1040 }}
-        title={previewTemplate ? `${previewTemplate.name} 模板预览` : '模板预览'}
+        visible={newResumeModalVisible}
+        title="选择简历模板"
+        okText="开始创作"
+        cancelText="取消"
+        onOk={() => {
+          setNewResumeModalVisible(false)
+          navigate(`/student/resumes/new?template=${selectedTemplateId}`)
+        }}
+        onCancel={() => setNewResumeModalVisible(false)}
+        style={{ width: 900 }}
       >
-        {previewTemplate ? (
-          <div className="resume-template-preview-modal">
-            <div className="resume-template-preview-modal-image">
-              <img src={previewTemplate.thumbnailSrc} alt={previewTemplate.name} />
-            </div>
-            <div className="resume-template-preview-modal-side">
-              <h4>{previewTemplate.name}</h4>
-              <p>{previewTemplate.description}</p>
-              <div className="resume-template-preview-modal-meta">
-                <Tag color="arcoblue">A4 版式</Tag>
-                <Tag color="cyan">实时预览</Tag>
-                <Tag color="purple">支持导出 PDF</Tag>
+        <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: 14 }}>
+          选择一套模板后，编辑器将预填充示例内容，方便你快速修改成自己的简历。
+        </p>
+        <div className="new-resume-template-grid">
+          {TEMPLATE_REGISTRY.map((template) => (
+            <button
+              key={template.id}
+              type="button"
+              className={`new-resume-template-card${selectedTemplateId === template.id ? ' selected' : ''}`}
+              onClick={() => setSelectedTemplateId(template.id)}
+            >
+              <div className="new-resume-template-thumb">
+                <img src={template.thumbnailSrc} alt={template.name} />
               </div>
-              <Button type="primary" long onClick={() => navigate(`/student/resumes/new?template=${previewTemplate.id}`)}>
-                用这个模板新建简历
-              </Button>
-            </div>
-          </div>
-        ) : null}
+              <div className="new-resume-template-info">
+                <span className="new-resume-template-name">{template.name}</span>
+                <span className="new-resume-template-desc">{template.description}</span>
+              </div>
+            </button>
+          ))}
+        </div>
       </Modal>
     </div>
   )

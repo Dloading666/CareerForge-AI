@@ -24,11 +24,17 @@ const DEFAULT_SECTIONS: MenuSection[] = [
   { id: 'selfEvaluation', title: '自我评价', icon: '📝', enabled: true, order: 5 },
 ]
 
-export const TEMPLATE_LABELS = {
-  classic: '经典',
-  modern: '现代',
-  elegant: '优雅',
-} as const
+export const TEMPLATE_LABELS: Record<string, string> = {
+  classic: '经典模板',
+  modern: '两栏布局',
+  elegant: '优雅模板',
+  'left-right': '模块标题背景色',
+  timeline: '时间轴布局',
+  minimalist: '极简模板',
+  creative: '创意模板',
+  editorial: '画报风',
+  swiss: '瑞士美学',
+}
 
 export const DEFAULT_BASIC_FIELD_ORDER: BasicFieldType[] = [
   { id: 'name', key: 'name', label: '姓名', type: 'text', visible: true },
@@ -163,6 +169,96 @@ export function getDefaultGlobalSettings(templateId: ResumeData['templateId'] = 
       subheaderSize: 16,
       useIconMode: true,
       centerSubtitle: true,
+    }
+  }
+  if (templateId === 'left-right') {
+    return {
+      themeColor: '#2563eb',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 32,
+      lineHeight: 1.5,
+      sectionSpacing: 24,
+      paragraphSpacing: 16,
+      headerSize: 18,
+      subheaderSize: 16,
+      useIconMode: true,
+      centerSubtitle: false,
+    }
+  }
+  if (templateId === 'timeline') {
+    return {
+      themeColor: '#18181b',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 24,
+      lineHeight: 1.5,
+      sectionSpacing: 1,
+      paragraphSpacing: 12,
+      headerSize: 18,
+      subheaderSize: 16,
+      useIconMode: true,
+      centerSubtitle: false,
+    }
+  }
+  if (templateId === 'minimalist') {
+    return {
+      themeColor: '#171717',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 40,
+      lineHeight: 1.5,
+      sectionSpacing: 32,
+      paragraphSpacing: 24,
+      headerSize: 16,
+      subheaderSize: 16,
+      useIconMode: true,
+      centerSubtitle: true,
+    }
+  }
+  if (templateId === 'creative') {
+    return {
+      themeColor: '#7c3aed',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 14,
+      lineHeight: 1.5,
+      sectionSpacing: 16,
+      paragraphSpacing: 16,
+      headerSize: 16,
+      subheaderSize: 16,
+      useIconMode: false,
+      centerSubtitle: false,
+    }
+  }
+  if (templateId === 'editorial') {
+    return {
+      themeColor: '#8e8e8e',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 36,
+      lineHeight: 1.5,
+      sectionSpacing: 32,
+      paragraphSpacing: 16,
+      headerSize: 13,
+      subheaderSize: 16,
+      useIconMode: true,
+      centerSubtitle: false,
+    }
+  }
+  if (templateId === 'swiss') {
+    return {
+      themeColor: '#E31C24',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 16,
+      pagePadding: 36,
+      lineHeight: 1.5,
+      sectionSpacing: 36,
+      paragraphSpacing: 12,
+      headerSize: 18,
+      subheaderSize: 16,
+      useIconMode: true,
+      centerSubtitle: false,
     }
   }
   return {
