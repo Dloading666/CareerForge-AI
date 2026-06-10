@@ -7,8 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '../shared/api'
 
 interface ModelItem { id: number; display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key_cipher: string | null; model_identifier: string; context_length: number | null; default_temp: number | null; max_output: number | null; timeout_sec: number | null; open_to_student: boolean; status: string }
-interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string | string[]; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
-const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: ['openai'], base_url: '', api_key: '', model_identifier: '', open_to_student: false }
+interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
+const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: 'openai', base_url: '', api_key: '', model_identifier: '', open_to_student: false }
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
 const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
 
@@ -74,7 +74,7 @@ export function ModelPlaza() {
       setForm({
         display_name: model.display_name, provider: model.provider, deploy_type: model.deploy_type,
         capability: model.capability,
-        protocols: model.protocols ? model.protocols.split(',').filter(Boolean) : [],
+        protocols: model.protocols || 'openai',
         base_url: model.base_url, api_key: '', model_identifier: model.model_identifier,
         context_length: model.context_length ?? undefined,
         default_temp: model.default_temp ?? undefined,
@@ -91,7 +91,7 @@ export function ModelPlaza() {
   const handleSubmit = async () => {
     setSubmitting(true)
     try {
-      const p: Record<string, unknown> = { ...form, protocols: Array.isArray(form.protocols) ? form.protocols.join(',') : form.protocols }
+      const p: Record<string, unknown> = { ...form }
       if (!p.api_key) delete p.api_key
       if (editingModel) { await apiRequest(`/api/v1/admin/models/${editingModel.id}`, { method: 'PUT', body: JSON.stringify(p) }); showNotify('success', '模型已更新') }
       else { await apiRequest('/api/v1/admin/models', { method: 'POST', body: JSON.stringify(p) }); showNotify('success', '模型已创建') }
@@ -216,7 +216,7 @@ export function ModelPlaza() {
           <Form.Item label="供应商" required><Select value={form.provider} onChange={v => setForm(p => ({...p, provider: v}))} placeholder="选择供应商" allowCreate>{['OpenAI','DeepSeek','Anthropic','通义千问','智谱','月之暗面','Azure','Ollama'].map(v=><Select.Option key={v} value={v}>{v}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
           <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
-          <Form.Item label="协议"><Select mode="multiple" value={Array.isArray(form.protocols) ? form.protocols : form.protocols.split(',').filter(Boolean)} onChange={v => setForm(p => ({...p, protocols: v}))}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
+          <Form.Item label="协议"><Select value={form.protocols} onChange={v => setForm(p => ({...p, protocols: v}))}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="Base URL" required><Input value={form.base_url} onChange={v => setForm(p => ({...p, base_url: v}))} placeholder="https://api.deepseek.com/v1" /></Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
           <Form.Item label="模型名称" required><Input value={form.model_identifier} onChange={v => setForm(p => ({...p, model_identifier: v}))} placeholder="deepseek-chat" /></Form.Item>
