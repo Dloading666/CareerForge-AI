@@ -8,6 +8,7 @@ import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, 
 import { TEMPLATE_LABELS } from './constants'
 import { TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
+import { ResumeGallery } from '../student/ResumeGallery'
 
 export function ResumeCenterPage() {
   const navigate = useNavigate()
@@ -113,6 +114,18 @@ export function ResumeCenterPage() {
         </div>
       ) : null}
 
+
+      <section className="resume-gallery-host-section">
+        <div className="resume-center-block-head">
+          <div>
+            <h3>上传的简历</h3>
+            <p>支持 PDF / Word（.pdf / .docx / .doc），上传后可在下方查看与下载。</p>
+          </div>
+        </div>
+        <div className="resume-gallery-host">
+          <ResumeGallery embedded />
+        </div>
+      </section>
 
       <section className="resume-center-block">
         <div className="resume-center-block-head">

@@ -31,7 +31,7 @@ def list_my_attachments(
     rows = db.execute(
         text(
             "SELECT id, original_name, content_type, file_ext, file_size, stored_path, status, created_at "
-            "FROM student_agent_attachment WHERE student_id = :sid AND message_id IS NOT NULL "
+            "FROM student_agent_attachment WHERE student_id = :sid "
             "ORDER BY created_at DESC LIMIT 50"
         ),
         {"sid": student.id},
