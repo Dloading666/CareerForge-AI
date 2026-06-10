@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import uuid
@@ -31,6 +31,7 @@ from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student import resume_models as student_resume_models  # noqa: F401
 from app.student.router import router as student_router
+from app.student.profile_details_router import router as student_profile_details_router
 from app.student.event_router import router as event_router
 from app.student.announcement_router import router as announcement_router
 from app.student.feedback_router import router as feedback_router
@@ -108,6 +109,7 @@ app.include_router(feedback_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_feedback_router, prefix=settings.api_v1_prefix)
 app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
+app.include_router(student_profile_details_router, prefix=settings.api_v1_prefix)
 app.include_router(resume_router, prefix=settings.api_v1_prefix)
 
 

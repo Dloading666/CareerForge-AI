@@ -539,14 +539,14 @@ export function StudentHomePage() {
     if (activeNav === 'resume') {
       return {
         title: '简历中心',
-        subtitle: location.pathname.includes('/student/resumes/') ? '在线编辑、模板切换与实时预览' : '管理在线简历与附件简历',
+        subtitle: location.pathname.includes('/student/resumes/') ? '在线编辑、模板切换与实时预览' : '管理在线简历',
       }
     }
     if (activeNav === 'plaza') {
       return { title: '智能体广场', subtitle: '发现并使用不同场景的专业智能体' }
     }
     if (activeNav === 'profile') {
-      return { title: '个人中心', subtitle: '管理个人资料、账号安全与附件简历' }
+      return { title: '个人中心', subtitle: '管理个人资料与账号安全' }
     }
     return { title: '就业助手', subtitle: '主智能体将帮助你完成求职准备与简历打磨' }
   }, [activeNav, location.pathname])
@@ -1216,7 +1216,7 @@ export function StudentHomePage() {
                         <strong>AI订制简历</strong>
                         <span>基于你的经历快速搭建第一版在线简历，并进入编辑器细化内容。</span>
                       </button>
-                      <button className="agent-home-card" type="button" onClick={() => navigate('/student/resumes?tab=attachments&mode=optimize')}>
+                      <button className="agent-home-card" type="button" onClick={() => navigate('/student/resumes?mode=optimize')}>
                         <strong>简历优化</strong>
                         <span>上传已有 PDF / Word，或直接选择在线简历，继续打磨表达和结构。</span>
                       </button>

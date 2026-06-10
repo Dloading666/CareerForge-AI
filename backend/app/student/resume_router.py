@@ -31,7 +31,7 @@ from app.student.resume_schemas import (
 
 router = APIRouter(prefix="/student/resumes", tags=["student-resume"])
 
-MAX_RESUMES_PER_STUDENT = 5
+MAX_RESUMES_PER_STUDENT = 6
 DEFAULT_TEMPLATE_ID = "classic"
 DEFAULT_SECTION_ORDER = [
     ("basic", "基本信息", "👤"),

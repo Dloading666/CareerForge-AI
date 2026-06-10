@@ -1,9 +1,9 @@
-import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag, Typography } from '@arco-design/web-react'
+import { Button, Empty, Image, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
 import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
-import { ResumeGallery } from '../student/ResumeGallery'
+
 import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { TEMPLATE_REGISTRY } from './templates/registry'
@@ -22,6 +22,7 @@ export function ResumeCenterPage() {
   const mode = searchParams.get('mode')
 
   const countLabel = useMemo(() => `${resumes.length}/5`, [resumes.length])
+
 
   const refresh = async () => {
     setLoading(true)
@@ -81,14 +82,7 @@ export function ResumeCenterPage() {
   return (
     <div className="resume-center-page">
       <div className="resume-center-header">
-        <div>
-          <Typography.Title heading={4} style={{ margin: 0 }}>
-            我的简历
-          </Typography.Title>
-          <Typography.Paragraph style={{ margin: '8px 0 0', color: '#6b7280' }}>
-            在线简历和附件简历放在同一个中心管理。在线简历负责编辑排版，附件简历负责上传既有 PDF / Word。
-          </Typography.Paragraph>
-        </div>
+
         <div className="resume-center-actions">
           <Button icon={<IconRefresh />} onClick={() => void refresh()} loading={loading}>
             刷新
@@ -123,8 +117,7 @@ export function ResumeCenterPage() {
       <section className="resume-center-block">
         <div className="resume-center-block-head">
           <div>
-            <h3>我的在线简历</h3>
-            <p>创建完成后，会保留在这里继续编辑、导出和交给主智能体后续接入。</p>
+            <h3>我的简历</h3>
           </div>
           <Tag color="blue">已创建 {countLabel}</Tag>
         </div>
@@ -135,12 +128,23 @@ export function ResumeCenterPage() {
           </div>
         ) : resumes.length === 0 ? (
           <div className="resume-center-empty">
-            <Empty description="还没有在线简历，点击右上角“新建简历”开始。" />
+            <Empty description="还没有在线简历，点击右上角"新建简历"开始。" />
           </div>
         ) : (
           <div className="resume-card-grid">
             {resumes.map((resume) => (
               <article key={resume.id} className="resume-card-item">
+                <div className="resume-card-item-thumb">
+                  <Image
+                    src={TEMPLATE_REGISTRY.find((t) => t.id === resume.templateId)?.thumbnailSrc}
+                    alt={resume.title}
+                    title={resume.title}
+                    description='点击图片放大查看'
+                    width="100%"
+                    height="100%"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                </div>
                 <div className="resume-card-item-head">
                   <div>
                     <h3>{resume.title}</h3>
@@ -177,15 +181,6 @@ export function ResumeCenterPage() {
         )}
       </section>
 
-      <section className="resume-center-block">
-        <div className="resume-center-block-head">
-          <div>
-            <h3>附件简历</h3>
-            <p>上传已有 PDF / Word，用于参考、存档或后续做简历优化。</p>
-          </div>
-        </div>
-        <ResumeGallery embedded />
-      </section>
 
       {/* 新建简历 — 选择模板弹窗 */}
       <Modal
