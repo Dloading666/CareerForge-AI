@@ -411,7 +411,25 @@ def login_student(
     email = normalize_email(payload.email)
     check_login_rate_limit(role="student", account=email, ip=ip)
     student = db.scalar(select(StudentUser).where(StudentUser.email == email, StudentUser.is_deleted.is_(False)))
-    if not student or not student.password_hash or not verify_password(payload.password, student.password_hash):
+    if not student:
+        # Auto-register on first login
+        account_name = email.split("@")[0] if "@" in email else email
+        student = StudentUser(
+            account=account_name,
+            email=email,
+            password_hash=hash_password(payload.password),
+            name=account_name,
+            status="active",
+            is_deleted=False,
+            email_verified_at=utcnow(),
+            last_login_at=utcnow(),
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        db.add(student)
+        db.commit()
+        db.refresh(student)
+    elif not student.password_hash or not verify_password(payload.password, student.password_hash):
         record_login_failure(role="student", account=email, ip=ip)
         record_student_login(
             db,
@@ -423,11 +441,11 @@ def login_student(
             user_agent=user_agent,
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="邮箱或密码错误")
-
-    student.last_login_at = utcnow()
-    if student.email_verified_at is None:
-        student.email_verified_at = utcnow()
-    db.commit()
+    else:
+        student.last_login_at = utcnow()
+        if student.email_verified_at is None:
+            student.email_verified_at = utcnow()
+        db.commit()
 
     clear_login_failures(role="student", account=email, ip=ip)
     tokens = issue_tokens(db, user_id=student.id, role="student", tenant_id=student.tenant_id)
