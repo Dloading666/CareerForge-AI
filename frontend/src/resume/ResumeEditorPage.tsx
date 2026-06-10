@@ -1,4 +1,4 @@
-import { Button, Result, Spin, Switch } from '@arco-design/web-react'
+import { Button, Modal, Result, Spin, Switch } from '@arco-design/web-react'
 import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -65,6 +65,7 @@ function ResumeEditorInner() {
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(false)
   const [editPanelCollapsed, setEditPanelCollapsed] = useState(false)
   const [previewPanelCollapsed, setPreviewPanelCollapsed] = useState(false)
+  const [confirmLeaveVisible, setConfirmLeaveVisible] = useState(false)
 
   const resumeId = params.resumeId
   const templateParam = searchParams.get('template')
@@ -134,6 +135,37 @@ function ResumeEditorInner() {
     }
   }
 
+  const handleBackClick = () => {
+    if (dirty) {
+      setConfirmLeaveVisible(true)
+      return
+    }
+    navigate('/student/resumes')
+  }
+
+  const handleSaveAndLeave = async () => {
+    if (!resume) return
+    try {
+      markSaving()
+      const saved = await updateResume(resume)
+      markSaved(saved)
+      setConfirmLeaveVisible(false)
+      navigate('/student/resumes')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setConfirmLeaveVisible(false)
+        setAuthExpired(true)
+        return
+      }
+      markError()
+    }
+  }
+
+  const handleLeaveWithoutSaving = () => {
+    setConfirmLeaveVisible(false)
+    navigate('/student/resumes')
+  }
+
   const handleExport = () => {
     const node = previewRef.current?.querySelector('[data-resume-print-root]')
     if (node instanceof HTMLElement) {
@@ -168,7 +200,7 @@ function ResumeEditorInner() {
       {/* Header */}
       <header className="wb-header">
         <div className="wb-header-left">
-          <button type="button" className="wb-back-btn" onClick={() => navigate('/student/resumes')}>
+          <button type="button" className="wb-back-btn" onClick={handleBackClick}>
             <IconArrowLeft />
             <span>返回</span>
           </button>
@@ -244,6 +276,25 @@ function ResumeEditorInner() {
         onChange={(id) => { setTemplateId(id); setActiveSection('basic') }}
         onClose={() => setTemplatePickerVisible(false)}
       />
+
+      <Modal
+        title="是否保存当前简历的修改后再返回？"
+        visible={confirmLeaveVisible}
+        onCancel={() => setConfirmLeaveVisible(false)}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => setConfirmLeaveVisible(false)}>取消</Button>
+            <Button onClick={handleLeaveWithoutSaving}>不保存</Button>
+            <Button type="primary" loading={saveStatus === 'saving'} onClick={() => void handleSaveAndLeave()}>
+              保存并返回
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ margin: 0, color: '#4b5563' }}>
+          检测到当前简历还有未保存的修改，返回前请选择是否保存。也可以点「取消」继续编辑。
+        </p>
+      </Modal>
     </div>
   )
 }
