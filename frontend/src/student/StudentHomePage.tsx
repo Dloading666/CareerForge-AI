@@ -13,7 +13,7 @@ import {
   IconUser,
 } from '@arco-design/web-react/icon'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest } from '../shared/api'
 import { useAuth } from '../shared/auth'
@@ -87,6 +87,48 @@ export function StudentHomePage() {
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+
+  // Resizable sidebar
+  const [sideNavWidth, setSideNavWidth] = useState(() =>
+    Number(localStorage.getItem('sideNavWidth') || 248),
+  )
+  const isDraggingRef = useRef(false)
+  const dragStartXRef = useRef(0)
+  const dragStartWidthRef = useRef(0)
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+    dragStartXRef.current = e.clientX
+    dragStartWidthRef.current = sideNavWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return
+      const delta = e.clientX - dragStartXRef.current
+      const next = Math.min(480, Math.max(180, dragStartWidthRef.current + delta))
+      setSideNavWidth(next)
+    }
+    const onMouseUp = () => {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setSideNavWidth((w) => {
+        localStorage.setItem('sideNavWidth', String(w))
+        return w
+      })
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   // Models (shared between both agents)
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([])
@@ -263,7 +305,10 @@ export function StudentHomePage() {
 
   return (
     <div className="app-shell student-shell">
-      <aside className={`side-nav${navCollapsed ? ' side-nav--collapsed' : ''}`}>
+      <aside
+        className={`side-nav${navCollapsed ? ' side-nav--collapsed' : ''}`}
+        style={navCollapsed ? undefined : { width: sideNavWidth }}
+      >
         <div className="brand-mark">
           <img className="brand-logo" src="/baidi.png" alt="CareerForge" />
           <div>
@@ -339,6 +384,11 @@ export function StudentHomePage() {
             </Button>
           </Popconfirm>
         </div>
+
+        {/* Drag-to-resize handle */}
+        {!navCollapsed && (
+          <div className="side-nav-resize-handle" onMouseDown={handleResizeMouseDown} />
+        )}
       </aside>
 
       <section className="content-panel">

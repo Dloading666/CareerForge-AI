@@ -894,7 +894,7 @@ export function AgentChatView({
         <p>一对一模拟面试，获得真实面试官风格的提问与针对性点评，帮你在面试中脱颖而出。</p>
         <div className="agent-home-cards">
           <button
-            className="agent-home-card agent-home-card--full"
+            className="agent-home-card agent-home-card--centered"
             type="button"
             onClick={() => void submitMessage('你好，我想开始模拟面试，请先了解我的个人信息，然后开始面试。')}
           >

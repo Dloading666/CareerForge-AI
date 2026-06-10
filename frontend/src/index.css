@@ -282,8 +282,9 @@ textarea {
 }
 
 .side-nav {
-  width: 248px;
+  width: 248px; /* fallback; overridden by inline style */
   flex-shrink: 0;
+  position: relative;
   background: rgba(255, 255, 255, 0.88);
   border-right: 1px solid rgba(217, 222, 238, 0.95);
   backdrop-filter: blur(14px);
@@ -295,6 +296,33 @@ textarea {
   transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1),
               padding 0.24s cubic-bezier(0.4, 0, 0.2, 1),
               border-color 0.24s ease;
+}
+
+.side-nav-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.side-nav-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.side-nav-resize-handle:hover::after,
+.side-nav-resize-handle:active::after {
+  background: rgba(22, 93, 255, 0.35);
 }
 
 .side-nav--collapsed {
@@ -764,6 +792,7 @@ textarea {
   max-width: 640px;
   color: var(--text-subtle);
   font-size: 16px;
+  white-space: nowrap;
 }
 
 .agent-suggestion-grid {
@@ -837,6 +866,8 @@ textarea {
 .agent-home-grid {
   position: relative;
   z-index: 1;
+  max-width: 560px;
+  margin: 0 auto;
 }
 
 .agent-home-badge {
@@ -857,14 +888,20 @@ textarea {
 }
 
 .agent-home-cards {
-  margin-top: 30px;
+  margin-top: 20px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .agent-home-card--full {
   grid-column: 1 / -1;
+}
+
+.agent-home-card--centered {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: calc(50% - 6px);
 }
 
 .interviewer-badge {
@@ -873,9 +910,9 @@ textarea {
 }
 
 .agent-home-card {
-  min-height: 138px;
-  padding: 22px 20px;
-  border-radius: 20px;
+  min-height: 0;
+  padding: 16px 18px;
+  border-radius: 14px;
   border: 1px solid rgba(88, 126, 255, 0.2);
   background: linear-gradient(135deg, #1b63ff 0%, #1251e0 55%, #0d3cb4 100%);
   color: #fff;
@@ -892,15 +929,15 @@ textarea {
 
 .agent-home-card strong {
   display: block;
-  font-size: 17px;
-  margin-bottom: 10px;
+  font-size: 15px;
+  margin-bottom: 6px;
 }
 
 .agent-home-card span {
   display: block;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
-  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .agent-suggestion-grid.compact {
