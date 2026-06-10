@@ -49,7 +49,8 @@
 │   │   ├── student/       # 学生端 API
 │   │   │   ├── agent_runtime.py   # Agentic Loop 核心（Model + Harness）
 │   │   │   ├── router.py          # 会话 / 消息 / 流式 SSE
-│   │   │   └── attachment_router.py
+│   │   │   ├── run_manager.py        # RunManager 后台运行 + SSE 事件队列
+│   │   └── attachment_router.py
 │   │   ├── skills/        # Skill 广场 CRUD
 │   │   ├── core/          # 配置 / 响应信封 / LLM 客户端
 │   │   └── infra/         # DB / Redis
@@ -61,6 +62,9 @@
 │       ├── admin/         # 管理端
 │       ├── resume/        # 简历编辑器
 │       └── shared/        # AuthProvider · API 封装 · 路由守卫
+├── frontend/
+│   └── public/
+│       └── activity-icons/     # 自定义活动图标 PNG
 ├── docker-compose.yml
 └── nginx/
 ```
@@ -159,7 +163,9 @@ npm run lint    # eslint
 2. **Harness** 负责执行、校验、审计，并把结果回灌，直到模型给出最终答复或达到 `max_iterations`
 3. 两类智能体工具池不同：AI简历助手拥有完整工具集（含简历生成/导出），AI面试官只读取学生信息，不操作简历
 
-SSE 事件流：`message.saved` → `activity.started/completed/failed` → `message.delta` → `message.completed` → `done`
+SSE 事件流：`message.saved` → `activity.started/completed/failed` → `message.delta` → `message.snapshot` → `message.completed` → `done`
+
+前端采用 Codex 式「叙述 + 动作胶囊」交错时间线，模型边思考边输出，工具执行以动画胶囊实时展示。
 
 ---
 

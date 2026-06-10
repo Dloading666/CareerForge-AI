@@ -4,7 +4,7 @@
 >
 > 本文是整合后的**完整设计文档**，汇总并取代散落在各处的开发文档（README / MODEL_PLAZA_DEV_DOC / STUDENT_MASTER_AGENT_DEV_REPORT / DOCKER_DEPLOY / OPTIMIZATION_LOG）。后续规划见 `AGENT_LOOP_AND_KB_DEV_PLAN.md`，给 AI 协作者的速查见 `CLAUDE.md`。
 >
-> 最后更新：2026-06-10
+> 最后更新：2026-06-11
 
 ---
 
@@ -338,13 +338,13 @@ React 19 兼容：用 `Alert` 而非 Arco `Message`；`element.ref` 警告可忽
 **已知技术债（待偿还）**：
 | 项 | 现状 | 建议 |
 |----|------|------|
-| 🔴 API Key「加密」 | `encrypt/decrypt_api_key` 实为 base64 ≈ 明文 | 升级 Fernet/AES-GCM，密钥从 env 注入；覆盖 model/dify/mcp/未来 KB 所有密钥 |
+| 🟠 API Key「加密」 | `encrypt/decrypt_api_key` 实为 base64 ≈ 明文 | 升级 Fernet/AES-GCM，密钥从 env 注入；覆盖 model/dify/mcp/未来 KB 所有密钥 |
 | 🟠 MCP 执行是假的 | `mcp/service.py` 的 `call_tool`/`test_service`/`discover_tools` 返回模拟数据 | 接真实 MCP 协议客户端（Streamable HTTP/SSE/stdio） |
 | 🟠 知识库空白 | `query_knowledge_base` 占位 | 按计划挂 Dify 数据集（共享检索 + 子智能体可绑专属库） |
 | 🟠 `ask` 模式无真正人在回路 | 当前 `ask` 仅对「需确认」风险工具软暂缓，无 SSE 确认往返；且现有工具池无高危工具，故 ask 与 auto 行为暂同 | 接入投递/发信等高危工具时补 SSE 确认往返 |
 | 🟡 子智能体记忆策略未细化 | `memory_isolation`/`model_passthrough`/`memory_strategy` 已建模但循环未差异化消费（子智能体固定独立上下文 + 仅摘要回流） | 按配置实现透传/摘要回流 |
 | ✅ `_sync_dify_route` intent 乱码 | 已修复：原写入 `"??Dify????..."`（编码损坏），现按「名称：简介。何时调用」生成可读中文 intent（模型选子智能体的依据）。注：数据库里**已存的旧乱码行需重新保存对应智能体**才会刷新 | — |
-| 🟡 死代码 | 旧关键词规划（`_plan_tool_calls`/`_run_tool_planning`/`_compose_prompt`/`_stream_llm_response`/`assemble_tool_pool`）已被循环取代但未删 | 清理 |
+| ✅ 死代码 | 已清理：旧关键词规划、一次性脚本、过期文档已移除 | — |
 | 🟡 无测试 / 无 CI | 仓库无测试套件、无 `.github/workflows`、后端无 linter | 给 `run_agent_loop` 补单测 + 加 CI |
 | 🟡 本地 venv 版本错配 | `backend/.venv` 是 Python 3.9，但代码用 3.10+ 语法（仅 Docker 的 3.11 能跑） | 本地用 3.11 venv |
 

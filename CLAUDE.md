@@ -71,7 +71,13 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 
 2. `stream_master_reply()` 是 SSE 入口：保存用户消息 → 选模型 → 读 `session.agent_type` 决定工具池 → `_build_initial_messages(..., agent_type)` → 创建空 assistant 行 → 进入 `run_agent_loop()`。
 
-3. `run_agent_loop()` 是 Harness 主循环：流式调用 LLM → 若有 `tool_calls` 则四态权限裁决 → 执行 → 审计 → 回灌 → 否则流式输出最终答复。`max_iterations` 默认 8，安全上限 20。
+3. `run_agent_loop()` 是 Harness 主循环：流式调用 LLM → 若有 `tool_calls` 则四态权限裁决 → 执行 → 审计 → 回灌 → 否则流式输出最终答复。`max_iterations` 默认 8，安全上限 20。delta 文本实时 yield 给前端（边思考边输出），不缓冲。
+
+4. **RunManager 后台运行**（`run_manager.py`）：`POST /student/master/runs` 启动后台运行 → `GET /student/master/runs/{id}/events` 订阅 SSE 事件流。`stream_master_reply()` 是旧的同步 SSE 端点，两者共享 `run_agent_loop()` 核心逻辑。前端通过 `chatRuntimeStore.ts` 管理 SSE 连接和状态。
+
+5. **事实校验与质量闸门**：`SessionEvidencePool` 统一管理事实来源（个人档案 + read_resume 结果 + 附件 + 对话内容）。`_validate_resume_facts` 做实体级校验（专名 + 时间段），`_check_resume_quality` 做确定性质量检查（强动词率、量化占比、bullet 长度等）。`FACT_GUARD_SHADOW_MODE` 开关可切换为仅日志不拦截。
+
+6. **前端时间线**：`chatRuntimeStore` 维护 `segments: TimelineSegment[]`（text 和 actions 段交错），`AgentChatView` 用 `TimelineRenderer` 渲染 Codex 式叙述+动作胶囊。活动使用自定义 PNG 图标（`/activity-icons/`）配合 CSS 动画。
 
 4. **`_harness_system_prompt(config, reasoning_effort, agent_type)`**：
    - `agent_type == "interviewer"` → 返回 `INTERVIEWER_SYSTEM_PROMPT`（面试官人格，禁止操作简历）。
@@ -79,12 +85,11 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 
 5. **session 区分**：`StudentAgentSession.agent_type VARCHAR(32) DEFAULT 'resume'`，迁移 `20260610_0016`。`POST /student/master/sessions` 从 `AgentSessionCreate.agent_type` 读取并写入。
 
-SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.completed` / `done` / `attachment.created`。
+SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.completed`。
 
-> 旧的关键词预规划函数（`_plan_tool_calls` 等）已是**死代码**，保留未删。
 
 ### 简历工具
-`read_resume` 读取学生在「简历制作」保存的 PDF（`session_id=0` 的附件），缺 `extracted_text` 时用 `_ensure_attachment_text()` 现抽现存；`export_resume_pdf` 用 reportlab + **内嵌 CJK 字体**渲染可下载 PDF，存为附件并返回 `/data/...` 下载链接。
+`read_resume` 读取学生在「简历制作」保存的 PDF（`session_id=0` 的附件），缺 `extracted_text` 时用 `_ensure_attachment_text()` 现抽现存；`export_resume_pdf` 用 reportlab + **内嵌 CJK 字体**渲染可下载 PDF，通过签名 token 下载端点（`/api/v1/student/files/download`）返回临时链接，10 分钟过期。
 
 ### 前端（`frontend/src/`）
 
