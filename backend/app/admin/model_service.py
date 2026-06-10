@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import base64
+import re
 import time
 from typing import Optional
 
@@ -23,6 +24,60 @@ def encrypt_api_key(plain: str) -> str:
 
 def decrypt_api_key(cipher: str) -> str:
     return base64.urlsafe_b64decode(cipher.encode("utf-8")).decode("utf-8")
+
+
+# → 测试连接失败中文翻译：HTTP 状态码 / response_body 关键词 → 人词化描述。
+HTTP_STATUS_HINTS_CN: dict = {
+    400: '请求格式错误（参数有误）',
+    402: '需要付费或余额不足，请充值或更换 Key',
+    401: '认证失败（API Key 无效、过期或错误）',
+    403: '权限不足或禁止访问',
+    404: '接口地址不存在，请检查 Base URL 和模型名称',
+    408: '请求超时',
+    413: '请求内容过大',
+    429: '请求频率过高或配额用尽',
+    500: '供应商服务器内部错误',
+    502: '供应商网关错误',
+    503: '供应商服务暂时不可用',
+    504: '供应商网关超时',
+}
+
+KEYWORD_HINTS_CN: list = [
+    # 认证 / API Key（最具体，优先匹配）
+    (re.compile(r'authentication\s*(?:fails?|failure)?|unauthorized|invalid[_\s-]?(?:api[_\s-]?)?key|invalid[_\s-]?token|invalid[_\s-]?auth|api[_\s-]?key[_\s-]?(?:invalid|error|expired|wrong|missing)|凭证|令牌', re.I), '认证失败：API Key 无效、过期或错误'),
+    # 余额不足 / 配额用尽
+    (re.compile(r'insufficient[_\s-]?(?:quota|balance|credits?)|quota[_\s-]?exceeded|balance[_\s-]?(?:not[_\s-]?enough|insufficient)|payment[_\s-]?required|out[_\s-]?of[_\s-]?credits?|余额|欠费|额度', re.I), '余额不足或配额用尽，请充值或更换 Key'),
+    # 请求频率超限
+    (re.compile(r'rate[_\s-]?limit[_\s-]?(?:exceeded|reached)?|too[_\s-]?many[_\s-]?requests|requests[_\s-]?per[_\s-]?(?:minute|second|day)|频率超限', re.I), '请求频率过高，请稍后重试'),
+    # 模型不存在
+    (re.compile(r'model[_\s-]?not[_\s-]?found|unknown[_\s-]?model|no[_\s-]?such[_\s-]?model|the[_\s-]?model[_\s-]?does[_\s-]?not[_\s-]?exist|invalid[_\s-]?model', re.I), '模型不存在，请检查模型名称'),
+    # 上下文长度超限
+    (re.compile(r'context[_\s-]?length[_\s-]?(?:exceeded|limit)|max[_\s-]?context[_\s-]?length|too[_\s-]?many[_\s-]?tokens', re.I), '上下文长度超限，请减少输入'),
+    # 请求参数错误
+    (re.compile(r'bad[_\s-]?request|invalid[_\s-]?request[_\s-]?(?:format|body)?', re.I), '请求参数错误'),
+    # 资源 / 接口不存在（不包含 model not found，那个优先）
+    (re.compile(r'resource[_\s-]?not[_\s-]?found|endpoint[_\s-]?not[_\s-]?found|资源不存在|接口不存在', re.I), '资源或接口不存在'),
+
+]
+
+def enrich_error_with_cn(http_status, response_body, base_msg):
+    """给错误摘要加中文解释：
+    1) response_body 关键词匹配优先（具体场景如 “余额不足”、“API Key 失效”、“模型不存在”）；
+    2) 关键词未命中时才用 HTTP 状态码 hint；
+    3) 都没有则返回 base_msg。"""
+    cn_hint = ''
+    if response_body:
+        for pat, hint in KEYWORD_HINTS_CN:
+            if pat.search(response_body):
+                cn_hint = hint
+                break
+    if not cn_hint and http_status in HTTP_STATUS_HINTS_CN:
+        cn_hint = HTTP_STATUS_HINTS_CN[http_status]
+    if not cn_hint:
+        return base_msg
+    if base_msg and base_msg not in cn_hint:
+        return f'{cn_hint}（{base_msg}）'
+    return cn_hint
 
 
 # ── 模型 CRUD ────────────────────────────────────
@@ -161,17 +216,44 @@ async def test_model_connection(db, model_id):
                 error_message = error_summary
 
         if not success and not error_message:
-            error_message = 'HTTP ' + str(resp.status_code)
-            error_summary = error_message
+            # HTTP 非 2xx：尝试从 response_body 提取详细错误信息
+            extracted = None
+            if response_body:
+                try:
+                    j = json.loads(response_body) if response_body.lstrip().startswith(('{', '[')) else None
+                    if isinstance(j, dict):
+                        err_obj = j.get('error')
+                        if isinstance(err_obj, dict):
+                            extracted = err_obj.get('message') or err_obj.get('type') or json.dumps(err_obj, ensure_ascii=False)[:300]
+                        elif err_obj is not None:
+                            extracted = str(err_obj)[:300]
+                        elif j.get('message'):
+                            extracted = j['message']
+                except Exception:
+                    pass
+                # JSON 解析失败但是短文本（< 300 字符），直接用作错误消息
+                if not extracted and response_body and len(response_body) < 300:
+                    extracted = response_body.strip()
+            if extracted:
+                base = f'HTTP {resp.status_code}: {extracted[:300]}'
+                error_summary = enrich_error_with_cn(resp.status_code, response_body, base)
+                error_message = error_summary
+            else:
+                base = 'HTTP ' + str(resp.status_code)
+                error_summary = enrich_error_with_cn(resp.status_code, response_body, base)
+                error_message = error_summary
     except httpx.TimeoutException:
         msg = f'连接超时 ({model.timeout_sec or 30}s)'
-        error_message = msg; error_summary = msg
+        error_summary = enrich_error_with_cn(None, None, msg)
+        error_message = error_summary
     except httpx.ConnectError as e:
         msg = f'无法连接到目标地址: {str(e)[:200]}'
-        error_message = msg; error_summary = msg
+        error_summary = enrich_error_with_cn(None, None, msg)
+        error_message = error_summary
     except Exception as e:
         msg = str(e)[:500]
-        error_message = msg; error_summary = msg
+        error_summary = enrich_error_with_cn(None, None, msg)
+        error_message = error_summary
 
     log_entry = ModelTestLog(model_id=model.id, success=success, latency_ms=latency_ms, error_message=error_message)
     db.add(log_entry); db.commit(); db.refresh(log_entry)
