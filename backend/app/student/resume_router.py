@@ -5,7 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Request, status
 from fastapi.responses import StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -570,14 +570,32 @@ def _render_resume_thumbnail_png(row):
     renderPM.drawToFile(d, buf, fmt="PNG", bg=0xffffff, dpi=120)
     return buf.getvalue()
 
+def _resolve_thumbnail_identity(request, db):
+    from app.auth.models import StudentUser
+    from app.core.security import decode_token
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    else:
+        token = request.query_params.get("access") or ""
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少认证信息")
+    payload = decode_token(token, expected_type="access")
+    if payload.get("role") != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该资源")
+    user = db.get(StudentUser, int(payload["sub"]))
+    if not user or user.is_deleted:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="当前用户不存在")
+    return int(payload["sub"]), int(payload["tenant_id"])
+
 @router.get("/{resume_id}/thumbnail")
 def get_resume_thumbnail(
     resume_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    current=Depends(require_role("student")),
 ):
-    identity, _ = current
-    row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
+    user_id, tenant_id = _resolve_thumbnail_identity(request, db)
+    row = _get_student_resume(db, user_id, tenant_id, resume_id)
     png_bytes = _render_resume_thumbnail_png(row)
     headers = {"Cache-Control": "private, max-age=60"}
     return StreamingResponse(BytesIO(png_bytes), media_type="image/png", headers=headers)
