@@ -128,7 +128,7 @@ export function ResumeCenterPage() {
           </div>
         ) : resumes.length === 0 ? (
           <div className="resume-center-empty">
-            <Empty description="还没有在线简历，点击右上角"新建简历"开始。" />
+            <Empty description='还没有在线简历，点击右上角"新建简历"开始。' />
           </div>
         ) : (
           <div className="resume-card-grid">
