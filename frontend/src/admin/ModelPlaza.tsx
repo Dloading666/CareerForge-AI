@@ -109,7 +109,16 @@ export function ModelPlaza() {
 
   const handleProviderChange = (v: string) => {
     setForm(p => {
-      const suggested = lookupBaseUrl(v, p.protocols)
+      // 协议未选时，用该供应商的第一个预设 URL 先填充；协议选了则优先用准确映射。
+      let suggested = ''
+      if (p.protocols) {
+        suggested = lookupBaseUrl(v, p.protocols)
+      } else {
+        const preset = BASE_URL_PRESETS[v]
+        if (preset) {
+          suggested = Object.values(preset)[0] || ''
+        }
+      }
       const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrlRef.current)
       if (shouldAutoFill) {
         lastAutoFilledUrlRef.current = suggested
