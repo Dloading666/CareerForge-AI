@@ -1,4 +1,4 @@
-export type TemplateId = 'classic' | 'modern' | 'elegant'
+export type TemplateId = 'classic' | 'modern' | 'elegant' | 'left-right' | 'timeline' | 'minimalist' | 'creative' | 'editorial' | 'swiss'
 export type ResumeSectionId = string
 export type BasicFieldKey = 'name' | 'title' | 'birthDate' | 'employementStatus' | 'email' | 'phone' | 'location'
 
@@ -33,6 +33,8 @@ export type GlobalSettings = {
   centerSubtitle?: boolean
   flexibleHeaderLayout?: boolean
   autoOnePage?: boolean
+  /** 画布模式各 section 的位移偏移量，key 为 section id */
+  sectionOffsets?: Record<string, { x: number; y: number }>
 }
 
 export type PhotoConfig = {
@@ -163,6 +165,8 @@ export type ResumeTemplateConfig = {
 }
 
 export type ViewListItem = {
+  /** 原始数据项的 id，用于画布拖拽定位 */
+  itemId?: string
   title: string
   subtitle?: string
   meta?: string
