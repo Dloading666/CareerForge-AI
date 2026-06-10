@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
+import anyio
 import httpx
 from fastapi import HTTPException, UploadFile, status
 import re as _re
@@ -32,6 +33,14 @@ from app.student.agent_models import (
     StudentAgentSession,
 )
 from app.student.agent_schemas import AgentActivityResponse, AgentAttachmentResponse, AgentModelOptionResponse
+from app.student.profile_details_models import (
+    StudentCertification,
+    StudentEducation,
+    StudentHonor,
+    StudentProject,
+    StudentSkill,
+    StudentWorkExperience,
+)
 from app.student.resume_models import StudentResume
 from app.student.tool_validation import parse_tool_arguments
 
@@ -59,6 +68,390 @@ class ToolDefinition:
     metadata: dict[str, Any]
 
 
+# ── Session-scoped evidence pool ──────────────────────────────────────────────
+# 统一事实来源契约：generate/optimize/update/export 共享同一套证据池。
+# 生命周期绑定到单次 run_agent_loop，跨 turn 不持久（设计决策：每轮重新建立事实依据）。
+
+
+class SessionEvidencePool:
+    """运行时事实证据池，绑定到一次 run_agent_loop 调用。"""
+
+    def __init__(self) -> None:
+        self.profile_snapshot: Optional[dict[str, Any]] = None
+        self.read_resume_texts: list[dict[str, str]] = []  # [{source, name, excerpt}]
+        self.attachment_texts: list[dict[str, str]] = []   # [{name, text}]
+        self.source_resume_jsons: list[dict[str, Any]] = []  # [{resume_id, data_json}]
+
+    def set_profile(self, profile: dict[str, Any]) -> None:
+        self.profile_snapshot = profile
+
+    def add_resume_texts(self, resumes: list[dict[str, str]]) -> None:
+        for r in resumes:
+            if r.get("excerpt") and r.get("name"):
+                self.read_resume_texts.append(r)
+
+    def add_attachment_text(self, name: str, text: str) -> None:
+        if text and text.strip():
+            self.attachment_texts.append({"name": name, "text": text[:12000]})
+
+    def add_source_resume_json(self, resume_id: int, data_json: dict[str, Any]) -> None:
+        self.source_resume_jsons.append({"resume_id": resume_id, "data_json": data_json})
+
+
+    def collect_evidence_sources(self) -> list[Any]:
+        """收集当前证据池中所有可用于事实核验的数据源。"""
+        sources: list[Any] = []
+        if self.profile_snapshot:
+            sources.append(self.profile_snapshot)
+        for r in self.read_resume_texts:
+            sources.append(r.get("excerpt", ""))
+        for a in self.attachment_texts:
+            sources.append(a.get("text", ""))
+        for j in self.source_resume_jsons:
+            sources.append(j.get("data_json", {}))
+        return sources
+
+
+
+
+# ── Fact whitelist (Phase 1: 事实/表达分离) ────────────────────────────────────
+
+
+@dataclass
+class FactWhitelist:
+    """从证据侧预提取的结构化事实清单。校验时只检查输出中的关键实体是否在白名单内。"""
+    numbers: set          # 数字+单位（"30%"、"100万"、"3人"）
+    tech_tokens: set      # 英文技术词（Python、React、MySQL）
+    proper_nouns: set     # 从 profile 结构化字段提取的专名（公司名、学校名、职位名）
+    time_ranges: set      # 时间段（"2023.06 - 2024.12"）
+
+
+# 强动词词表（质量闸门用）
+_STRONG_VERBS = frozenset({
+    "主导", "设计", "实现", "优化", "搭建", "研发", "重构", "部署", "分析", "建立",
+    "推动", "领导", "简化", "提升", "降低", "改善", "完成", "管理", "维护", "开发",
+    "构建", "协调", "制定", "执行", "整合", "迁移", "扩展", "监控", "排查", "封装",
+    "自动化", "benchmark", "architected", "designed", "implemented", "optimized",
+    "built", "refactored", "deployed", "analyzed", "established",
+})
+
+# 空话黑名单（质量闸门用）
+_EMPTY_PHRASES = frozenset({
+    "认真负责", "吃苦耐劳", "积极向上", "热爱学习", "团队合作精神",
+    "良好的沟通能力", "较强的学习能力", "抗压能力强", "自我驱动力强",
+    "workhardplayhard", "detailoriented", "teamplayer", "selfmotivated",
+})
+
+# 通用英文停用词（不作为 tech token）
+# 素材质量阈值
+_WEAK_ITEM_RATIO_THRESHOLD = 0.6  # 弱条目率超过此值则触发素材访谈
+
+# 时间提取/归一化。档案是用户手填的，常见 "2023.09-2027。06"（全角句号）、
+# "2026-03 至 2026-05"（短横线）等脏格式——日期分隔符属于表达层而非事实层，
+# 提取要兼容这些写法，比对要对分隔符不敏感，否则会和质量闸门的
+# 「格式统一」要求互相矛盾，模型怎么改写都过不了校验。
+_DATE_SEP = r"[.\-/。．]"
+_RANGE_SEP = r"[-–—~～至]"
+_TIME_RANGE_RE = _re.compile(
+    rf"\d{{4}}{_DATE_SEP}\d{{1,2}}(?:\s*{_RANGE_SEP}\s*\d{{4}}{_DATE_SEP}\d{{1,2}})?"
+)
+_SINGLE_DATE_RE = _re.compile(rf"\d{{4}}{_DATE_SEP}\d{{1,2}}")
+
+
+def _norm_time_token(value: str) -> str:
+    """时间 token 归一化：去空白后把所有日期/区间分隔符统一替换为 "."。
+    "2026-03 至 2026-05"、"2026。01~2026.04"、"2026.03 - 2026.05" 比对时等价。"""
+    value = _re.sub(r"\s+", "", value)
+    return _re.sub(r"[-–—~～至。．/]", ".", value)
+
+
+def _extract_fact_whitelist(evidence_sources: list[Any]) -> FactWhitelist:
+    """从证据侧预提取结构化事实清单（白名单）。
+
+    - numbers: 数字+单位，正则提取，可靠。
+    - tech_tokens: 英文技术词，正则提取，过滤停用词。
+    - proper_nouns: 仅从 profile 结构化字段提取，不从自由文本提取中文实体。
+    - time_ranges: 时间段正则提取。
+    """
+    numbers: set[str] = set()
+    tech_tokens: set[str] = set()
+    proper_nouns: set[str] = set()
+    time_ranges: set[str] = set()
+
+    for source in evidence_sources:
+        # 从 profile 结构化字段提取专名
+        # key 集合必须覆盖 _extract_candidate_facts 候选侧提取的全部字段，
+        # 否则模型如实照抄档案也会被判「无来源专名」
+        if isinstance(source, dict):
+            for key in ("company", "school", "name", "position", "role", "major", "degree"):
+                for item in _flatten_dict_values(source, key):
+                    val = str(item).strip()
+                    if val and len(val) >= 2:
+                        proper_nouns.add(val)
+            # 递归收集所有文本值
+            texts = _collect_evidence_values(source)
+        else:
+            texts = _collect_evidence_values(source)
+
+        for text_item in texts:
+            text = str(text_item)
+            # 数字+单位
+            for m in _re.finditer(r"\d[\d.,]*\s*[%万亿千百十人个次台条项年月天KkMmBb]", text):
+                numbers.add(m.group().strip())
+            # 英文技术词
+            for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{1,}", text):
+                word = m.group()
+                if len(word) >= 2:
+                    tech_tokens.add(word)
+            # 时间段（分隔符兼容全角句号等脏格式）
+            for m in _TIME_RANGE_RE.finditer(text):
+                time_ranges.add(m.group().strip())
+
+    return FactWhitelist(
+        numbers=numbers,
+        tech_tokens=tech_tokens,
+        proper_nouns=proper_nouns,
+        time_ranges=time_ranges,
+    )
+
+
+def _flatten_dict_values(data: dict, target_key: str) -> list[Any]:
+    """从嵌套 dict 中递归提取所有 target_key 对应的值。"""
+    results: list[Any] = []
+    if target_key in data and data[target_key]:
+        results.append(data[target_key])
+    for v in data.values():
+        if isinstance(v, dict):
+            results.extend(_flatten_dict_values(v, target_key))
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    results.extend(_flatten_dict_values(item, target_key))
+    return results
+
+
+def _extract_candidate_facts(args: dict[str, Any]) -> FactWhitelist:
+    """从模型提交的简历内容中提取候选事实（与白名单同结构）。
+
+    专名从结构化字段中精确提取（company/school/major/position/role/name），
+    不依赖中文分词，避免把整句当实体。
+    """
+    numbers: set[str] = set()
+    tech_tokens: set[str] = set()
+    proper_nouns: set[str] = set()
+    time_ranges: set[str] = set()
+
+    # ── 从结构化字段提取专名（精确匹配，无需 NLP）──
+    _NOUN_FIELDS_BY_SECTION = {
+        "experience": ("company", "position"),
+        "education": ("school", "major", "degree"),
+        "projects": ("name", "role"),
+    }
+    for section, fields in _NOUN_FIELDS_BY_SECTION.items():
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for field in fields:
+                val = str(item.get(field) or "").strip()
+                if val and len(val) >= 2:
+                    proper_nouns.add(val)
+
+    # ── 从所有文本字段提取数字/技术词/时间段 ──
+    for path, raw_value in _fact_values_from_args(args):
+        # 数字+单位
+        for m in _re.finditer(r"\d[\d.,]*\s*[%万亿千百十人个次台条项年月天KkMmBb]", raw_value):
+            numbers.add(m.group().strip())
+        # 英文技术词
+        for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{1,}", raw_value):
+            word = m.group()
+            if len(word) >= 2:
+                tech_tokens.add(word)
+        # 时间段（分隔符兼容全角句号等脏格式）
+        for m in _TIME_RANGE_RE.finditer(raw_value):
+            time_ranges.add(m.group().strip())
+
+    return FactWhitelist(
+        numbers=numbers,
+        tech_tokens=tech_tokens,
+        proper_nouns=proper_nouns,
+        time_ranges=time_ranges,
+    )
+
+
+# ── Phase 2: 素材质量评估 ─────────────────────────────────────────────────────
+
+
+def _assess_evidence_quality(evidence_sources: list[Any]) -> dict[str, Any]:
+    """评估证据池中各条目的充实度。返回质量报告。"""
+    total_items = 0
+    weak_items = 0
+    has_quantified = False
+
+    for source in evidence_sources:
+        if not isinstance(source, dict):
+            continue
+        # 检查经历/项目条目
+        for section in ("work_experiences", "experience", "projects"):
+            items = source.get(section) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                total_items += 1
+                desc = str(item.get("description") or item.get("details") or "")
+                # 检查是否含数字
+                if _re.search(r"\d+", desc):
+                    has_quantified = True
+                else:
+                    weak_items += 1
+
+    weak_ratio = weak_items / max(total_items, 1)
+    if total_items == 0:
+        quality = "insufficient"
+    elif weak_ratio > _WEAK_ITEM_RATIO_THRESHOLD:
+        quality = "insufficient"
+    elif weak_ratio > 0.3:
+        quality = "acceptable"
+    else:
+        quality = "good"
+
+    suggestions: list[str] = []
+    if total_items == 0:
+        suggestions.append(
+            "当前无经历/项目条目，素材不足。请向学生追问其工作经历、实习经历或项目经历后再生成简历。"
+        )
+    elif weak_ratio > _WEAK_ITEM_RATIO_THRESHOLD:
+        suggestions.append(
+            "当前经历/项目描述中缺少量化数据。请向学生追问：\n"
+            "- 该项目服务多少用户？上线后有什么可量化的效果（响应时间、转化率、工单量）？\n"
+            "- 团队几个人？你的角色是什么？\n"
+            "- 有没有具体的数字可以补充（性能提升百分比、处理数据量、节省成本）？"
+        )
+    if not has_quantified and total_items > 0:
+        suggestions.append(
+            "没有任何经历包含数字指标。建议引导学生补充量化成果。"
+        )
+
+    return {
+        "quality": quality,
+        "total_items": total_items,
+        "weak_items": weak_items,
+        "weak_ratio": round(weak_ratio, 2),
+        "has_quantified": has_quantified,
+        "suggestions": suggestions,
+    }
+
+
+# ── Phase 3: 质量闸门 ─────────────────────────────────────────────────────────
+
+
+def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = False) -> dict[str, Any]:
+    """确定性质量检查（纯代码，不依赖 LLM）。
+
+    Args:
+        require_sections: 为 True 时，experience+education+projects 全空报 error。
+                         仅在调用方确认证据中有经历/项目内容时传 True，
+                         避免真·空档案学生被卡死在死循环。
+    """
+    issues: list[dict[str, str]] = []
+
+    # 0. 空章节检查：仅当 require_sections=True 时生效
+    if require_sections:
+        has_education = bool(args.get("education") and isinstance(args["education"], list) and len(args["education"]) > 0)
+        has_experience = bool(args.get("experience") and isinstance(args["experience"], list) and len(args["experience"]) > 0)
+        has_projects = bool(args.get("projects") and isinstance(args["projects"], list) and len(args["projects"]) > 0)
+        if not has_education and not has_experience and not has_projects:
+            issues.append({"severity": "error", "section": "resume", "issue": "教育经历、工作经历和项目经历全部为空，至少需要填写一项内容板块"})
+
+    # 1. 检查经历/项目的 bullet 质量
+    for section in ("experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                continue
+            details = str(item.get("details") or item.get("description") or "")
+            bullets = [ln.strip() for ln in details.splitlines() if ln.strip() and ln.strip().startswith(("-", "•", "*"))]
+            if not bullets:
+                bullets = [ln.strip() for ln in details.splitlines() if ln.strip()]
+
+            strong_verb_count = 0
+            has_number_count = 0
+            for bullet in bullets:
+                # 强动词检查
+                if any(bullet.lstrip("-•* ").startswith(v) for v in _STRONG_VERBS):
+                    strong_verb_count += 1
+                # 数字检查
+                if _re.search(r"\d+", bullet):
+                    has_number_count += 1
+                # 长度检查
+                if len(bullet) > 80:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"bullet 过长（{len(bullet)} 字，建议 ≤ 80）"})
+
+            if bullets:
+                verb_ratio = strong_verb_count / len(bullets)
+                if verb_ratio < 0.7:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"强动词开头率 {verb_ratio:.0%}（建议 ≥ 70%）"})
+                num_ratio = has_number_count / len(bullets)
+                if num_ratio < 0.3:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"含数字条目占比 {num_ratio:.0%}（建议 ≥ 30%）"})
+
+    # 2. 自我评价检查
+    self_eval = str(args.get("self_evaluation") or "")
+    if self_eval:
+        eval_normalized = _normalize_evidence(self_eval)
+        for phrase in _EMPTY_PHRASES:
+            if phrase in eval_normalized:
+                issues.append({"severity": "error", "section": "self_evaluation", "issue": f"含空话「{phrase}」，请用具体能力或成果替代"})
+        eval_sentences = [s.strip() for s in self_eval.replace("。", "\n").replace("；", "\n").splitlines() if s.strip()]
+        if len(eval_sentences) > 5:
+            issues.append({"severity": "warning", "section": "self_evaluation", "issue": f"自我评价 {len(eval_sentences)} 句（建议 2-4 句）"})
+
+    # 3. 时间格式一致性
+    # birth_date 不参与：schema 要求它用 YYYY-MM，而经历时间段示例是 YYYY.MM，
+    # 两者格式天然不同，纳入会导致按 schema 输出也报混用
+    all_dates: list[str] = []
+    for section in ("education", "experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("date", "start_date", "end_date", "startDate", "endDate"):
+                val = item.get(key)
+                if val:
+                    all_dates.append(str(val))
+    if all_dates:
+        # 直接匹配「YYYY<分隔符>MM」并收集分隔符种类——区间分隔符（" - "、"至"）
+        # 前后不是 \d{4}+\d{1,2} 的形态，天然不会被误判为日期内部分隔符。
+        # (?!\d) 防止年份区间 "2024-2025" 被匹配成 "2024-20"。
+        # 分隔符类含全角句号：档案里 "2027。06" 这类笔误也要被识别并要求统一
+        separators: set[str] = set()
+        for d in all_dates:
+            for m in _re.finditer(r"\d{4}([.\-/。．])\d{1,2}(?!\d)", d):
+                separators.add(m.group(1))
+        if len(separators) > 1:
+            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM 或全角句号），请统一为 YYYY.MM"})
+
+    # 判定
+    errors = [i for i in issues if i["severity"] == "error"]
+    warnings = [i for i in issues if i["severity"] == "warning"]
+
+    return {
+        "passed": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "total_issues": len(issues),
+    }
+
+
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 # Capabilities that can serve OpenAI-compatible chat completions for the master
@@ -78,6 +471,11 @@ def _agent_allowed_capabilities(category: str | None) -> tuple[str, ...]:
         return TTS_CAPABLE_CAPABILITIES
     return CHAT_CAPABLE_CAPABILITIES
 AUTO_ATTACHMENT_PROMPT = "请帮我分析上传的附件。"
+
+# ── Context budget constants ──────────────────────────────────────────────────
+# 粗粒度 token 预算，用字符数近似（1 CJK char ≈ 1-2 tokens）。
+_TOOL_RESULT_CHAR_BUDGET = 60000   # 每轮所有工具结果的总字符上限
+_SINGLE_TOOL_RESULT_CAP = 12000    # 单个工具结果的字符上限（已有截断的地方保持不变）
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -109,7 +507,10 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="query_student_profile",
-        description="查询学生档案，包括姓名、邮箱、学院、专业、年级等基础背景。",
+        description=(
+            "查询学生完整个人档案，包括基本信息、联系方式、个人优势、求职状态与期望、"
+            "工作/实习经历、项目经历、教育经历、获奖荣誉、证书和技能。"
+        ),
         source="builtin",
         priority=990,
         input_schema={"type": "object", "properties": {}, "required": []},
@@ -225,6 +626,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         description=(
             "根据学生信息和目标 JD，生成一份结构化在线简历并保存到系统。"
             "调用前必须先 query_student_profile 读取学生信息。"
+            "经历、项目、教育、技能和自我评价将由服务端仅根据个人档案生成，传入的同名字段不会被视为事实来源。"
             "调用成功后会返回 editor_url，用 Markdown 链接格式呈现给学生。"
         ),
         source="builtin",
@@ -300,6 +702,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         description=(
             "基于学生已有简历内容和目标 JD，生成一份优化版简历并保存到系统。"
             "调用前必须已获取简历内容（通过 read_resume 或本轮上传的文档附件），禁止凭空捏造。"
+            "所有事实字段都会在服务端核验；无来源内容将拒绝保存。"
             "调用成功后会返回 editor_url，用 Markdown 链接格式呈现给学生。"
         ),
         source="builtin",
@@ -326,6 +729,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         description=(
             "更新学生已有的在线简历（局部修改）。"
             "调用前必须先 read_resume 确认简历内容，需要 resume_id。"
+            "不得增加原简历或个人档案中不存在的事实，服务端会在保存前强制核验。"
         ),
         source="builtin",
         priority=966,
@@ -387,15 +791,30 @@ def _extract_attachment_text(path: Path, content_type: str, ext: str) -> str:
 
 
 def _extract_pdf_text(path: Path) -> str:
-    from pypdf import PdfReader
+    # Try pypdf first; fall back to pdfminer.six for PDFs with encoding quirks (e.g. odd-length hex strings)
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        chunks: list[str] = []
+        for index, page in enumerate(reader.pages[:12], start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                chunks.append(f"[PDF 第 {index} 页]\n{text}")
+        result = "\n\n".join(chunks)[:12000]
+        if result:
+            return result
+    except Exception:
+        pass
 
-    reader = PdfReader(str(path))
-    chunks: list[str] = []
-    for index, page in enumerate(reader.pages[:12], start=1):
-        text = (page.extract_text() or "").strip()
+    try:
+        from pdfminer.high_level import extract_text as _pdfminer_extract
+        text = (_pdfminer_extract(str(path)) or "").strip()
         if text:
-            chunks.append(f"[PDF 第 {index} 页]\n{text}")
-    return "\n\n".join(chunks)[:12000] or "PDF 未提取到可读文本，可能是扫描件。"
+            return text[:12000]
+    except Exception:
+        pass
+
+    return "PDF 未提取到可读文本，可能是扫描件。"
 
 
 def _extract_docx_text(path: Path) -> str:
@@ -471,7 +890,7 @@ def list_available_models(
 
 def serialize_attachment(attachment: StudentAgentAttachment) -> AgentAttachmentResponse:
     data = AgentAttachmentResponse.model_validate(attachment)
-    data.download_url = _attachment_download_url(attachment.stored_path)
+    data.download_url = _attachment_download_url(attachment.stored_path, attachment.student_id, attachment.tenant_id)
     return data
 
 
@@ -606,6 +1025,7 @@ def serialize_activity(activity: StudentAgentActivity) -> AgentActivityResponse:
         name=activity.name,
         status=activity.status,
         summary=activity.summary,
+        display_summary=detail.pop("display_summary", None),
         detail=detail,
         started_at=activity.started_at,
         completed_at=activity.completed_at,
@@ -658,10 +1078,15 @@ def _complete_activity(
     summary: str,
     detail: dict[str, Any],
 ) -> StudentAgentActivity:
+    completed_at = utcnow()
+    started_at = activity.started_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    duration_ms = max(0, int((completed_at - started_at).total_seconds() * 1000))
     activity.status = status_value
     activity.summary = summary
-    activity.detail_json = json.dumps(detail, ensure_ascii=False)
-    activity.completed_at = utcnow()
+    activity.detail_json = json.dumps({**detail, "duration_ms": duration_ms}, ensure_ascii=False)
+    activity.completed_at = completed_at
     db.commit()
     db.refresh(activity)
     return activity
@@ -747,6 +1172,7 @@ async def stream_master_reply(
     db.refresh(assistant_message)
 
     full_content = ""
+    run_metrics: dict[str, Any] = {}
     async for event_name, data in run_agent_loop(
         db, identity, session, user_message, assistant_message,
         model, messages, openai_tools, registry, attachments, reasoning_effort,
@@ -754,6 +1180,8 @@ async def stream_master_reply(
     ):
         if event_name == "message.delta":
             full_content += str(data.get("delta", ""))
+        elif event_name == "runtime.completed":
+            run_metrics = data
         yield dumps_event(event_name, data)
 
     if not full_content.strip():
@@ -761,6 +1189,11 @@ async def stream_master_reply(
         yield dumps_event("message.delta", {"message_id": assistant_message.id, "delta": full_content})
 
     assistant_message.content = full_content
+    assistant_message.model_name = str(run_metrics.get("model_name") or model.display_name or model.model_identifier)[:128]
+    assistant_message.prompt_tokens = int(run_metrics.get("prompt_tokens") or 0) or None
+    assistant_message.completion_tokens = int(run_metrics.get("completion_tokens") or 0) or None
+    assistant_message.total_tokens = int(run_metrics.get("total_tokens") or 0) or None
+    assistant_message.duration_ms = int(run_metrics.get("duration_ms") or 0) or None
     session.updated_at = utcnow()
     db.commit()
     yield dumps_event("message.completed", {"message_id": assistant_message.id})
@@ -799,6 +1232,20 @@ def _claim_message_attachments(
 
 def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
     """Human-readable 'in progress' label shown in the activity chip."""
+    labels = {
+        "query_student_profile": "正在查看个人档案…",
+        "read_resume": "正在查看简历…",
+        "analyze_uploaded_file": "正在分析上传材料…",
+        "get_session_context": "正在回顾本次对话…",
+        "generate_resume_data": "正在生成在线简历…",
+        "optimize_resume_data": "正在创建优化版简历…",
+        "update_resume_data": "正在更改简历…",
+        "export_resume_pdf": "正在导出简历 PDF…",
+        "read_webpage": "正在读取岗位网页…",
+        "web_search": "正在搜索相关信息…",
+    }
+    if tool.name in labels:
+        return labels[tool.name]
     kind = tool.metadata.get("kind") or tool.source
     if kind == "profile":
         return "正在读取学生档案…"
@@ -880,8 +1327,8 @@ def _analyze_uploaded_files(attachments: list[StudentAgentAttachment]) -> dict[s
 # ── Web tools (Jina Reader) ───────────────────────────────────────────────────
 
 
-def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
-    """通过 Jina Reader 读取网页内容，返回 Markdown。"""
+async def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """通过 Jina Reader 读取网页内容，返回 Markdown（异步，避免阻塞事件循环）。"""
     url = str(args.get("url") or "").strip()
     if not url:
         return {"status": "failed", "tool": "read_webpage", "summary": "缺少 url 参数。"}
@@ -891,8 +1338,8 @@ def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
 
     try:
         jina_url = f"https://r.jina.ai/{url}"
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
-            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(jina_url, headers={"Accept": "text/plain"})
             resp.raise_for_status()
             content = resp.text[:max_length]
         return {
@@ -911,8 +1358,8 @@ def _read_webpage_tool(args: dict[str, Any]) -> dict[str, Any]:
         return {"status": "failed", "tool": "read_webpage", "summary": f"读取失败：{exc}"}
 
 
-def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
-    """联网搜索关键词。优先用 Jina Search API（需 JINA_API_KEY），否则通过 Jina Reader 抓 DuckDuckGo 结果页。"""
+async def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """联网搜索关键词（异步，避免阻塞事件循环）。优先用 Jina Search API，否则通过 Jina Reader 抓 DuckDuckGo。"""
     import os
     from urllib.parse import quote_plus
 
@@ -925,8 +1372,8 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
     # 方式一：Jina Search API（需 API Key）
     if jina_key:
         try:
-            with httpx.Client(timeout=15, follow_redirects=True) as client:
-                resp = client.get(
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                resp = await client.get(
                     f"https://s.jina.ai/{query}",
                     headers={"Accept": "text/plain", "Authorization": f"Bearer {jina_key}"},
                 )
@@ -947,8 +1394,8 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
     try:
         ddg_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
         jina_url = f"https://r.jina.ai/{ddg_url}"
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
-            resp = client.get(jina_url, headers={"Accept": "text/plain"})
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(jina_url, headers={"Accept": "text/plain"})
             resp.raise_for_status()
             content = resp.text[:8000]
         if not content.strip():
@@ -980,21 +1427,128 @@ def _web_search_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any]:
     student = db.get(StudentUser, identity.user_id)
-    if not student:
+    if not student or student.tenant_id != identity.tenant_id:
         return {"status": "failed", "tool": "query_student_profile", "summary": "没有找到学生档案。"}
+
+    def load_rows(model) -> list[Any]:
+        return list(
+            db.scalars(
+                select(model)
+                .where(
+                    model.student_id == identity.user_id,
+                    model.tenant_id == identity.tenant_id,
+                )
+                .order_by(model.sort_order.asc(), model.id.asc())
+                .limit(20)
+            ).all()
+        )
+
+    def text(value: Any, limit: int = 6000) -> Any:
+        return value[:limit] if isinstance(value, str) else value
+
+    work_experiences = [
+        {
+            "company": row.company,
+            "position": row.position,
+            "start_date": row.start_date,
+            "end_date": row.end_date,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentWorkExperience)
+    ]
+    projects = [
+        {
+            "name": row.name,
+            "role": row.role,
+            "start_date": row.start_date,
+            "end_date": row.end_date,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentProject)
+    ]
+    educations = [
+        {
+            "school": row.school,
+            "major": row.major,
+            "degree": row.degree,
+            "duration": row.duration,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentEducation)
+    ]
+    honors = [
+        {
+            "title": row.title,
+            "level": row.level,
+            "award_date": row.award_date,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentHonor)
+    ]
+    certifications = [
+        {
+            "name": row.name,
+            "issuer": row.issuer,
+            "issue_date": row.issue_date,
+            "expire_date": row.expire_date,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentCertification)
+    ]
+    skills = [
+        {
+            "name": row.name,
+            "level": row.level,
+            "description": text(row.description),
+        }
+        for row in load_rows(StudentSkill)
+    ]
+
     profile = {
-        "name": student.name or "同学",
+        "name": student.name or "",
         "email": student.email,
+        "phone": student.phone,
+        "gender": student.gender,
+        "age": student.age,
+        "birth_date": student.birth_date or "",
         "college": student.college,
         "major": student.major,
         "grade": student.grade,
+        "signature": student.signature,
+        "personal_advantages": text(student.personal_advantages),
+        "job_search_status": student.job_search_status,
+        "expected_position": student.expected_position,
+        "expected_salary": student.expected_salary,
+        "expected_location": student.expected_location,
+        "work_experiences": work_experiences,
+        "projects": projects,
+        "educations": educations,
+        "honors": honors,
+        "certifications": certifications,
+        "skills": skills,
     }
-    visible = "，".join(f"{k}={v}" for k, v in profile.items() if v)
+
+    section_counts = {
+        "工作/实习经历": len(work_experiences),
+        "项目经历": len(projects),
+        "教育经历": len(educations),
+        "获奖荣誉": len(honors),
+        "证书": len(certifications),
+        "技能": len(skills),
+    }
+    loaded_sections = ["基本信息", "求职期望"]
+    loaded_sections.extend(f"{label} {count} 条" for label, count in section_counts.items() if count)
+    missing_sections = [label for label, count in section_counts.items() if count == 0]
+
     return {
         "status": "completed",
         "tool": "query_student_profile",
-        "summary": f"已读取学生档案：{visible or '暂无详细背景'}。",
+        "summary": f"已读取完整个人档案：{'、'.join(loaded_sections)}。",
         "profile": profile,
+        "profile_completeness": {
+            "loaded_sections": loaded_sections,
+            "empty_sections": missing_sections,
+        },
     }
 
 
@@ -1122,8 +1676,12 @@ def _has_image_attachments(attachments: list[StudentAgentAttachment]) -> bool:
 
 
 def _supports_reasoning_effort(model: ModelConfig) -> bool:
-    haystack = f"{model.provider} {model.model_identifier} {model.protocols}".lower()
-    return any(token in haystack for token in ["openai", "o1", "o3", "o4", "gpt-5"])
+    # 保守策略：仅当模型标识中明确包含已知支持 reasoning_effort 的系列标记时才发送。
+    # 之前用 "openai" in haystack 会匹配所有 OpenAI 兼容模型（protocols 默认就是 "openai"），
+    # 导致不支持的网关收到 reasoning_effort 后返回 400。
+    haystack = f"{model.provider} {model.model_identifier}".lower()
+    reasoning_tokens = ["o1", "o3", "o4", "gpt-5", "o1-mini", "o1-preview", "o3-mini", "o4-mini"]
+    return any(token in haystack for token in reasoning_tokens)
 
 
 def _supports_image_input(model: ModelConfig) -> bool:
@@ -1230,15 +1788,83 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "update_resume_data",
 )
 
+_BUILTIN_RESUME_SKILL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "builtin"
+    / "evidence-backed-resume-tailor"
+    / "SKILL.md"
+)
+_BUILTIN_RESUME_SKILL_NAME = "skill__evidence_backed_resume_tailor"
+
+
+def _builtin_resume_tailor_skill() -> ToolDefinition:
+    try:
+        content = _BUILTIN_RESUME_SKILL_PATH.read_text(encoding="utf-8")
+    except OSError:
+        content = (
+            "# 证据约束订制简历\n"
+            "只允许使用个人档案、用户指定简历和本轮附件中的事实；JD 只能用于匹配和排序，"
+            "不得新增经历、技能、技术栈、职责、指标或成果。"
+        )
+    return ToolDefinition(
+        name=_BUILTIN_RESUME_SKILL_NAME,
+        description=(
+            "订制简历或根据 JD 优化简历时必须先调用。建立事实清单、JD 优先级和证据匹配矩阵，"
+            "只选择、排序和保守改写有来源内容，禁止补造技能、项目、经历和指标。"
+        ),
+        source="skill",
+        priority=985,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "本次订制任务，例如目标岗位、已有材料和希望重点优化的模块。",
+                }
+            },
+            "required": ["task"],
+        },
+        metadata={
+            "slug": "evidence-backed-resume-tailor",
+            "name": "证据约束订制简历",
+            "version": "1.0.0",
+            "category": "简历求职",
+            "kind": "resume_skill",
+            "risk": "allow",
+            "trusted_builtin": True,
+            "content": content,
+        },
+    )
+
+
+def _resume_skill_prerequisite_failure(name: str, completed_tools: set[str]) -> Optional[dict[str, Any]]:
+    if name not in {"generate_resume_data", "optimize_resume_data", "export_resume_pdf"}:
+        return None
+    if _BUILTIN_RESUME_SKILL_NAME in completed_tools:
+        return None
+    return {
+        "status": "failed",
+        "tool": name,
+        "error_code": "resume_tailor_skill_required",
+        "summary": (
+            "Harness 已阻止写入：订制或优化简历前必须先调用「证据约束订制简历」Skill，"
+            "完成事实清单、JD 优先级和证据匹配矩阵后再保存。"
+        ),
+    }
+
 
 def assemble_active_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    """组装工具池：内置工具白名单 + 已启用的 Skill + 已启用的子智能体（每条路由一个工具）。"""
+    """组装工具池：内置工具白名单 + 平台可信 Skill + 管理端启用 Skill。"""
     pool: dict[str, ToolDefinition] = {}
     by_name = {tool.name: tool for tool in BUILTIN_TOOLS}
     for name in ACTIVE_BUILTIN_TOOL_NAMES:
         tool = by_name.get(name)
         if tool:
             pool[name] = tool
+
+    builtin_skill = _builtin_resume_tailor_skill()
+    pool[builtin_skill.name] = builtin_skill
 
     for skill in list_skills(db, include_disabled=False):
         data = serialize_skill(skill)
@@ -1287,7 +1913,15 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "\n\n## 运行机制（Harness 管控，必须遵守）\n"
         "- 你只负责理解需求、规划步骤、选择工具、综合结果；工具的执行、校验与权限由 Harness 负责，你无需也不能自行控制循环。\n"
         "- 工具纪律：只能调用系统提供给你的工具，并严格按其参数 schema 传参；不要臆测不存在的能力，也不要伪造任何工具的返回结果。\n"
-        "- 反幻觉铁律：禁止编造学生的简历内容、经历、项目、岗位、公司或任何数据。没有依据时如实说明，并向学生索取材料。\n"
+        "- 反幻觉铁律：禁止编造学生的简历内容、经历、项目、岗位、公司、时间、职责、技术栈、成果、数字或任何数据。"
+        "个人档案、用户明确指定的已有简历和本轮上传的简历文件是唯一事实来源；JD、网页、模板示例、常识和模型记忆都不是学生事实。\n"
+        "- 空字段必须保持为空：个人档案中的空数组或空字段表示学生尚未填写，绝不能为了让简历完整而补齐。"
+        "可以调整已有事实的顺序和表达，但不能增加原文没有的新事实、新技能、新指标或新经历。资料不足时明确列出缺少项并请学生补充。\n"
+        "- 写入保护：generate_resume_data 会忽略模型提交的事实字段并由服务端从个人档案重建；"
+        "optimize_resume_data、update_resume_data 和 export_resume_pdf 共享同一套事实核验契约——关键实体（公司名、学校名、职位、项目名、时间段、技术栈、数字指标）必须在证据中有据，但允许改写表达、动词、STAR 结构和措辞优化。校验失败后不得换一种说法绕过校验。\n"
+        "- 订制 Skill：只要用户提供 JD 或要求『订制/针对岗位/ATS 优化/岗位匹配后改简历』，"
+        "必须先调用 skill__evidence_backed_resume_tailor，再按其事实清单、JD 优先级、证据矩阵和保存前自检流程执行；"
+        "不得直接跳到 generate_resume_data、optimize_resume_data 或 export_resume_pdf。\n"
         "- 简历相关：给出简历修改建议、或对已有简历进行优化/导出时，必须先调用 read_resume 读取学生的真实简历；"
         "若 read_resume 返回无简历，告知学生并引导其在『简历助手』中新建，绝不虚构内容。\n"
         "- AI 简历制作流程（全新生成，无需 read_resume）：\n"
@@ -1301,19 +1935,30 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "    若学生尚未提供目标岗位 JD，回复：『已读取您上传的简历，请提供目标岗位的 JD（可直接粘贴文本，或发来招聘链接）』。\n"
         "  ▸ 若本轮无附件，调用 read_resume 读取学生的在线简历；若无在线简历，\n"
         "    引导学生『上传简历 PDF 并重新发送，或前往简历制作新建一份在线简历』。\n"
-        "  ▸ 获得简历和 JD 后，输出结构化优化建议（针对 JD 的关键词补充、量化成就、结构调整等），\n"
-        "    然后调用 optimize_resume_data（title/basic 必填）将优化版本保存到学生的「简历制作」模块；\n"
+        "  ▸ 获得简历和 JD 后，先在回复中输出针对 JD 的逐项优化说明（哪些关键词已覆盖/需补充、哪些成就需量化），\n"
+        "    再调用 optimize_resume_data（title/basic 必填）将优化版本保存到学生的「简历制作」模块；\n"
         "    工具返回 editor_url 后，在回复末尾附上 Markdown 链接：[点击查看并编辑优化后的简历](editor_url)。\n"
+        "- 简历写作标准（generate/optimize/update/export 均适用，四者共享同一套事实来源契约）：\n"
+        "  · 经历/项目每条描述必须以**强动词开头**（主导、设计、实现、优化、搭建、研发、负责……），"
+        "严禁用「参与」「协助」「了解」「接触」等弱动词；\n"
+        "  · 尽量采用 STAR 格式：【背景/规模】→【具体行动】→【可量化结果】，"
+        "原材料中有数字（性能提升%、用户量、团队人数、金额）必须保留；\n"
+        "  · ATS 优化：experience/projects 的 details/description 字段和 skills 字段须自然地覆盖 JD 中出现的核心技术关键词；\n"
+        "  · 自我评价控制在 2-3 句，重点突出与 JD 最匹配的核心能力，不写泛泛的「认真负责」「吃苦耐劳」；\n"
+        "  · 没有具体数字时，用规模描述（「百万级 DAU」「10+ 人跨部门」）替代空洞形容词；\n"
+        "  · 同一份简历中时间格式统一（YYYY.MM 或 YYYY-MM），勿混用。\n"
         "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），工具返回 editor_url 后用链接呈现。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
-        "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF，然后把工具返回的 download_url 以 "
-        "Markdown 链接形式给学生，例如：[点击下载优化后的简历](下载链接)。\n"
+        "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF。注意 export_resume_pdf 也受事实核验约束，禁止用 export 绕过 optimize 的校验。"
+        "不要在回复正文中内嵌下载链接（签名链接 10 分钟后过期），提示学生查看下方的文件卡片下载即可。\n"
         "- 沉浸式专家：当学生需要『模拟面试 / AI 面试官』『职业规划咨询』『岗位推荐』等多轮、有人格的沉浸体验时，"
         "你不要自己扮演，而是引导学生前往『智能体广场』进入对应的专属智能体（那里才是多轮对话的入口）。\n"
         "- 联网工具：当学生发来 URL 链接或需要查看网页内容时，调用 read_webpage 读取；"
         "当需要搜索公司信息、行业动态等实时数据时，调用 web_search 搜索。"
         "如果搜索失败，引导学生自行搜索后粘贴链接，再用 read_webpage 读取。\n"
         "- 输出规范：使用 Markdown，先结论后步骤；不要输出工具调用的原始 JSON、tool_call 或隐藏推理过程。\n"
+        "- 输出节奏：每次调用工具前，先用一句话（≤20 字）向用户预告你要做什么，例如「先看看你档案里有哪些经历」「正在为你生成简历」；"
+        "工具结果回来后用一句话小结再继续下一步。禁止整段内心独白，禁止把内部修正过程（如校验失败重试、格式调整）写给用户。\n"
         f"- 推理强度：{effort}"
     )
     return persona + rules
@@ -1386,39 +2031,124 @@ async def run_agent_loop(
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """The harness-owned ReAct loop. Yields (sse_event_name, data) tuples."""
     assistant_id = assistant_message.id
+    run_started = time.monotonic()
+    usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    cumulative_output_chars = 0
+
+    def runtime_payload() -> dict[str, Any]:
+        return {
+            "message_id": assistant_id,
+            "model_name": model.display_name or model.model_identifier,
+            **usage_totals,
+            "duration_ms": max(0, int((time.monotonic() - run_started) * 1000)),
+        }
+
+    def add_usage(value: dict[str, Any]) -> None:
+        usage = value.get("usage") or {}
+        for key in usage_totals:
+            usage_totals[key] += int(usage.get(key) or 0)
+
     deadline = time.monotonic() + 300  # 5 分钟总超时
     logger.info("agent_loop 开始 session=%s model=%s max_iter=%s", session.id, model.model_identifier, max_iterations)
 
+    completed_tools: set[str] = set()
+    evidence_pool = SessionEvidencePool()
+    # Phase 2.3: 将用户消息自动写入证据池（对话内容天然是合法事实来源）
+    if user_message.content:
+        evidence_pool.add_attachment_text("对话内容", user_message.content)
+    # 工具结果字符预算跟踪（本轮所有工具结果总和）
+    tool_result_budget_used = 0
     for iteration in range(max_iterations):
         if time.monotonic() > deadline:
             logger.warning("agent_loop 超时 session=%s iteration=%s", session.id, iteration)
             yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[回复超时，请重试]"}
-            break
+            yield "runtime.completed", runtime_payload()
+            return
         turn_content = ""
         turn_tool_calls: list[dict[str, Any]] = []
         turn_error = False
+        streamed_any = False  # 是否已向客户端输出过任何 delta（用于判断是否可安全重试）
+        first_delta_emitted = False
 
+        yield "runtime.status", {
+            "message_id": assistant_id,
+            "phase": "thinking",
+            "label": "正在理解你的需求…" if iteration == 0 else "正在结合已有信息继续分析…",
+            "iteration": iteration + 1,
+        }
+        # 实时 yield delta，让用户看到模型思考过程。
+        # 有 tool_calls 时，思考文本会在工具执行前展示给用户；
+        # 最终回复轮次的 delta 会追加到 assistant 消息中。
+        turn_delta_parts: list[str] = []
         async for kind, value in _stream_llm_turn(
             model, messages, openai_tools, reasoning_effort, temperature, max_tokens
         ):
             if kind == "delta":
+                streamed_any = True
+                turn_delta_parts.append(value)
                 yield "message.delta", {"message_id": assistant_id, "delta": value}
             elif kind == "error":
                 turn_error = True
+            elif kind == "progress":
+                yield "runtime.heartbeat", {
+                    "message_id": assistant_id,
+                    "elapsed_ms": int((time.monotonic() - run_started) * 1000),
+                    "output_chars": cumulative_output_chars + value["turn_output_chars"],
+                    "phase": value["phase"],
+                    "iteration": iteration + 1,
+                }
             elif kind == "final":
                 turn_content = value.get("content") or ""
                 turn_tool_calls = value.get("tool_calls") or []
+                add_usage(value)
+                cumulative_output_chars += len(turn_content) + sum(len(tc.get("arguments", "")) for tc in turn_tool_calls)
 
         # 模型不支持 tools（请求报错）→ 降级：去掉 tools 再要一次纯文本回答。
+        # 仅在尚未输出任何 delta 时重试（避免已输出内容被重复拼接）。
         if turn_error and not turn_tool_calls:
+            if first_delta_emitted:
+                # 已经向客户端输出过部分内容，直接结束，避免重复
+                yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[模型响应中断，请重试]"}
+                yield "runtime.completed", runtime_payload()
+                return
             async for kind, value in _stream_llm_turn(
                 model, messages, [], reasoning_effort, temperature, max_tokens
             ):
                 if kind == "delta":
                     yield "message.delta", {"message_id": assistant_id, "delta": value}
+                elif kind == "progress":
+                    yield "runtime.heartbeat", {
+                        "message_id": assistant_id,
+                        "elapsed_ms": int((time.monotonic() - run_started) * 1000),
+                        "output_chars": cumulative_output_chars + value["turn_output_chars"],
+                        "phase": value["phase"],
+                        "iteration": iteration + 1,
+                    }
+                elif kind == "final":
+                    add_usage(value)
+                    cumulative_output_chars += len(value.get("content") or "") + sum(len(tc.get("arguments", "")) for tc in (value.get("tool_calls") or []))
+            yield "runtime.completed", runtime_payload()
             return
 
+        # ── delta 处理：工具轮次清空思考文本，最终轮次已完成实时推送 ──
+        if turn_tool_calls:
+            # 中间轮次：已实时展示思考文本，现在清空为下一轮做准备
+            if turn_delta_parts:
+                logger.info("agent_loop iteration=%d: tool-call round, %d delta chars streamed as thinking",
+                            iteration, sum(len(p) for p in turn_delta_parts))
+        else:
+            # 最终回复：delta 已实时 yield，标记状态
+            if turn_delta_parts and not first_delta_emitted:
+                first_delta_emitted = True
+                yield "runtime.status", {
+                    "message_id": assistant_id,
+                    "phase": "writing",
+                    "label": "正在撰写回复…",
+                    "iteration": iteration + 1,
+                }
+
         if not turn_tool_calls:
+            yield "runtime.completed", runtime_payload()
             return  # 最终回答已流式输出完毕
 
         # 规范每个 tool_call 的 id，保证 assistant 消息与 tool 结果一一对应。
@@ -1471,6 +2201,7 @@ async def run_agent_loop(
                     "argument_errors": argument_errors,
                     "permission_mode": permission_mode,
                     "decision": decision,
+                    "content_offset": cumulative_output_chars,
                 },
             )
             yield "activity.started", serialize_activity(started).model_dump(mode="json")
@@ -1483,16 +2214,42 @@ async def run_agent_loop(
                     "error_code": "invalid_tool_arguments",
                 }
             elif decision == "allow":
-                result = await _dispatch_tool(
-                    db, identity, session, assistant_message, user_message.content, attachments, name, args, td
-                )
+                prerequisite_failure = _resume_skill_prerequisite_failure(name, completed_tools)
+                if prerequisite_failure:
+                    result = prerequisite_failure
+                else:
+                    yield "runtime.status", {
+                        "message_id": assistant_id,
+                        "phase": "tool",
+                        "label": _tool_start_label(td, args) if td else f"正在执行 {name}…",
+                        "tool": name,
+                        "iteration": iteration + 1,
+                    }
+                    tool_start = time.monotonic()
+                    result = await _dispatch_tool(
+                        db, identity, session, assistant_message, user_message.content, attachments, name, args, td,
+                        evidence_pool=evidence_pool,
+                    )
+                    tool_ms = int((time.monotonic() - tool_start) * 1000)
+                    if tool_ms > 1000:
+                        yield "runtime.heartbeat", {
+                            "message_id": assistant_id,
+                            "elapsed_ms": int((time.monotonic() - run_started) * 1000),
+                            "output_chars": cumulative_output_chars,
+                            "phase": "tool",
+                            "tool": name,
+                            "iteration": iteration + 1,
+                        }
             else:
                 result = {"status": "failed", "tool": name, "summary": deny_reason, "permission": decision}
+            if result.get("status") == "completed":
+                completed_tools.add(name)
             result_detail = {
                 **result,
                 "iteration": iteration + 1,
                 "tool_call_id": call_id,
                 "arguments": args,
+                "content_offset": cumulative_output_chars,
             }
             completed = _complete_activity(
                 db, started,
@@ -1512,14 +2269,40 @@ async def run_agent_loop(
                     "attachment_id": result.get("attachment_id"),
                 }
 
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": _tool_result_for_model(result)})
+            # 上下文预算：截断超限工具结果，避免撑爆 model context
+            tool_content = _tool_result_for_model(result)
+            remaining_budget = _TOOL_RESULT_CHAR_BUDGET - tool_result_budget_used
+            if remaining_budget <= 0:
+                tool_content = '{"status":"skipped","summary":"上下文预算已耗尽，工具结果已省略。"}'
+            elif len(tool_content) > remaining_budget:
+                tool_content = tool_content[:remaining_budget] + "\n…[工具结果因上下文预算截断]"
+            tool_result_budget_used += len(tool_content)
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": tool_content})
 
     # 触顶 max_iterations —— 强制一次无工具的收尾回答，避免无限循环。
+    yield "runtime.status", {
+        "message_id": assistant_id,
+        "phase": "writing",
+        "label": "正在整理结果并生成回复…",
+        "iteration": max_iterations + 1,
+    }
     async for kind, value in _stream_llm_turn(
         model, messages, [], reasoning_effort, temperature, max_tokens
     ):
         if kind == "delta":
             yield "message.delta", {"message_id": assistant_id, "delta": value}
+        elif kind == "progress":
+            yield "runtime.heartbeat", {
+                "message_id": assistant_id,
+                "elapsed_ms": int((time.monotonic() - run_started) * 1000),
+                "output_chars": cumulative_output_chars + value["turn_output_chars"],
+                "phase": value["phase"],
+                "iteration": max_iterations + 1,
+            }
+        elif kind == "final":
+            add_usage(value)
+            cumulative_output_chars += len(value.get("content") or "") + sum(len(tc.get("arguments", "")) for tc in (value.get("tool_calls") or []))
+    yield "runtime.completed", runtime_payload()
 
 
 async def _stream_llm_turn(
@@ -1541,6 +2324,7 @@ async def _stream_llm_turn(
             ),
             "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
@@ -1551,6 +2335,9 @@ async def _stream_llm_turn(
         tool_calls_acc: dict[int, dict[str, str]] = {}
         content_acc = ""
         finish: Optional[str] = None
+        usage: dict[str, int] = {}
+        turn_output_chars = 0
+        last_progress_emit: float = 0.0
 
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 60, write=30, pool=5)
@@ -1573,10 +2360,17 @@ async def _stream_llm_turn(
                     except json.JSONDecodeError:
                         continue
                     choice = (obj.get("choices") or [{}])[0]
+                    if obj.get("usage"):
+                        usage = {
+                            "prompt_tokens": int(obj["usage"].get("prompt_tokens") or 0),
+                            "completion_tokens": int(obj["usage"].get("completion_tokens") or 0),
+                            "total_tokens": int(obj["usage"].get("total_tokens") or 0),
+                        }
                     delta = choice.get("delta") or {}
                     piece = delta.get("content")
                     if piece:
                         content_acc += piece
+                        turn_output_chars += len(piece)
                         yield "delta", piece
                     for tc in delta.get("tool_calls") or []:
                         idx = tc.get("index", 0) or 0
@@ -1588,6 +2382,17 @@ async def _stream_llm_turn(
                             slot["name"] = fn["name"]
                         if fn.get("arguments"):
                             slot["arguments"] += fn["arguments"]
+                            turn_output_chars += len(fn["arguments"])
+                    # Heartbeat: throttle to at most once per second
+                    _now = time.monotonic()
+                    if _now - last_progress_emit >= 1.0:
+                        last_progress_emit = _now
+                        tc_chars = sum(len(s["arguments"]) for s in tool_calls_acc.values())
+                        phase = "writing" if content_acc else ("tool_writing" if tc_chars > 0 else "thinking")
+                        yield "progress", {
+                            "turn_output_chars": turn_output_chars,
+                            "phase": phase,
+                        }
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
     except Exception as exc:  # noqa: BLE001 — surfaced to caller for graceful fallback
@@ -1596,7 +2401,7 @@ async def _stream_llm_turn(
         return
 
     ordered = [tool_calls_acc[key] for key in sorted(tool_calls_acc.keys())]
-    yield "final", {"content": content_acc, "tool_calls": ordered, "finish_reason": finish}
+    yield "final", {"content": content_acc, "tool_calls": ordered, "finish_reason": finish, "usage": usage}
 
 
 # ── Harness tool dispatch ───────────────────────────────────────────────────────
@@ -1612,36 +2417,77 @@ async def _dispatch_tool(
     name: str,
     args: dict[str, Any],
     td: Optional[ToolDefinition],
+    evidence_pool: Optional[SessionEvidencePool] = None,
 ) -> dict[str, Any]:
+    """工具分发入口。evidence_pool 用于统一事实来源契约。"""
     # 未知工具：返回结构化错误让模型自我纠正，而不是崩溃。
     if td is None:
         return {"status": "failed", "tool": name, "summary": f"未知工具「{name}」，已忽略。请只调用系统提供的工具。"}
     if td.source == "skill":
         return _invoke_skill(td, args)
+
+    # ── 有副作用的工具：执行后自动更新证据池 ──
     if name == "query_student_profile":
-        return _query_student_profile(db, identity)
+        result = _query_student_profile(db, identity)
+        if result.get("status") == "completed" and evidence_pool:
+            evidence_pool.set_profile(result.get("profile") or {})
+        return result
+
     if name == "read_resume":
-        return _read_resume_tool(db, identity, session, attachments)
+        result = _read_resume_tool(db, identity, session, attachments)
+        if result.get("status") == "completed" and evidence_pool:
+            evidence_pool.add_resume_texts(result.get("resumes") or [])
+        return result
+
     if name == "analyze_uploaded_file":
-        return _analyze_uploaded_files(attachments)
+        result = _analyze_uploaded_files(attachments)
+        if result.get("status") == "completed" and evidence_pool:
+            for att_info in result.get("attachments") or []:
+                evidence_pool.add_attachment_text(att_info.get("name", ""), att_info.get("excerpt", ""))
+        return result
+
     if name == "get_session_context":
         return _get_session_context(db, session, int(args.get("limit") or 8))
+
+    # ── 写入类工具：从证据池抽取 evidence sources ──
     if name == "export_resume_pdf":
-        return _export_resume_pdf_tool(db, identity, session, assistant_message, args)
+        return await _export_resume_pdf_tool_async(db, identity, session, assistant_message, args, attachments, evidence_pool)
     if name == "read_webpage":
-        return _read_webpage_tool(args)
+        return await _read_webpage_tool(args)
     if name == "web_search":
-        return _web_search_tool(args)
+        return await _web_search_tool(args)
     if name == "generate_resume_data":
-        return _generate_resume_data_tool(db, identity, args)
+        # Phase 2: 素材质量评估 — 素材不足时返回结构化失败让模型转而提问
+        # 关键：evidence_pool 是 per-run 的，跨轮时为空，必须无条件兜底查 profile。
+        # 与 optimize_resume_data 的修法对齐。
+        _gen_evidence: list[Any] = []
+        profile_result = _query_student_profile(db, identity)
+        if profile_result.get("status") == "completed":
+            _profile = profile_result.get("profile") or {}
+            _gen_evidence.append(_profile)
+            if evidence_pool and not evidence_pool.profile_snapshot:
+                evidence_pool.set_profile(_profile)
+        if evidence_pool:
+            _gen_evidence.extend(evidence_pool.collect_evidence_sources())
+        quality_report = _assess_evidence_quality(_gen_evidence)
+        if quality_report["quality"] == "insufficient" and quality_report.get("suggestions"):
+            return {
+                "status": "failed",
+                "tool": "generate_resume_data",
+                "error_code": "insufficient_evidence",
+                "summary": "素材不足，无法生成高质量简历。" + quality_report["suggestions"][0],
+                "display_summary": "📋 你的档案素材还不够，AI 将改为向你提问补充",
+                "evidence_quality": quality_report,
+            }
+        return _generate_resume_data_tool(db, identity, args, evidence_pool=evidence_pool)
     if name == "optimize_resume_data":
-        return _optimize_resume_data_tool(db, identity, args)
+        return _optimize_resume_data_tool(db, identity, args, attachments, evidence_pool)
     if name == "update_resume_data":
-        return _update_resume_data_tool(db, identity, args)
+        return _update_resume_data_tool(db, identity, args, evidence_pool)
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
-_TOOL_RESULT_KEYS_TO_STRIP = {"tool", "status", "iteration", "tool_call_id", "arguments"}
+_TOOL_RESULT_KEYS_TO_STRIP = {"tool", "status", "iteration", "tool_call_id", "arguments", "display_summary"}
 
 
 def _tool_result_for_model(result: dict[str, Any]) -> str:
@@ -1677,7 +2523,7 @@ def _permission_decision(mode: str, name: str, td: Optional[ToolDefinition]) -> 
     else:
         risk = "allow"
 
-    strict_ok = td.source == "builtin"  # 仅平台内置工具进入 strict 白名单
+    strict_ok = td.source == "builtin" or bool(td.metadata.get("trusted_builtin"))
 
     if risk == "deny":
         return "deny", f"工具「{name}」已被 Harness 禁用，拒绝执行。"
@@ -1702,18 +2548,13 @@ def _permission_decision(mode: str, name: str, td: Optional[ToolDefinition]) -> 
 def _ensure_attachment_text(db: Session, attachment: StudentAgentAttachment) -> str:
     """Lazily extract & persist text for an attachment that has none."""
     existing = (attachment.extracted_text or "").strip()
-    if existing:
+    # Skip previously cached parse-error messages so we retry with the improved extractor
+    if existing and not existing.startswith("附件已保存，但自动解析失败"):
         return existing
     path = Path(attachment.stored_path)
     if not path.exists():
         return ""
-    try:
-        if attachment.file_ext == "pdf":
-            text = _extract_pdf_text(path)
-        else:
-            text = _extract_attachment_text(path, attachment.content_type, attachment.file_ext)
-    except Exception:
-        return ""
+    text = _extract_attachment_text_sync(path, attachment.content_type, attachment.file_ext)
     if text and text.strip():
         attachment.extracted_text = text
         try:
@@ -1722,6 +2563,25 @@ def _ensure_attachment_text(db: Session, attachment: StudentAgentAttachment) -> 
             db.rollback()
         return text
     return ""
+
+
+def _extract_attachment_text_sync(path: Path, content_type: str, ext: str) -> str:
+    """同步版本的附件文本提取（纯 CPU/IO，不阻塞事件循环时应在 to_thread 中调用）。"""
+    try:
+        if ext == "pdf":
+            return _extract_pdf_text(path)
+        if ext == "docx":
+            return _extract_docx_text(path)
+        if ext in {"xlsx", "xls"}:
+            return _extract_xlsx_text(path)
+        if ext in {"csv", "txt", "md", "json"}:
+            return path.read_text(encoding="utf-8", errors="ignore")[:12000]
+        if content_type.startswith("image/"):
+            return _extract_image_summary(path)
+    except Exception as exc:
+        logger.exception("附件解析失败: %s", path)
+        return f"附件已保存，但自动解析失败：{str(exc)[:200]}"
+    return "附件已保存，当前格式需要专用 Skill 或外部工具进一步解析。"
 
 
 def _rich_text_to_lines(html: str) -> list[str]:
@@ -1860,7 +2720,7 @@ def _read_resume_tool(
         if text:
             resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:12000]})
 
-    # 3. 个人中心 PDF 附件
+    # 3. 个人中心 PDF 附件（仅 session_id=0 的简历制作保存附件，排除本轮 export 产出）
     pdf_rows = list(
         db.scalars(
             select(StudentAgentAttachment)
@@ -1868,6 +2728,7 @@ def _read_resume_tool(
                 StudentAgentAttachment.tenant_id == identity.tenant_id,
                 StudentAgentAttachment.student_id == identity.user_id,
                 StudentAgentAttachment.file_ext == "pdf",
+                StudentAgentAttachment.session_id == 0,  # 仅「简历制作」保存的附件
             )
             .order_by(StudentAgentAttachment.created_at.desc())
             .limit(3)
@@ -2035,8 +2896,26 @@ _DEFAULT_FIELD_ORDER = [
 ]
 
 
+def _normalize_literal_escapes(value: Any) -> Any:
+    """规范化模型提交参数中的字面转义序列。
+
+    模型通过 JSON 提交 tool_call arguments 时，details 等文本字段中的换行
+    可能被双重编码为字面 \n（四个字符反斜杠+n）而非真换行。
+    这会导致：1) 简历正文显示 \n；2) 技术词误提取（如 nAI）。
+    """
+    if isinstance(value, str):
+        return value.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n").replace("\\t", "\t")
+    if isinstance(value, dict):
+        return {k: _normalize_literal_escapes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_literal_escapes(item) for item in value]
+    return value
+
+
 def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, template_id: str) -> dict[str, Any]:
     """Build a full ResumeData-compatible document from AI-provided args."""
+    # 规范化字面转义（\n → 真换行）
+    args = _normalize_literal_escapes(args)
     basic_in = args.get("basic") or {}
     edu_in = args.get("education") or []
     exp_in = args.get("experience") or []
@@ -2101,14 +2980,30 @@ def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, 
     skills_raw = args.get("skills") or ""
     self_eval_raw = args.get("self_evaluation") or ""
 
+    # Phase 4.2: 结构规则后处理
+    edu_list = [_edu(item) for item in edu_in if isinstance(item, dict)]
+    exp_list = [_exp(item) for item in exp_in if isinstance(item, dict)]
+    proj_list = [_proj(item) for item in proj_in if isinstance(item, dict)]
+
+    # 应届生教育前置：无全职工作经历时，教育模块排在经历之前
+    is_fresh = not exp_list or all(not (e.get("company") or "").strip() for e in exp_in if isinstance(e, dict))
+
+    # 每段经历 bullet 数限制：最多 5 条
+    for section_list in (exp_list, proj_list):
+        for item in section_list:
+            details_html = item.get("details") or ""
+            lines = [ln for ln in details_html.split("</li>") if ln.strip()]
+            if len(lines) > 5:
+                item["details"] = "</li>".join(lines[:5]) + "</li>"
+
     return {
         "title": title,
         "templateId": template_id,
         "visibility": False,
         "basic": basic,
-        "education": [_edu(item) for item in edu_in if isinstance(item, dict)],
-        "experience": [_exp(item) for item in exp_in if isinstance(item, dict)],
-        "projects": [_proj(item) for item in proj_in if isinstance(item, dict)],
+        "education": edu_list,
+        "experience": exp_list,
+        "projects": proj_list,
         "certificates": [],
         "customData": {},
         "skillContent": _ta_to_list(skills_raw) if skills_raw else "",
@@ -2117,6 +3012,314 @@ def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, 
         "draggingProjectId": None,
         "globalSettings": dict(_DEFAULT_GLOBAL_SETTINGS.get(template_id, _DEFAULT_GLOBAL_SETTINGS["classic"])),
         "menuSections": [dict(s) for s in _DEFAULT_MENU_SECTIONS],
+    }
+
+
+def _split_duration(value: Any) -> tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    parts = _re.split(r"\s*(?:-|–|—|至|~|～)\s*", text, maxsplit=1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (text, "")
+
+
+def _date_range(start: Any, end: Any) -> str:
+    start_text = str(start or "").strip()
+    end_text = str(end or "").strip()
+    if start_text and end_text:
+        return f"{start_text} - {end_text}"
+    return start_text or end_text
+
+
+def _profile_backed_resume_args(
+    db: Session,
+    identity: AuthIdentity,
+    requested_args: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Replace every biographical field with authoritative profile data."""
+    result = _query_student_profile(db, identity)
+    profile = result.get("profile") or {}
+    basic_requested = requested_args.get("basic") or {}
+
+    def select_profile_items(
+        source_items: list[dict[str, Any]],
+        requested_items: Any,
+        anchor: str,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(requested_items, list) or not requested_items:
+            return source_items
+        selected: list[dict[str, Any]] = []
+        used: set[int] = set()
+        for requested in requested_items:
+            if not isinstance(requested, dict):
+                continue
+            requested_anchor = _normalize_evidence(requested.get(anchor))
+            if not requested_anchor:
+                continue
+            for index, source in enumerate(source_items):
+                if index in used:
+                    continue
+                if requested_anchor == _normalize_evidence(source.get(anchor)):
+                    selected.append(source)
+                    used.add(index)
+                    break
+        return selected or source_items
+
+    source_educations = list(profile.get("educations") or [])
+    selected_educations = select_profile_items(source_educations, requested_args.get("education"), "school")
+    education: list[dict[str, Any]] = []
+    for item in selected_educations:
+        start_date, end_date = _split_duration(item.get("duration"))
+        education.append(
+            {
+                "school": item.get("school") or "",
+                "major": item.get("major") or "",
+                "degree": item.get("degree") or "",
+                "start_date": start_date,
+                "end_date": end_date,
+                "description": item.get("description") or "",
+            }
+        )
+    if not education and (profile.get("college") or profile.get("major")):
+        education.append(
+            {
+                "school": profile.get("college") or "",
+                "major": profile.get("major") or "",
+                "degree": "",
+                "start_date": "",
+                "end_date": "",
+                "description": "",
+            }
+        )
+
+    source_experiences = list(profile.get("work_experiences") or [])
+    selected_experiences = select_profile_items(source_experiences, requested_args.get("experience"), "company")
+    experience = [
+        {
+            "company": item.get("company") or "",
+            "position": item.get("position") or "",
+            "date": _date_range(item.get("start_date"), item.get("end_date")),
+            "details": item.get("description") or "",
+        }
+        for item in selected_experiences
+    ]
+    source_projects = list(profile.get("projects") or [])
+    selected_projects = select_profile_items(source_projects, requested_args.get("projects"), "name")
+    projects = [
+        {
+            "name": item.get("name") or "",
+            "role": item.get("role") or "",
+            "date": _date_range(item.get("start_date"), item.get("end_date")),
+            "description": item.get("description") or "",
+        }
+        for item in selected_projects
+    ]
+    source_skills = list(profile.get("skills") or [])
+    requested_skills = _normalize_evidence(requested_args.get("skills"))
+    if requested_skills:
+        matched_skills = [
+            item
+            for item in source_skills
+            if _normalize_evidence(item.get("name")) in requested_skills
+        ]
+        source_skills = matched_skills or source_skills
+    skill_lines = []
+    for item in source_skills:
+        name = str(item.get("name") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if name:
+            skill_lines.append(f"{name}：{description}" if description else name)
+
+    safe_args = {
+        "basic": {
+            "name": profile.get("name") or "",
+            "target_position": basic_requested.get("target_position")
+            or basic_requested.get("title")
+            or profile.get("expected_position")
+            or "",
+            "email": profile.get("email") or "",
+            "phone": profile.get("phone") or "",
+            "location": profile.get("expected_location") or "",
+            # birth_date: 优先用 profile（学生在个人中心填的），
+            # 否则保留模型提交的值（用户在对话中告诉 AI 的出生日期）
+            "birth_date": profile.get("birth_date")
+            or basic_requested.get("birth_date")
+            or basic_requested.get("birthDate")
+            or "",
+        },
+        "education": education,
+        "experience": experience,
+        "projects": projects,
+        "skills": "\n".join(skill_lines),
+        # Phase 4.3: self_evaluation 不再从 personal_advantages 原样搬运
+        # 将 personal_advantages 作为参考素材传入，由模型基于 JD 重写
+        "self_evaluation": "",
+    }
+    return safe_args, result.get("profile_completeness") or {}
+
+
+def _normalize_evidence(value: Any) -> str:
+    text = "\n".join(_rich_text_to_lines(value)) if isinstance(value, str) and "<" in value else str(value or "")
+    return _re.sub(r"[\W_]+", "", text, flags=_re.UNICODE).lower()
+
+
+def _collect_evidence_values(value: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, dict):
+        for item in value.values():
+            values.extend(_collect_evidence_values(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            values.extend(_collect_evidence_values(item))
+    elif value not in (None, "", False):
+        text = str(value).strip()
+        if text:
+            values.append(text)
+            values.extend(line for line in _rich_text_to_lines(text) if line != text)
+    return values
+
+
+def _fact_values_from_args(args: dict[str, Any]) -> list[tuple[str, str]]:
+    """从 args 中提取所有文本值用于事实校验。自动规范化字面转义。"""
+    args = _normalize_literal_escapes(args)
+    facts: list[tuple[str, str]] = []
+    basic = args.get("basic")
+    if isinstance(basic, dict):
+        for key in ("name", "email", "phone", "location", "birth_date", "birthDate"):
+            if basic.get(key):
+                facts.append((f"基本信息.{key}", str(basic[key])))
+    for section in ("education", "experience", "projects"):
+        items = args.get(section)
+        if not isinstance(items, list):
+            continue
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            for key, value in item.items():
+                if key in {"id", "visible", "link", "linkLabel"} or value in (None, "", False):
+                    continue
+                lines = str(value).splitlines() if key in {"description", "details"} else [str(value)]
+                facts.extend((f"{section}[{index}].{key}", line.strip()) for line in lines if line.strip())
+    for key in ("skills", "self_evaluation"):
+        value = args.get(key)
+        if value:
+            facts.extend((key, line.strip()) for line in str(value).splitlines() if line.strip())
+    return facts
+
+
+def _norm_token(s: str) -> str:
+    """归一化实体 token：casefold + 去除所有内部空白。
+    用于白名单与候选事实的比对，避免 Python/python、30%/30 %、
+    2022.06-2024.12/2022.06 - 2024.12 等形式差异导致误报。
+    """
+    return s.casefold().replace(" ", "").replace("\u3000", "")
+
+
+def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) -> list[str]:
+    """事实/表达分离的实体级核验（Phase 1 重构）。
+
+    校验策略：
+    - 事实层：数字指标、英文技术词、专名、时间段必须在证据白名单中。
+    - 表达层：句式、动词、STAR 结构、详略完全不校验。
+    - 白名单从证据侧预提取（结构化字段 + 正则），候选事实从输出中提取。
+    """
+    whitelist = _extract_fact_whitelist(evidence_sources)
+    candidate = _extract_candidate_facts(args)
+
+    # ── 用户直接提供的基本信息豁免 ──
+    # basic 中的 name/email/phone/location/birth_date 是学生自己告诉 AI 的
+    # 一手信息（对话中说"我叫张三"、"出生日期2001-03"），本身就是合法证据，
+    # 不应要求在档案或历史简历中找到依据。这些字段不属于"编造经历"。
+    basic = args.get("basic") or {}
+    if isinstance(basic, dict):
+        _BASIC_EXEMPT_KEYS = {"name", "email", "phone", "location", "birth_date", "birthDate"}
+        for key in _BASIC_EXEMPT_KEYS:
+            val = str(basic.get(key) or "").strip()
+            if not val:
+                continue
+            # 将 basic 字段值加入白名单，避免被校验拦截
+            whitelist.proper_nouns.add(val)
+            # 同时匹配时间格式（如 birth_date = "2001-03"）
+            for m in _TIME_RANGE_RE.finditer(val):
+                whitelist.time_ranges.add(m.group().strip())
+            for m in _SINGLE_DATE_RE.findall(val):
+                whitelist.time_ranges.add(m)
+
+    # 归一化白名单用于比对
+    norm_nouns = {_norm_token(n) for n in whitelist.proper_nouns}
+    # 时间段同时收录整段和端点：证据里可能是 "2021.09 - 2025.06" 整段（duration），
+    # 也可能是 start_date/end_date 两个单点，两种形态都要能命中；
+    # 比对用 _norm_time_token，对分隔符（. - / 全角句号）不敏感
+    norm_times: set[str] = set()
+    for t in whitelist.time_ranges:
+        norm_times.add(_norm_time_token(t))
+        for endpoint in _SINGLE_DATE_RE.findall(t):
+            norm_times.add(_norm_time_token(endpoint))
+
+    violations: list[str] = []
+
+    # 数字指标：不再校验。
+    # AI 生成的是建议草稿，用户还会在编辑器里修改。
+    # 数字属于表达层——模型根据上下文合理推断的量化描述（"响应时间降低 50%"）
+    # 不应被拦截，用户会自行核实和修改。
+    # 事实校验只管：经历实体（公司/学校/项目名）、时间段——这些造假就是硬伤。
+
+    # 英文技术词：不再校验。
+    # 技术词是主观技能声明（"熟悉 Python"），不属于可验证的个人事实，
+    # 学生有权在简历中声明自己会什么技术，不需要档案背书。
+
+    # 专名：输出中的专名必须 ⊆ 证据中的专名
+    for noun in candidate.proper_nouns:
+        if _norm_token(noun) not in norm_nouns:
+            violations.append(f"无来源专名「{noun}」")
+
+    # 时间段：整段命中，或拆成端点后逐个命中（schema 要求模型输出
+    # "2022.06 - 2024.12" 区间，而 profile 存的是独立 start_date/end_date 单点）
+    for tr in candidate.time_ranges:
+        if _norm_time_token(tr) in norm_times:
+            continue
+        endpoints = _SINGLE_DATE_RE.findall(tr)
+        if endpoints and all(_norm_time_token(p) in norm_times for p in endpoints):
+            continue
+        violations.append(f"无来源时间段「{tr}」")
+
+    return violations[:20]  # 最多报 20 条
+
+
+# Shadow mode 开关：开启时违规只写日志不拦截，用于收集真实误报率。
+# 生产环境建议先开启 shadow mode 跑几天，观察日志后再关闭。
+FACT_GUARD_SHADOW_MODE = False
+
+
+def _fact_guard_failure(tool: str, violations: list[str]) -> dict[str, Any]:
+    preview = "；".join(violations[:6])
+    if FACT_GUARD_SHADOW_MODE:
+        logger.warning("fact_guard shadow_mode violation tool=%s violations=%s", tool, violations[:10])
+        return {
+            "status": "completed",
+            "tool": tool,
+            "summary": f"（shadow mode）事实校验发现以下内容缺少依据，但未拦截：{preview}",
+            "fact_validation": {"passed": True, "shadow_violations": violations[:20]},
+        }
+    n = len(violations)
+    examples = []
+    for v in violations[:2]:
+        # 从 "无来源数字指标「40%」" 中提取引号内容
+        if "「" in v and "」" in v:
+            examples.append(v[v.index("「")+1:v.index("」")])
+    example_text = "、".join(f"「{e}」" for e in examples) if examples else ""
+    suffix = f"（如{example_text}等 {n} 处）" if example_text else f"（共 {n} 处）"
+    return {
+        "status": "failed",
+        "tool": tool,
+        "summary": (
+            f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
+            "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
+            "禁止换一种说法绕过校验。允许改写表达和措辞，但不允许新增无来源的经历、项目、技术栈或指标。"
+            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY.MM 格式，不要照抄档案中的全角句号等笔误。"
+        ),
+        "display_summary": f"🛡️ 事实核对：发现 {n} 处缺少依据的数据{suffix}，已退回 AI 重写",
+        "fact_validation": {"passed": False, "violations": violations[:20]},
     }
 
 
@@ -2129,19 +3332,76 @@ def _resume_count(db: Session, identity: AuthIdentity) -> int:
     ) or 0
 
 
-def _generate_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+def _generate_resume_data_tool(
+    db: Session, identity: AuthIdentity, args: dict[str, Any],
+    evidence_pool: Optional[SessionEvidencePool] = None,
+) -> dict[str, Any]:
+    """生成简历：不再丢弃模型文本，而是用事实层校验保护真实性。"""
     if _resume_count(db, identity) >= _MAX_RESUMES:
         return {
             "status": "failed",
             "tool": "generate_resume_data",
             "summary": f"简历数量已达上限（{_MAX_RESUMES} 份），请先在『我的简历』中删除一份再生成。",
         }
+
+    # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
+    args = _normalize_literal_escapes(args)
+
+    # 收集证据源用于事实校验
+    profile_result = _query_student_profile(db, identity)
+    profile = profile_result.get("profile") or {}
+    evidence_sources: list[Any] = [profile]
+    if evidence_pool:
+        for source in evidence_pool.collect_evidence_sources():
+            evidence_sources.append(source)
+
+    # 事实层校验：只检查数字/技术词/专名/时间段是否在证据中
+    violations = _validate_resume_facts(args, evidence_sources)
+    if violations:
+        return _fact_guard_failure("generate_resume_data", violations)
+
+    # 质量闸门：仅当证据中有经历/项目时才要求章节非空
+    _evidence_has_items = any(
+        isinstance(s, dict) and (
+            s.get("work_experiences") or s.get("experience") or s.get("projects")
+            or s.get("educations") or s.get("education")
+        )
+        for s in evidence_sources
+    )
+    quality = _check_resume_quality(args, require_sections=_evidence_has_items)
+    quality_hint = ""
+    if quality.get("errors"):
+        return {
+            "status": "failed",
+            "tool": "generate_resume_data",
+            "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
+                f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
+            ),
+            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "quality_check": quality,
+        }
+    if quality.get("warnings"):
+        quality_hint = "质量提示：" + "；".join(
+            f"{w['section']}: {w['issue']}" for w in quality["warnings"][:3]
+        )
+
     student = db.get(StudentUser, identity.user_id)
     title = str(args.get("title") or "AI 生成简历").strip()[:128] or "AI 生成简历"
     template_id = str(args.get("template_id") or "classic").strip()
     if template_id not in _VALID_TEMPLATE_IDS:
         template_id = "classic"
-    doc = _build_resume_doc(args, student, title, template_id)
+
+    # 使用模型提交的 args（含润色文本），不再丢弃
+    # 但基本信息（姓名、邮箱、电话）仍从 profile 确保准确
+    safe_args = dict(args)
+    basic_in = safe_args.get("basic") or {}
+    basic_in["name"] = profile.get("name") or basic_in.get("name") or ""
+    basic_in["email"] = profile.get("email") or basic_in.get("email") or ""
+    basic_in["phone"] = profile.get("phone") or basic_in.get("phone") or ""
+    safe_args["basic"] = basic_in
+
+    completeness = profile_result.get("profile_completeness") or {}
+    doc = _build_resume_doc(safe_args, student, title, template_id)
     row = StudentResume(
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
@@ -2153,17 +3413,32 @@ def _generate_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[s
     db.add(row)
     db.commit()
     db.refresh(row)
+    summary = f"简历《{title}》已生成，请点击链接进入编辑器查看并调整。"
+    if quality_hint:
+        summary += f"\n{quality_hint}"
     return {
         "status": "completed",
         "tool": "generate_resume_data",
-        "summary": f"简历《{title}》已生成，请点击链接进入编辑器查看并调整。",
+        "summary": summary,
         "resume_id": row.id,
         "editor_url": f"/student/resumes/{row.id}",
         "open_resume_editor": True,
+        "fact_validation": {
+            "passed": True,
+            "source": "model_polished_profile",
+            "empty_sections": completeness.get("empty_sections") or [],
+        },
+        "quality_check": quality if quality.get("warnings") else None,
     }
 
 
-def _optimize_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+def _optimize_resume_data_tool(
+    db: Session,
+    identity: AuthIdentity,
+    args: dict[str, Any],
+    attachments: Optional[list[StudentAgentAttachment]] = None,
+    evidence_pool: Optional[SessionEvidencePool] = None,
+) -> dict[str, Any]:
     if _resume_count(db, identity) >= _MAX_RESUMES:
         return {
             "status": "failed",
@@ -2171,20 +3446,81 @@ def _optimize_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[s
             "summary": f"简历数量已达上限（{_MAX_RESUMES} 份），请先在『我的简历』中删除一份再优化。",
         }
     student = db.get(StudentUser, identity.user_id)
+
+    # 统一事实来源：优先使用 evidence_pool（如果可用），否则回退到直接查询
+    evidence_sources: list[Any] = []
+    src_row: Optional[StudentResume] = None
+    src_id = args.get("source_resume_id")
+    if src_id:
+        src_row = db.scalar(
+            select(StudentResume).where(
+                StudentResume.id == int(src_id),
+                StudentResume.student_id == identity.user_id,
+                StudentResume.tenant_id == identity.tenant_id,
+            )
+        )
+        if not src_row:
+            return {
+                "status": "failed",
+                "tool": "optimize_resume_data",
+                "summary": f"来源简历 ID {src_id} 不存在或无权限，未保存优化简历。",
+            }
+        try:
+            evidence_sources.append(json.loads(src_row.data_json or "{}"))
+        except Exception:
+            evidence_sources.append({})
+
+    # 统一证据来源：无论 evidence_pool 是否可用，都保证 profile 一定在证据中。
+    # 典型跨轮场景：上一轮 read_resume + 建议，本轮用户确认后直接 optimize——
+    # 此时 evidence_pool 为空（per-run），必须兜底查 profile。
+    profile_result = _query_student_profile(db, identity)
+    evidence_sources.append(profile_result.get("profile") or {})
+    if evidence_pool:
+        for source in evidence_pool.collect_evidence_sources():
+            evidence_sources.append(source)
+    if attachments:
+        for attachment in attachments:
+            text = _ensure_attachment_text(db, attachment)
+            if text:
+                evidence_sources.append(text)
+    # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
+    args = _normalize_literal_escapes(args)
+
+    violations = _validate_resume_facts(args, evidence_sources)
+    if violations:
+        return _fact_guard_failure("optimize_resume_data", violations)
+
+    # 质量闸门（与 generate 共享同一套检查）
+    _evidence_has_items = any(
+        isinstance(s, dict) and (
+            s.get("work_experiences") or s.get("experience") or s.get("projects")
+            or s.get("educations") or s.get("education")
+        )
+        for s in evidence_sources
+    )
+    quality = _check_resume_quality(args, require_sections=_evidence_has_items)
+    quality_hint = ""
+    if quality.get("errors"):
+        return {
+            "status": "failed",
+            "tool": "optimize_resume_data",
+            "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
+                f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
+            ),
+            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "quality_check": quality,
+        }
+    if quality.get("warnings"):
+        quality_hint = "质量提示：" + "；".join(
+            f"{w['section']}: {w['issue']}" for w in quality["warnings"][:3]
+        )
+
     title = str(args.get("title") or "优化版简历").strip()[:128] or "优化版简历"
     template_id = str(args.get("template_id") or "classic").strip()
     if template_id not in _VALID_TEMPLATE_IDS:
         # 如果来源简历有模板，则继承
-        src_id = args.get("source_resume_id")
-        if src_id:
-            src_row = db.scalar(
-                select(StudentResume).where(
-                    StudentResume.id == int(src_id),
-                    StudentResume.student_id == identity.user_id,
-                    StudentResume.tenant_id == identity.tenant_id,
-                )
-            )
-            template_id = (src_row.template_id if src_row else None) or "classic"
+        if src_row:
+            template_id = src_row.template_id or "classic"
         else:
             template_id = "classic"
     doc = _build_resume_doc(args, student, title, template_id)
@@ -2199,17 +3535,22 @@ def _optimize_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[s
     db.add(row)
     db.commit()
     db.refresh(row)
+    summary = f"优化版简历《{title}》已生成，请点击链接进入编辑器查看并调整。"
+    if quality_hint:
+        summary += f"\n{quality_hint}"
     return {
         "status": "completed",
         "tool": "optimize_resume_data",
-        "summary": f"优化版简历《{title}》已生成，请点击链接进入编辑器查看并调整。",
+        "summary": summary,
         "resume_id": row.id,
         "editor_url": f"/student/resumes/{row.id}",
         "open_resume_editor": True,
+        "fact_validation": {"passed": True, "source": "profile_or_supplied_resume"},
+        "quality_check": quality if quality.get("warnings") else None,
     }
 
 
-def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any]) -> dict[str, Any]:
+def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str, Any], evidence_pool: Optional[SessionEvidencePool] = None) -> dict[str, Any]:
     resume_id = args.get("resume_id")
     if not resume_id:
         return {"status": "failed", "tool": "update_resume_data", "summary": "缺少 resume_id 参数。"}
@@ -2227,6 +3568,39 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
         existing = json.loads(row.data_json or "{}")
     except Exception:
         existing = {}
+
+    if evidence_pool:
+        evidence_sources_for_validate = evidence_pool.collect_evidence_sources()
+        if existing:
+            evidence_sources_for_validate.append(existing)
+    else:
+        profile_result = _query_student_profile(db, identity)
+        evidence_sources_for_validate = [profile_result.get("profile") or {}, existing]
+    # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
+    args = _normalize_literal_escapes(args)
+
+    violations = _validate_resume_facts(args, evidence_sources_for_validate)
+    if violations:
+        return _fact_guard_failure("update_resume_data", violations)
+
+    # 质量闸门：update 是部分合并工具，args 里缺少的章节会保留原有内容，
+    # 不可能出现「清空所有章节」的情况，因此不需要空章节检查。
+    quality = _check_resume_quality(args, require_sections=False)
+    quality_hint = ""
+    if quality.get("errors"):
+        return {
+            "status": "failed",
+            "tool": "update_resume_data",
+            "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
+                f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
+            ),
+            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "quality_check": quality,
+        }
+    if quality.get("warnings"):
+        quality_hint = "质量提示：" + "；".join(
+            f"{w['section']}: {w['issue']}" for w in quality["warnings"][:3]
+        )
 
     # 合并标题和模板
     if args.get("title"):
@@ -2305,10 +3679,13 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
     row.data_json = json.dumps(existing, ensure_ascii=False)
     db.commit()
     db.refresh(row)
+    summary = f"简历《{row.title}》已更新，请点击链接进入编辑器查看。"
+    if quality_hint:
+        summary += f"\n{quality_hint}"
     return {
         "status": "completed",
         "tool": "update_resume_data",
-        "summary": f"简历《{row.title}》已更新，请点击链接进入编辑器查看。",
+        "summary": summary,
         "resume_id": row.id,
         "editor_url": f"/student/resumes/{row.id}",
         "open_resume_editor": True,
@@ -2323,11 +3700,21 @@ def _safe_pdf_filename(name: str) -> str:
     return f"{base[:60]}.pdf"
 
 
-def _attachment_download_url(stored_path: Path | str) -> str:
+def _attachment_download_url(stored_path: Path | str, user_id: int = 0, tenant_id: int = 0) -> str:
+    """生成带签名 token 的下载 URL。
+
+    调用方应传入 user_id 和 tenant_id 以生成带身份绑定的签名链接。
+    当未传入时回退到无 token 的相对路径（仅用于内部序列化，不用于前端展示）。
+    """
+    from app.main import _sign_download_token
     s = str(stored_path).replace("\\", "/")
     marker = "agent_uploads/"
     idx = s.find(marker)
-    return "/data/" + (s[idx:] if idx >= 0 else Path(s).name)
+    rel_path = s[idx:] if idx >= 0 else Path(s).name
+    if user_id and tenant_id:
+        token = _sign_download_token(rel_path, user_id, tenant_id)
+        return f"/api/v1/student/files/download?path={rel_path}&token={token}"
+    return f"/api/v1/student/files/download?path={rel_path}"
 
 
 def _resolve_student_photo(db: Session, identity: AuthIdentity) -> Optional[str]:
@@ -2346,16 +3733,32 @@ def _resolve_student_photo(db: Session, identity: AuthIdentity) -> Optional[str]
     return None
 
 
-def _export_resume_pdf_tool(
+async def _export_resume_pdf_tool_async(
     db: Session,
     identity: AuthIdentity,
     session: StudentAgentSession,
     assistant_message: StudentAgentMessage,
     args: dict[str, Any],
+    attachments: Optional[list[StudentAgentAttachment]] = None,
+    evidence_pool: Optional[SessionEvidencePool] = None,
 ) -> dict[str, Any]:
+    """导出简历 PDF（异步版本）：先做事实快速校验，再渲染 PDF。"""
     markdown = str(args.get("markdown") or args.get("content") or "").strip()
     if not markdown:
         return {"status": "failed", "tool": "export_resume_pdf", "summary": "导出失败：未提供简历正文（markdown）。"}
+
+    # ── 事实快速校验：从 markdown 中提取 hard facts，与证据池比对 ──
+    if evidence_pool:
+        evidence_sources = evidence_pool.collect_evidence_sources()
+        if evidence_sources:
+            violations = _validate_resume_facts(
+                {"education": _extract_sections_from_markdown(markdown, "教育"),
+                 "experience": _extract_sections_from_markdown(markdown, "经历"),
+                 "projects": _extract_sections_from_markdown(markdown, "项目")},
+                evidence_sources,
+            )
+            if violations:
+                return _fact_guard_failure("export_resume_pdf", violations)
 
     filename = _safe_pdf_filename(str(args.get("filename") or "优化简历"))
     settings = get_settings()
@@ -2364,8 +3767,11 @@ def _export_resume_pdf_tool(
     stored_path = storage_dir / f"{uuid.uuid4().hex}.pdf"
     photo_path = _resolve_student_photo(db, identity)
 
+    # PDF 渲染是 CPU 密集操作，放到线程池避免阻塞事件循环
     try:
-        _render_resume_pdf(markdown, stored_path, title=Path(filename).stem, photo_path=photo_path)
+        await anyio.to_thread.run_sync(
+            lambda: _render_resume_pdf(markdown, stored_path, title=Path(filename).stem, photo_path=photo_path)
+        )
     except Exception as exc:  # noqa: BLE001
         return {"status": "failed", "tool": "export_resume_pdf", "summary": f"PDF 生成失败：{str(exc)[:160]}"}
 
@@ -2387,16 +3793,53 @@ def _export_resume_pdf_tool(
     db.commit()
     db.refresh(row)
 
-    download_url = _attachment_download_url(stored_path)
+    # 标记 export 产出的附件 ID，防止 read_resume 回读
+
+    download_url = _attachment_download_url(stored_path, identity.user_id, identity.tenant_id)
     return {
         "status": "completed",
         "tool": "export_resume_pdf",
         "summary": f"已生成简历 PDF：{filename}",
         "filename": filename,
         "download_url": download_url,
+        "model_hint": "请提示学生查看下方的文件卡片下载 PDF，不要在正文中内嵌下载链接。",
+        "attachment_id": row.id,
         "attachment_id": row.id,
     }
 
+
+def _extract_sections_from_markdown(markdown: str, section_keyword: str) -> list[dict[str, str]]:
+    """从 Markdown 简历中提取指定板块的条目，用于事实快速校验。"""
+    items: list[dict[str, str]] = []
+    in_section = False
+    current: dict[str, str] = {}
+    # 关键词表扩展：覆盖中英文常见简历板块标题
+    _EXPANDED_KEYWORDS = {
+        "教育": ["教育", "学历", "Education", "教育经历"],
+        "经历": ["经历", "工作", "实习", "Experience", "Work", "工作经历", "实习经历"],
+        "项目": ["项目", "Project", "项目经历"],
+    }
+    keywords = _EXPANDED_KEYWORDS.get(section_keyword, [section_keyword])
+    for line in markdown.splitlines():
+        s = line.strip()
+        if s.startswith("## ") and any(kw in s for kw in keywords):
+            in_section = True
+            continue
+        if in_section and s.startswith("## "):
+            break
+        if in_section and s.startswith("### "):
+            if current:
+                items.append(current)
+            current = {"name": s[4:], "description": ""}
+            continue
+        if in_section and current and s.startswith("- "):
+            current["description"] += s[2:] + "\n"
+    if current:
+        items.append(current)
+    return items
+
+
+# 保留同步版本作为内部渲染函数（被 async 包装调用）
 
 def _pdf_inline(text: str) -> str:
     """Escape for reportlab Paragraph and convert minimal Markdown inline marks."""
@@ -2670,3 +4113,4 @@ def _render_resume_pdf(
         leftMargin=16 * mm, rightMargin=16 * mm, topMargin=16 * mm, bottomMargin=14 * mm, title=title,
     )
     doc.build(flow)
+

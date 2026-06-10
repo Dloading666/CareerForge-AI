@@ -53,6 +53,7 @@ type Profile = {
   name: string | null
   gender: string | null
   age: number | null
+  birth_date: string | null
   college: string | null
   major: string | null
   grade: string | null
@@ -563,6 +564,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       name: profile?.name ?? '',
       gender: profile?.gender ?? undefined,
       age: profile?.age ?? undefined,
+      birth_date: profile?.birth_date ?? '',
       college: profile?.college ?? '',
       major: profile?.major ?? '',
       grade: profile?.grade ?? '',
@@ -1316,6 +1318,11 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                 <FieldRow label="年龄">
                   <Form.Item field="age" noStyle>
                     <InputNumber placeholder="请输入年龄" min={1} max={150} style={{ width: '100%' }} />
+                  </Form.Item>
+                </FieldRow>
+                <FieldRow label="出生日期">
+                  <Form.Item field="birth_date" noStyle>
+                    <Input placeholder="如 2002-09" allowClear />
                   </Form.Item>
                 </FieldRow>
                 <FieldRow label="手机号">

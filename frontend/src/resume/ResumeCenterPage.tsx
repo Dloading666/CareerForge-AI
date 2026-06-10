@@ -4,10 +4,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
+import { ApiError } from '../shared/api'
 import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { ResumeTemplatePreview, TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
+
+const MAX_RESUMES = 6
 
 export function ResumeCenterPage() {
   const navigate = useNavigate()
@@ -23,7 +26,8 @@ export function ResumeCenterPage() {
 
   const mode = searchParams.get('mode')
 
-  const countLabel = useMemo(() => `${resumes.length}/6`, [resumes.length])
+  const countLabel = useMemo(() => `${resumes.length}/${MAX_RESUMES}`, [resumes.length])
+
 
 
   const refresh = async () => {
@@ -109,14 +113,18 @@ export function ResumeCenterPage() {
   }
 
   const handleImport = async (file: File) => {
+    if (resumes.length >= MAX_RESUMES) {
+      Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
+      return
+    }
     try {
       const raw = await file.text()
       const parsed = JSON.parse(raw) as ResumeData
       await importResume(parsed)
       Message.success('导入成功')
       await refresh()
-    } catch {
-      Message.error('导入失败，请确认 JSON 结构正确')
+    } catch (error) {
+      Message.error(error instanceof ApiError ? error.message : '导入失败，请确认 JSON 结构正确')
     }
   }
 
@@ -131,7 +139,18 @@ export function ResumeCenterPage() {
           <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
             导入 JSON
           </Button>
-          <Button type="primary" icon={<IconPlus />} disabled={resumes.length >= 6} onClick={() => setNewResumeModalVisible(true)}>
+          <Button
+            type="primary"
+            icon={<IconPlus />}
+            onClick={() => {
+              if (resumes.length >= MAX_RESUMES) {
+                Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
+                return
+              }
+              setNewResumeModalVisible(true)
+            }}
+          >
+
             新建简历
           </Button>
           <input

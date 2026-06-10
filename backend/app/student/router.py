@@ -4,9 +4,10 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.service import require_role
@@ -16,6 +17,7 @@ from app.student.agent_runtime import (
     create_session,
     delete_session,
     get_history,
+    get_session_or_404,
     list_available_models,
     list_sessions,
     serialize_activity,
@@ -23,6 +25,7 @@ from app.student.agent_runtime import (
     save_attachment,
     stream_master_reply,
 )
+from app.student.run_manager import run_manager
 from app.admin.model_service import get_all_config
 from app.student.agent_schemas import (
     AgentHistoryResponse,
@@ -52,6 +55,7 @@ class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     gender: Optional[str] = None
     age: Optional[int] = None
+    birth_date: Optional[str] = Field(default=None, max_length=16)
     college: Optional[str] = None
     major: Optional[str] = None
     grade: Optional[str] = None
@@ -175,6 +179,105 @@ async def stream_master_message(
     )
 
 
+# ── 后台运行 API（Phase 2）─────────────────────────────────────────────────
+
+
+class RunStartRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    model_id: Optional[int] = None
+    reasoning_effort: str = Field(default="medium", max_length=16)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=12)
+
+
+@router.post("/master/sessions/{session_id}/runs", status_code=202)
+async def start_run(
+    session_id: int,
+    payload: RunStartRequest,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """启动一次后台智能体运行。立即返回 run_id，不等待完成。"""
+    identity, _ = current
+    # P2: 先校验 session 属主，防止锁住别人的 session
+    get_session_or_404(db, identity, session_id)
+    try:
+        run_id = await run_manager.start_run(
+            db, identity, session_id,
+            payload.content, payload.model_id, payload.reasoning_effort,
+            payload.attachment_ids,
+        )
+    except Exception as e:
+        if hasattr(e, "status_code"):
+            raise
+        raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)[:200])
+    return ok({"run_id": run_id}, msg="运行已启动")
+
+
+@router.get("/master/runs/{run_id}/events")
+async def subscribe_run_events(
+    run_id: int,
+    after_seq: int = 0,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """订阅运行事件流（SSE）。连接断开不影响运行。"""
+    identity, _ = current
+    # 权限校验：验证 run 属于当前用户
+    from app.student.agent_models import StudentAgentRun
+    run = db.scalar(
+        select(StudentAgentRun).where(
+            StudentAgentRun.id == run_id,
+            StudentAgentRun.tenant_id == identity.tenant_id,
+            StudentAgentRun.student_id == identity.user_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="运行不存在或无权限")
+    return StreamingResponse(
+        run_manager.subscribe(run_id, after_seq),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/master/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """取消运行中的任务。"""
+    identity, _ = current
+    # 权限校验
+    from app.student.agent_models import StudentAgentRun
+    run = db.scalar(
+        select(StudentAgentRun).where(
+            StudentAgentRun.id == run_id,
+            StudentAgentRun.tenant_id == identity.tenant_id,
+            StudentAgentRun.student_id == identity.user_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="运行不存在或无权限")
+    success = await run_manager.cancel(run_id, identity)
+    if not success:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="运行不存在或已完成")
+    return ok(msg="运行已取消")
+
+
+@router.get("/master/runs/active")
+async def get_active_runs(
+    current=Depends(require_role("student")),
+):
+    """获取当前用户所有运行中的任务。"""
+    identity, _ = current
+    runs = run_manager.get_active_runs(identity)
+    return ok(runs)
+
+
 def _serialize_profile(student) -> dict:
     return {
         "id": student.id,
@@ -183,6 +286,7 @@ def _serialize_profile(student) -> dict:
         "name": student.name,
         "gender": student.gender,
         "age": student.age,
+        "birth_date": student.birth_date or "",
         "college": student.college,
         "major": student.major,
         "grade": student.grade,

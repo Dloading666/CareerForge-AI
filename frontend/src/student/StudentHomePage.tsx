@@ -18,6 +18,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { ApiError, apiRequest } from '../shared/api'
 import { useAuth } from '../shared/auth'
 import { AnnouncementBellDropdown } from './StudentAnnouncementBar'
+import { chatRuntimeStore } from './chatRuntimeStore'
 import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
 import { ProfilePage } from './ProfilePage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
@@ -104,6 +105,11 @@ export function StudentHomePage() {
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
   }
+
+  // 刷新后恢复活跃 run 的 SSE 订阅
+  useEffect(() => {
+    chatRuntimeStore.resumeActiveRuns()
+  }, [])
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {

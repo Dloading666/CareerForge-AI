@@ -4,7 +4,7 @@
 >
 > 本文是整合后的**完整设计文档**，汇总并取代散落在各处的开发文档（README / MODEL_PLAZA_DEV_DOC / STUDENT_MASTER_AGENT_DEV_REPORT / DOCKER_DEPLOY / OPTIMIZATION_LOG）。后续规划见 `AGENT_LOOP_AND_KB_DEV_PLAN.md`，给 AI 协作者的速查见 `CLAUDE.md`。
 >
-> 最后整合：2026-06-08
+> 最后更新：2026-06-10
 
 ---
 
@@ -12,12 +12,12 @@
 
 智培职联是一个**双角色**（学生 / 管理员）的就业辅助平台：
 
-- **学生端**：核心是一个「主智能体」对话系统——学生提出求职需求，主智能体像 Claude Code 一样**自主选择并调用工具**（Skill / 子智能体 / 知识库 / 简历工具）来完成任务，例如读取简历→改写→生成可下载的 PDF。配套智能体广场、个人中心（含简历库）、日程。
+- **学生端**：内置两个对话智能体——**AI简历助手**（制作/优化简历、生成可下载 PDF）和 **AI面试官**（一对一模拟面试训练）。两者均由同一套 Agentic Loop 驱动，通过 `agent_type` 字段区分，工具池和 system prompt 各自独立。配套简历制作（在线编辑器）、个人中心（档案/头像/求职意向）、日程。
 - **管理端**：配置与治理后台——模型广场、主智能体配置、子智能体管理、Skills 广场、MCP 广场、系统设置。
 
 | 角色 | 入口 | 能力 |
 |------|------|------|
-| `student` | 邮箱验证码注册 → 邮箱+密码登录 | 主智能体对话、智能体广场、简历库、个人资料、日程 |
+| `student` | 邮箱验证码注册 → 邮箱+密码登录 | AI简历助手 / AI面试官对话、简历制作、个人资料、日程 |
 | `admin` | 账号+密码登录（env 初始化） | 模型 / 智能体 / Skill / MCP / 主智能体 / 系统配置全套 CRUD |
 
 两个角色共享同一登录页（Tab 切换），登录后按 `role` 跳转。
@@ -135,12 +135,14 @@
 ### 5.3 学生端域（`student/agent_models.py`）
 | 表 | 关键字段 | 说明 |
 |----|----------|------|
-| `student_agent_session` | tenant_id, student_id, title, status, summary | 对话会话 |
+| `student_agent_session` | tenant_id, student_id, title, status, **agent_type**, summary | 对话会话；`agent_type='resume'`（简历助手，默认）/ `'interviewer'`（面试官） |
 | `student_agent_message` | session_id, role, content | 消息 |
 | `student_agent_activity` | session_id, message_id, kind, name, status, summary, detail_json | 工具活动审计（驱动前端活动行） |
 | `student_agent_attachment` | session_id, message_id, original_name, stored_path, content_type, file_ext, file_size, **extracted_text**, status | 附件 / 简历 / 生成的 PDF |
 | `student_event` | （日程：标题、日期等） | 学生日历事件 |
 
+> `agent_type` 迁移：`20260610_0016_session_agent_type.py`，使用 `batch_alter_table` 兼容 SQLite。
+>
 > 简历约定：个人中心上传的简历是 `student_agent_attachment` 中 `session_id=0, message_id=0, file_ext='pdf'` 的行；主智能体生成的 PDF 则绑定到对应 assistant 消息（`message_id=assistant_message.id`）。
 
 ### 5.4 Skill / MCP 域
@@ -179,10 +181,20 @@
 **调用链**：`POST /student/master/sessions/{id}/messages/stream` → `stream_master_reply()` →
 1. 保存用户消息、认领本轮附件 → 发 `message.saved`
 2. `_select_chat_model()` 选模型（无模型 / 无 Key → 受控错误回答）
-3. `assemble_active_tools()` 组装**克制的安全工具池** + `_build_openai_tools()` 转 OpenAI schema
-4. `_build_initial_messages()`：硬化 system prompt + 历史多轮 + 当前附件（图片在模型支持视觉时 base64 内联）
+3. 读 `session.agent_type`：`"interviewer"` → `assemble_interviewer_tools()`；其他 → `assemble_active_tools()`
+4. `_build_initial_messages(..., agent_type)`：`_harness_system_prompt(config, effort, agent_type)` 分支选 prompt + 历史多轮 + 当前附件
 5. `run_agent_loop()`：Harness 主循环
 6. 持久化最终答复 → 发 `message.completed` / `done`
+
+**两套工具池对比**：
+| 工具 | AI简历助手 | AI面试官 |
+|------|-----------|---------|
+| `query_student_profile` | ✅ | ✅ |
+| `read_resume` | ✅ | ✅（只读，不修改） |
+| `analyze_uploaded_file` | ✅ | ✅ |
+| `get_session_context` | ✅ | ✅ |
+| `export_resume_pdf` | ✅ | ❌ |
+| `skill__*` | ✅ | ❌ |
 
 **`run_agent_loop()` 单轮逻辑**：
 ```
@@ -277,9 +289,23 @@ for _ in range(max_iterations):           # max_iterations 来自配置（默认
 
 - `App.tsx` 路由：`/auth`、`/student`、`/admin`，按 `session.role` 重定向；`shared/ProtectedRoute.tsx` 角色守卫，`shared/AuthProvider.tsx` 管登录态。
 - `shared/api.ts`：统一请求封装，自动附加 JWT；`extractErrorMessage` 把 422 校验错误用 `FIELD_LABELS`/`ERROR_TYPES` 映射成字段级中文提示（新增表单字段要补这两张表）。
-- **学生端** `StudentHomePage.tsx`：主智能体聊天（手写 SSE 解析、活动行 `ActivityBlock`、Markdown 渲染、生成文件下载按钮、附件拖拽/粘贴上传、模型/推理强度选择、历史会话侧栏）；`AgentPlaza`/`StudentAgentChat`（广场）；`ProfilePage`/`ResumeGallery`（简历库）；`CalendarPage`。
-- **管理端** `AdminHomePage.tsx`：导航切换 `ModelPlaza` / `MasterAgentConfig` / `AgentManagementPage` / `SystemSettings`（MCP、Skills 广场页同体系）。
-- React 19 兼容：用 `Alert` 而非 Arco `Message`；`element.ref` 警告可忽略。
+
+**学生端路由（`StudentHomePage.tsx` 管理）**：
+| 路径 | 组件 | 说明 |
+|------|------|------|
+| `/student` | `AgentChatView agentType="resume"` | AI简历助手 |
+| `/student/interviewer` | `AgentChatView agentType="interviewer"` | AI面试官 |
+| `/student/resumes` | `ResumeCenterPage` | 简历制作 |
+| `/student/resumes/:id` | `ResumeEditorPage` | 在线简历编辑器 |
+| `/student/profile` | `ProfilePage` | 个人中心 |
+
+**核心组件**：
+- **`AgentChatView.tsx`**：通用对话视图，处理所有聊天状态（messages/activities/streaming/attachments）。`agentType` 决定空状态样式和 session 创建参数。父子通信：`loadTrigger`（数字计数器）触发加载指定 session，`newChatTrigger` 触发重置，`onSessionUpdated` / `onActiveSessionChange` 回调同步侧栏状态。
+- **`StudentHomePage.tsx`**：Shell 组件。维护 `resumeSessions` / `interviewerSessions` 两套列表，侧边栏分组显示历史对话（每组独立 [+] 按钮），侧边栏宽度可拖动（180–480px，存 `localStorage`）。导航 4 项：AI简历助手 · AI面试官 · 简历制作 · 个人中心。
+
+**管理端** `AdminHomePage.tsx`：导航切换 `ModelPlaza` / `MasterAgentConfig` / `AgentManagementPage` / `SystemSettings`（MCP、Skills 广场同体系）。
+
+React 19 兼容：用 `Alert` 而非 Arco `Message`；`element.ref` 警告可忽略。
 
 ---
 
@@ -331,11 +357,11 @@ for _ in range(max_iterations):           # max_iterations 来自配置（默认
 | 双角色鉴权 + 模型广场 + 智能体广场 | JWT、登录注册、模型/智能体 CRUD | ✅ 已完成 |
 | **主智能体 Agentic Loop 内核** | function-calling 循环 + Harness 护栏 + 简历读取/PDF 生成 | ✅ 已完成（2026-06-08） |
 | **子智能体接入主循环 + 四态权限** | 路由规则成工具、builtin 真实执行、`permission_mode` 强制生效、`max_iterations` 尊重配置 | ✅ 已完成（2026-06-08） |
+| **双智能体架构 + 对话历史分组** | AI简历助手 + AI面试官独立工具池/prompt，`agent_type` 分组侧栏，可拖动侧边栏 | ✅ 已完成（2026-06-10） |
 | 知识库（Dify 数据集） | 共享检索 + 子智能体绑定专属库 | 📋 规划，见 `AGENT_LOOP_AND_KB_DEV_PLAN.md` |
 | 子智能体增强 | Dify streaming、记忆策略差异化、`ask` 人在回路确认 | 📋 规划 |
 | MCP 真实执行 | 真实协议客户端替换模拟 | 📋 规划 |
-| 权限确认流 | permission_mode 高危动作人在回路 | 📋 规划 |
-| 工程加固 | 测试 / CI / 密钥加密 | 📋 规划 |
+| 工程加固 | 测试 / CI / API Key 加密 | 📋 规划 |
 
 ---
 

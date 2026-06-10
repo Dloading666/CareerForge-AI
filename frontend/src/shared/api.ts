@@ -23,7 +23,7 @@ function getStoredSession(): StoredSession | null {
   }
 }
 
-function getAccessToken(): string | null {
+export function getAccessToken(): string | null {
   return getStoredSession()?.access ?? null
 }
 
@@ -33,7 +33,9 @@ function updateStoredAccessToken(access: string) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, access }))
 }
 
-async function tryRefreshAccessToken(): Promise<string | null> {
+let refreshPromise: Promise<string | null> | null = null
+
+async function performRefreshAccessToken(): Promise<string | null> {
   const refresh = getStoredSession()?.refresh
   if (!refresh) return null
 
@@ -53,6 +55,30 @@ async function tryRefreshAccessToken(): Promise<string | null> {
   const access = response.ok && payload?.code === 0 ? payload.data?.access ?? null : null
   if (access) updateStoredAccessToken(access)
   return access
+}
+
+export async function tryRefreshAccessToken(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = performRefreshAccessToken().finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
+}
+
+export async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const send = async (access: string | null) => {
+    const headers = new Headers(init?.headers)
+    if (access) headers.set("Authorization", `Bearer ${access}`)
+    return fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+  }
+
+  let response = await send(getAccessToken())
+  if (response.status === 401) {
+    const access = await tryRefreshAccessToken()
+    if (access) response = await send(access)
+  }
+  return response
 }
 
 const FIELD_LABELS: Record<string, string> = {

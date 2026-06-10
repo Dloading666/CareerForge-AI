@@ -172,7 +172,10 @@ def _ensure_resume_limit(db: Session, student_id: int, tenant_id: int) -> None:
         )
     )
     if (total or 0) >= MAX_RESUMES_PER_STUDENT:
-        raise HTTPException(status_code=400, detail=f"每位学生最多保留 {MAX_RESUMES_PER_STUDENT} 份简历")
+        raise HTTPException(
+            status_code=400,
+            detail=f"简历数量已达上限（{MAX_RESUMES_PER_STUDENT} 份），请先删除一份简历后再继续生成",
+        )
 
 
 def _clean_resume_document(data: dict[str, Any], *, title: str, template_id: str, visibility: bool) -> dict[str, Any]:

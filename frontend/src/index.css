@@ -742,6 +742,7 @@ textarea {
 }
 
 .student-chat-page {
+  position: relative;
   flex: 1;
   min-height: 0;
   height: auto;
@@ -1986,6 +1987,12 @@ textarea {
 
 .message-row.assistant {
   justify-content: flex-start;
+  animation: assistant-message-enter 0.28s ease-out both;
+}
+
+@keyframes assistant-message-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .message-bubble {
@@ -2199,87 +2206,203 @@ textarea {
 
 /* ── Activity block (Codex-style) ─────────────────────────────────── */
 
-.activity-block {
-  margin-bottom: 12px;
-}
-
-.activity-block-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #7b8499;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.14s, color 0.14s;
-  margin-bottom: 6px;
-}
-
-.activity-block-toggle:hover {
-  background: #f0f1f8;
-  color: #3a4260;
-}
-
-.activity-block-toggle.collapsed {
-  margin-bottom: 0;
-}
-
-.activity-chip-list {
+/* ── 内嵌活动步骤（对话流中展示，像 Codex） ── */
+.activity-inline-block {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
+  padding: 6px 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #f0f1f3;
 }
 
-.activity-chip {
-  display: inline-flex;
+.activity-inline-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 8px;
-  border: 1px solid #e3e7f1;
-  border-radius: 20px;
-  background: #f8f9fd;
-  color: #5a6178;
-  font-size: 12.5px;
-  width: fit-content;
-  max-width: 600px;
-  transition: border-color 0.14s;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13.5px;
+  color: #5a6070;
+  animation: activity-inline-enter 0.2s ease-out both;
 }
 
-.activity-chip.running {
-  border-color: #a8c4ff;
-  background: linear-gradient(135deg, #f0f5ff, #e8f0ff);
+.activity-inline-row.running {
   color: #2255c4;
-  animation: activity-pulse 2s ease-in-out infinite;
+  font-weight: 500;
 }
 
-@keyframes activity-pulse {
-  0%, 100% { border-color: #a8c4ff; }
-  50% { border-color: #165dff; }
-}
-
-.activity-chip.failed {
-  border-color: #fbbaba;
-  background: #fff5f5;
+.activity-inline-row.failed {
   color: #b22222;
 }
 
-.activity-chip-icon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  color: inherit;
+.activity-inline-row.fact-check {
+  color: #8b6914;
 }
 
-.activity-chip.running .activity-chip-icon {
-  animation: spin 1s linear infinite;
+.activity-inline-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.activity-inline-icon.activity-done {
+  opacity: 0.55;
+  filter: grayscale(0.3);
+}
+
+.activity-inline-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-inline-duration {
+  flex-shrink: 0;
+  color: #a0a5af;
+  font-size: 11.5px;
+}
+
+.activity-inline-detail {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  color: #8b909b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+@keyframes activity-inline-enter {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── 内嵌活动图标动画 ── */
+/* 思考：上下浮动 */
+.act-think { animation: act-float 2s ease-in-out infinite; }
+@keyframes act-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* 浏览/查看：左右扫描 */
+.act-browse { animation: act-scan 2.4s ease-in-out infinite; }
+@keyframes act-scan {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(2px); }
+  75% { transform: translateX(-2px); }
+}
+
+/* 搜索：旋转 */
+.act-search { animation: act-spin 3s linear infinite; }
+@keyframes act-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 写作/编辑：脉冲缩放 */
+.act-write { animation: act-pulse 1.6s ease-in-out infinite; }
+@keyframes act-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+/* 处理：旋转脉冲 */
+.act-process { animation: act-gear 2s linear infinite; }
+@keyframes act-gear {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.1); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* 分析：呼吸 */
+.act-analyze { animation: act-breathe 2s ease-in-out infinite; }
+@keyframes act-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-inline-icon { animation: none !important; }
+}
+
+@keyframes activity-live {
+  0% { box-shadow: 0 0 0 0 rgba(22, 93, 255, 0.32); }
+  70%, 100% { box-shadow: 0 0 0 7px rgba(22, 93, 255, 0); }
 }
 
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.run-details {
+  margin-top: 10px;
+}
+
+.run-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #9aa1b1;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.run-details-toggle:hover {
+  color: #4f5d7a;
+}
+
+.run-details-panel {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 5px;
+  padding: 9px 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  border: 1px solid #e7eaf1;
+  border-radius: 9px;
+  background: #fafbfc;
+  color: #727b90;
+  font-size: 11.5px;
+  animation: run-details-open 0.18s ease-out both;
+}
+
+.run-details-panel span {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.run-details-panel b {
+  color: #3f485d;
+  font-weight: 600;
+}
+
+@keyframes run-details-open {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row.assistant,
+  .activity-step,
+  .activity-step.running .activity-step-icon,
+  .activity-thinking-orbit,
+  .activity-live-dot,
+  .activity-step-list,
+  .run-details-panel,
+  .stream-cursor,
+  .thinking-dot {
+    animation: none !important;
+  }
 }
 
 /* ── History panel ────────────────────────────────────────────────── */
@@ -5408,24 +5531,37 @@ textarea {
 /* ── Scroll to bottom button ── */
 .scroll-to-bottom-btn {
   position: absolute;
-  bottom: 120px;
-  right: 24px;
-  width: 36px;
-  height: 36px;
+  left: 50%;
+  bottom: 112px;
+  width: 40px;
+  height: 40px;
+  transform: translateX(-50%);
   border-radius: 50%;
-  border: 1px solid #e5e6eb;
+  border: 1px solid #dfe3eb;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10;
-  transition: opacity 0.2s;
+  z-index: 20;
+  transition: color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
   color: #4e5969;
+  animation: scroll-bottom-enter 0.2s ease-out both;
 }
 .scroll-to-bottom-btn:hover {
-  background: #f2f3f5;
+  color: #165dff;
+  border-color: #b8cbff;
+  box-shadow: 0 10px 28px rgba(22, 93, 255, 0.16);
+}
+
+.scroll-to-bottom-btn svg {
+  font-size: 18px;
+}
+
+@keyframes scroll-bottom-enter {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 /* ── Message copy button ── */
@@ -5589,4 +5725,249 @@ textarea {
   font-size: 12px;
   color: #6b7280;
   line-height: 1.45;
+}
+
+/* ── Runtime statusline (breathing logo + elapsed + tokens + phase) ── */
+
+.runtime-statusline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  color: #8a8f98;
+  padding: 12px 2px;
+  user-select: none;
+}
+
+.runtime-statusline .rs-dot {
+  opacity: 0.5;
+}
+
+.runtime-statusline .rs-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-logo-wrap {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.status-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  animation: cf-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes cf-breathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.5;
+    filter: drop-shadow(0 0 0 rgba(52, 80, 122, 0));
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+    filter: drop-shadow(0 0 4px rgba(52, 80, 122, 0.35));
+  }
+}
+
+/* Phase-aware statusline icons */
+.status-phase-icon {
+  font-size: 16px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* 思考：上下浮动 */
+.phase-think {
+  animation: phase-float 2s ease-in-out infinite;
+}
+@keyframes phase-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* 浏览/查看：左右扫描 */
+.phase-browse {
+  animation: phase-scan 2.4s ease-in-out infinite;
+}
+@keyframes phase-scan {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(2px); }
+  75% { transform: translateX(-2px); }
+}
+
+/* 搜索：旋转 */
+.phase-search {
+  animation: phase-spin 3s linear infinite;
+}
+@keyframes phase-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 写作/编辑：脉冲缩放 */
+.phase-write {
+  animation: phase-pulse 1.6s ease-in-out infinite;
+}
+@keyframes phase-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
+/* 处理/分析：旋转脉冲 */
+.phase-process {
+  animation: phase-gear 2s linear infinite;
+}
+@keyframes phase-gear {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.1); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* 分析附件：呼吸 */
+.phase-analyze {
+  animation: phase-breathe 2s ease-in-out infinite;
+}
+@keyframes phase-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-phase-icon { animation: none !important; }
+}
+
+/* Completed state: static footer, no animation */
+.runtime-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  color: #a0a4ab;
+  padding: 12px 2px;
+  user-select: none;
+}
+
+.runtime-footer .rs-dot {
+  opacity: 0.5;
+}
+
+.runtime-footer .status-logo {
+  animation: none;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-logo {
+    animation: none !important;
+    opacity: 0.8;
+  }
+}
+
+/* ── Actions Capsule（Codex 式胶囊）────────────────────────────────── */
+
+.timeline-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.timeline-container .assistant-answer {
+  padding: 0;
+  margin: 0;
+}
+
+.actions-capsule {
+  margin: 8px 0;
+}
+
+.capsule-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #f5f6f8;
+  border: 1px solid #eaebef;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #6b7280;
+  width: 100%;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.capsule-trigger:hover {
+  background: #edeef1;
+  border-color: #d5d7dc;
+}
+
+.actions-capsule.has-failures .capsule-trigger {
+  border-color: #f5c6c6;
+  background: #fef8f8;
+}
+
+.capsule-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9ca3af;
+  flex-shrink: 0;
+}
+
+.actions-capsule.has-failures .capsule-dot {
+  background: #ef4444;
+}
+
+.capsule-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capsule-chevron {
+  font-size: 14px;
+  color: #9ca3af;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.capsule-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.capsule-detail {
+  padding: 4px 0 4px 16px;
+  border-left: 2px solid #e5e7eb;
+  margin-left: 9px;
+  margin-top: 4px;
+}
+
+.capsule-detail .activity-inline-row {
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.capsule-detail .activity-inline-icon {
+  width: 16px;
+  height: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capsule-chevron { transition: none; }
 }

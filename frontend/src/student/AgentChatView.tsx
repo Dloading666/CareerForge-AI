@@ -6,7 +6,6 @@ import {
   IconCaretRight,
   IconCheck,
   IconClose,
-  IconCloseCircle,
   IconCopy,
   IconDashboard,
   IconDownload,
@@ -15,18 +14,16 @@ import {
   IconMindMapping,
   IconNotification,
   IconPlus,
-  IconRobot,
   IconSend,
-  IconThunderbolt,
-  IconUser,
 } from '@arco-design/web-react/icon'
-import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react'
+import type { ChangeEvent, KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest } from '../shared/api'
 import { AnnouncementBanner } from './StudentAnnouncementBar'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { useAuth } from '../shared/auth'
+import { chatRuntimeStore, type TimelineSegment, aggregateActions } from './chatRuntimeStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -44,6 +41,11 @@ type AgentMessage = {
   session_id: number
   role: 'user' | 'assistant'
   content: string
+  model_name?: string | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  duration_ms?: number | null
   created_at: string
 }
 
@@ -55,6 +57,7 @@ type AgentActivity = {
   name: string
   status: 'started' | 'completed' | 'failed'
   summary: string | null
+  display_summary: string | null
   detail: Record<string, unknown>
   started_at: string
   completed_at: string | null
@@ -74,6 +77,22 @@ type AgentAttachment = {
 }
 
 type GeneratedFile = { attachment_id: number; download_url: string; filename: string }
+
+type RuntimeInfo = {
+  message_id: number
+  model_name: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  duration_ms: number
+}
+
+type RuntimeStatus = {
+  message_id: number
+  phase: string
+  label: string
+  iteration: number
+}
 
 type AgentHistory = {
   session: AgentChatSession
@@ -120,6 +139,7 @@ export interface AgentChatViewProps {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+const MAX_RESUMES = 6
 
 const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
   { value: 'low', label: '低' },
@@ -245,75 +265,314 @@ function ModelReasoningPicker({
   )
 }
 
-function activityKindIcon(kind: string): ReactNode {
-  const style = { fontSize: 12 }
-  switch (kind) {
-    case 'profile': return <IconUser style={style} />
-    case 'resume': return <IconFile style={style} />
-    case 'file': return <IconAttachment style={style} />
-    case 'knowledge': return <IconBook style={style} />
-    case 'subagent': return <IconRobot style={style} />
-    case 'skill': return <IconThunderbolt style={style} />
-    case 'context': return <IconThunderbolt style={style} />
-    default: return <IconThunderbolt style={style} />
-  }
+
+/** 根据当前运行状态返回状态栏的 phase 图标（emoji）和动画 class */
+
+const toolDisplayNames: Record<string, string> = {
+  query_student_profile: '查看个人档案',
+  read_resume: '查看简历',
+  analyze_uploaded_file: '分析附件',
+  get_session_context: '回顾对话',
+  generate_resume_data: '生成在线简历',
+  optimize_resume_data: '生成优化版简历',
+  update_resume_data: '更改简历',
+  export_resume_pdf: '导出简历 PDF',
+  read_webpage: '读取网页',
+  web_search: '搜索网络信息',
 }
 
-function ActivityChip({ activity }: { activity: AgentActivity }) {
+function formatDuration(durationMs?: number | null) {
+  if (!durationMs && durationMs !== 0) return ''
+  if (durationMs < 1000) return `${durationMs} ms`
+  return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)} 秒`
+}
+
+function activityAction(activity: AgentActivity) {
+  const action = toolDisplayNames[activity.name] || activity.name
+  if (activity.status === 'started') return activity.summary || `正在${action}…`
+  if (activity.status === 'failed') return `${action}未完成`
+  return `已${action}`
+}
+
+
+
+/** Format elapsed ms as "Xm Ys" for the runtime statusline. */
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+/** Estimate token count from character count (CJK ≈ 1.5 chars/token). */
+function formatTokens(chars: number): string {
+  const t = Math.round(chars / 1.5)
+  return t >= 1000 ? `${(t / 1000).toFixed(1)}k` : String(t)
+}
+
+/** Resolve the statusline label with priority rules. */
+
+/** 图标映射：工具/阶段 → /activity-icons/*.png */
+const ACTIVITY_ICON_MAP: Record<string, string> = {
+  query_student_profile: '/activity-icons/view.png',
+  read_resume:           '/activity-icons/view.png',
+  analyze_uploaded_file: '/activity-icons/attach.png',
+  get_session_context:   '/activity-icons/view.png',
+  generate_resume_data:  '/activity-icons/edit.png',
+  optimize_resume_data:  '/activity-icons/pencil.png',
+  update_resume_data:    '/activity-icons/pencil.png',
+  export_resume_pdf:     '/activity-icons/edit.png',
+  read_webpage:          '/activity-icons/web.png',
+  web_search:            '/activity-icons/search.png',
+}
+
+const ACTIVITY_ANIM_MAP: Record<string, string> = {
+  query_student_profile: 'act-browse',
+  read_resume:           'act-browse',
+  analyze_uploaded_file: 'act-analyze',
+  get_session_context:   'act-browse',
+  generate_resume_data:  'act-write',
+  optimize_resume_data:  'act-write',
+  update_resume_data:    'act-write',
+  export_resume_pdf:     'act-write',
+  read_webpage:          'act-browse',
+  web_search:            'act-search',
+}
+
+const KIND_ICON_MAP: Record<string, string> = {
+  profile:   '/activity-icons/view.png',
+  resume:    '/activity-icons/attach.png',
+  file:      '/activity-icons/attach.png',
+  job:       '/activity-icons/search.png',
+  knowledge: '/activity-icons/search.png',
+  skill:     '/activity-icons/setting.png',
+}
+
+const KIND_ANIM_MAP: Record<string, string> = {
+  profile:   'act-browse',
+  resume:    'act-browse',
+  file:      'act-analyze',
+  job:       'act-search',
+  knowledge: 'act-search',
+  skill:     'act-think',
+}
+
+function activityPhaseIcon(name: string, kind: string): { src: string; anim: string } {
+  const src = ACTIVITY_ICON_MAP[name] || KIND_ICON_MAP[kind] || '/activity-icons/setting.png'
+  const anim = ACTIVITY_ANIM_MAP[name] || KIND_ANIM_MAP[kind] || 'act-process'
+  return { src, anim }
+}
+
+function ActivityStep({ activity }: { activity: AgentActivity }) {
   const running = activity.status === 'started'
   const failed = activity.status === 'failed'
+  const isFactCheck = failed && activity.display_summary?.includes('事实核对')
+  const duration = formatDuration(Number(activity.detail?.duration_ms) || null)
+  const { src, anim } = activityPhaseIcon(activity.name, activity.kind)
+
+  const iconContent = running
+    ? <img className={`activity-inline-icon ${anim}`} src={src} alt="" />
+    : failed
+      ? <img className="activity-inline-icon" src="/activity-icons/delete.png" alt="" />
+      : <img className="activity-inline-icon activity-done" src={src} alt="" />
+
   return (
-    <span className={`activity-chip${running ? ' running' : ''}${failed ? ' failed' : ''}`}>
-      <span className="activity-chip-icon">
-        {running
-          ? <IconLoading style={{ fontSize: 12 }} />
-          : failed
-            ? <IconCloseCircle style={{ fontSize: 12 }} />
-            : activityKindIcon(activity.kind)}
-      </span>
-      <span>{activity.summary || activity.name}</span>
-    </span>
+    <div className={`activity-inline-row${running ? ' running' : ''}${failed ? (isFactCheck ? ' fact-check' : ' failed') : ''}`}>
+      {iconContent}
+      <span className="activity-inline-label">{activityAction(activity)}</span>
+      {duration && <span className="activity-inline-duration">{duration}</span>}
+      {failed && activity.display_summary && (
+        <span className="activity-inline-detail">{activity.display_summary}</span>
+      )}
+    </div>
   )
 }
 
-function ActivityBlock({ activities, pending }: { activities: AgentActivity[]; pending: boolean }) {
-  const [expanded, setExpanded] = useState(true)
+/** 动作胶囊：聚合显示，点击展开明细 */
+function ActionsCapsule({ segment, running }: { segment: { activities: AgentActivity[]; collapsed: boolean }; running: boolean }) {
+  const [expanded, setExpanded] = useState(!segment.collapsed && running)
+  const toolActivities = segment.activities
+  if (toolActivities.length === 0) return null
 
+  const allDone = toolActivities.every((a) => a.status !== 'started')
+  const hasFailures = toolActivities.some((a) => a.status === 'failed')
+  const summary = aggregateActions(toolActivities)
+
+  // 正在运行时自动展开，完成后自动折叠
   useEffect(() => {
-    if (!pending && activities.length > 0 && activities.every((a) => a.status !== 'started')) {
-      const timer = window.setTimeout(() => setExpanded(false), 800)
-      return () => window.clearTimeout(timer)
-    }
-  }, [pending, activities])
-
-  if (activities.length === 0) return null
-
-  const completedCount = activities.filter((a) => a.status === 'completed').length
-  const failedCount = activities.filter((a) => a.status === 'failed').length
-  const runningCount = activities.filter((a) => a.status === 'started').length
+    if (running && !allDone) setExpanded(true)
+    if (allDone && expanded) setExpanded(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, allDone])
 
   return (
-    <div className="activity-block">
-      {expanded ? (
-        <>
-          <button type="button" className="activity-block-toggle" onClick={() => setExpanded(false)}>
-            <IconCaretDown style={{ fontSize: 11 }} />
-            <span>
-              {runningCount > 0
-                ? `${runningCount} 个工具运行中…`
-                : `已调用 ${completedCount} 个工具${failedCount > 0 ? `，${failedCount} 个失败` : ''}`}
-            </span>
-          </button>
-          <div className="activity-chip-list">
-            {activities.map((a) => <ActivityChip key={a.id} activity={a} />)}
-          </div>
-        </>
-      ) : (
-        <button type="button" className="activity-block-toggle collapsed" onClick={() => setExpanded(true)}>
-          <IconCaretRight style={{ fontSize: 11 }} />
-          <span>已调用 {completedCount} 个工具{failedCount > 0 ? `，${failedCount} 个失败` : ''}</span>
-        </button>
+    <div className={`actions-capsule${hasFailures ? ' has-failures' : ''}`}>
+      <button
+        type="button"
+        className="capsule-trigger"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+      >
+        <span className="capsule-dot" />
+        <span className="capsule-text">{summary}</span>
+        <span className={`capsule-chevron${expanded ? ' expanded' : ''}`}>›</span>
+      </button>
+      {expanded && (
+        <div className="capsule-detail">
+          {toolActivities.map((a) => (
+            <ActivityStep key={a.id} activity={a} />
+          ))}
+        </div>
       )}
+    </div>
+  )
+}
+
+/** 时间线渲染：text 和 actions 段交错 */
+function TimelineRenderer({ segments, running }: { segments: TimelineSegment[]; running: boolean }) {
+  return (
+    <div className="timeline-container">
+      {segments.map((seg, i) => {
+        if (seg.type === 'text') {
+          return seg.content ? (
+            <div key={`t${i}`} className="assistant-answer timeline-text">
+              <MarkdownMessage content={seg.content} />
+            </div>
+          ) : null
+        }
+        return <ActionsCapsule key={`a${i}`} segment={seg} running={running} />
+      })}
+    </div>
+  )
+}
+
+/** Breathing-logo status line shown during streaming; freezes to a static footer on completion. */
+function RuntimeStatusline({
+  pending,
+  heartbeat,
+  runtimeStatus,
+  runtimeInfo,
+  activities,
+  streamStartMs,
+  elapsedTick,
+}: {
+  pending: boolean
+  heartbeat?: { output_chars: number; phase: string }
+  runtimeStatus?: RuntimeStatus
+  runtimeInfo?: RuntimeInfo
+  activities: AgentActivity[]
+  streamStartMs: number | null
+  elapsedTick: number
+}) {
+  void elapsedTick  // triggers re-render each second for elapsed time
+  if (!pending && !runtimeInfo) return null
+
+  // Completed state -> static footer
+  if (!pending && runtimeInfo) {
+    const chars = runtimeInfo.total_tokens > 0 ? runtimeInfo.total_tokens : 0
+    return (
+      <div className="runtime-footer">
+        <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
+        <span>用时 {formatDuration(runtimeInfo.duration_ms)}</span>
+        {chars > 0 && (
+          <>
+            <span className="rs-dot">·</span>
+            <span>{chars.toLocaleString()} tokens</span>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Streaming state
+  const elapsed = streamStartMs ? Date.now() - streamStartMs : 0
+  const outputChars = heartbeat?.output_chars ?? 0
+  // Resolve label from active tool or heartbeat phase
+  const activeTool = activities.find((a) => a.status === 'started')
+  let label = activeTool?.summary || ''
+  if (!label) {
+    if (heartbeat?.phase === 'tool_writing') label = '正在撰写内容…'
+    else if (heartbeat?.phase === 'writing') label = '正在组织回复…'
+    else if (runtimeStatus?.label) label = runtimeStatus.label
+    else label = '正在理解你的需求…'
+  }
+  if (elapsed > 30000 && !label.includes('请稍候')) {
+    label = label.replace(/…$/, '（内容较多，请稍候）…')
+  }
+
+  return (
+    <div className="runtime-statusline">
+      <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
+      <span>{formatElapsed(elapsed)}</span>
+      <span className="rs-dot">·</span>
+      <span>{formatTokens(outputChars)} tokens</span>
+      <span className="rs-dot">·</span>
+      <span className="rs-label">{label}</span>
+    </div>
+  )
+}
+
+function RunDetails({ info }: { info?: RuntimeInfo }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!info) return null
+  const hasUsage = info.total_tokens > 0
+  return (
+    <div className="run-details">
+      <button type="button" className="run-details-toggle" onClick={() => setExpanded((value) => !value)}>
+        <IconDashboard />
+        <span>{hasUsage ? `${info.total_tokens.toLocaleString()} tokens` : '运行详情'}</span>
+        <span>· {formatDuration(info.duration_ms)}</span>
+        {expanded ? <IconCaretDown /> : <IconCaretRight />}
+      </button>
+      {expanded && (
+        <div className="run-details-panel">
+          <span><b>模型</b>{info.model_name}</span>
+          <span><b>输入</b>{info.prompt_tokens.toLocaleString()} tokens</span>
+          <span><b>输出</b>{info.completion_tokens.toLocaleString()} tokens</span>
+          <span><b>总计</b>{info.total_tokens.toLocaleString()} tokens</span>
+          <span><b>耗时</b>{formatDuration(info.duration_ms)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
+  const editorLinks = useMemo(() => {
+    const links: { resumeId: number; label: string }[] = []
+    for (const a of activities) {
+      if (a.status !== 'completed') continue
+      const detail = a.detail || {}
+      if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
+        const label = a.name === 'generate_resume_data' ? '查看生成的简历'
+          : a.name === 'optimize_resume_data' ? '查看优化后的简历'
+          : a.name === 'update_resume_data' ? '查看修改后的简历'
+          : '查看简历'
+        links.push({ resumeId: detail.resume_id as number, label })
+      }
+    }
+    return links
+  }, [activities])
+  if (editorLinks.length === 0) return null
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {editorLinks.map((link) => (
+        <a
+          key={link.resumeId}
+          href={`/student/resumes/${link.resumeId}`}
+          onClick={(e) => { e.preventDefault(); window.location.href = `/student/resumes/${link.resumeId}` }}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', borderRadius: 10,
+            border: '1px solid #C7D2FE', background: '#EEF2FF',
+            color: '#4338CA', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+          }}
+        >
+          <IconFile />
+          <span>{link.label}</span>
+          <IconCaretRight />
+        </a>
+      ))}
     </div>
   )
 }
@@ -348,41 +607,67 @@ function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
 }
 
 function AssistantMessage({
-  message, activities, files = [], pending = false,
+  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, elapsedTick, segments,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
   files?: GeneratedFile[]
   pending?: boolean
+  runtimeStatus?: RuntimeStatus
+  runtimeInfo?: RuntimeInfo
+  heartbeat?: { output_chars: number; phase: string }
+  streamStartMs?: number | null
+  elapsedTick?: number
+  segments?: TimelineSegment[]
 }) {
+  // 如果有 segments，用时间线渲染；否则回退到旧方式
+  const hasSegments = segments && segments.length > 0
   return (
     <div className="message-row assistant">
       <div className="assistant-message">
-        <ActivityBlock activities={activities} pending={pending} />
-        {message.content ? (
-          <div className="assistant-answer">
-            {!pending && (
-              <button
-                className="msg-copy-btn"
-                title="复制"
-                onClick={() => navigator.clipboard.writeText(message.content)}
-              >
-                <IconCopy />
-              </button>
-            )}
-            <MarkdownMessage content={message.content} />
-            {pending && <span className="stream-cursor" />}
-          </div>
+        {hasSegments ? (
+          <TimelineRenderer segments={segments} running={pending} />
         ) : (
-          pending && (
-            <div className="assistant-thinking">
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-            </div>
-          )
+          <>
+            {message.content ? (
+              <div className="assistant-answer">
+                {!pending && (
+                  <button
+                    className="msg-copy-btn"
+                    title="复制"
+                    onClick={() => navigator.clipboard.writeText(message.content)}
+                  >
+                    <IconCopy />
+                  </button>
+                )}
+                <MarkdownMessage content={message.content} />
+                {pending && <span className="stream-cursor" />}
+              </div>
+            ) : (
+              pending && (
+                <div className="assistant-thinking">
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                </div>
+              )
+            )}
+          </>
         )}
+        <ResumeEditorLinks activities={activities} />
         <GeneratedFileLinks files={files} />
+        {(pending || runtimeInfo) && (
+          <RuntimeStatusline
+            pending={pending}
+            heartbeat={heartbeat}
+            runtimeStatus={runtimeStatus}
+            runtimeInfo={runtimeInfo}
+            activities={activities}
+            streamStartMs={streamStartMs ?? null}
+            elapsedTick={elapsedTick ?? 0}
+          />
+        )}
+        {!pending && <RunDetails info={runtimeInfo} />}
       </div>
     </div>
   )
@@ -400,7 +685,7 @@ function activitiesForAssistant(
   return activities.filter((a) => a.message_id === previousUser.id)
 }
 
-function parseSseBlock(block: string): StreamEvent | null {
+export function parseSseBlock(block: string): StreamEvent | null {
   let event = 'message'
   const dataLines: string[] = []
   for (const line of block.split('\n')) {
@@ -460,6 +745,13 @@ export function AgentChatView({
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
+  const [runtimeStatuses, setRuntimeStatuses] = useState<Record<number, RuntimeStatus>>({})
+  const [runtimeInfo, setRuntimeInfo] = useState<Record<number, RuntimeInfo>>({})
+  const [heartbeats, setHeartbeats] = useState<Record<number, { output_chars: number; phase: string }>>({})
+  const [storeSegments, setStoreSegments] = useState<TimelineSegment[]>([])
+  const streamStartRef = useRef<number | null>(null)
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [elapsedTick, setElapsedTick] = useState(0)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -480,6 +772,12 @@ export function AgentChatView({
   const isNearBottomRef = useRef(true)
   const dragCounterRef = useRef(0)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+
+  // ── Store sync ────────────────────────────────────────────────────────────
+  const [storeTick, setStoreTick] = useState(0)
+  useEffect(() => {
+    return chatRuntimeStore.subscribe(() => setStoreTick((t) => t + 1))
+  }, [])
 
   // Sync selected model with parent's model options
   useEffect(() => {
@@ -515,17 +813,31 @@ export function AgentChatView({
   // Load session when loadTrigger increments
   useEffect(() => {
     if (loadTrigger === 0 || !sessionToLoad) return
-    if (streaming) abortRef.current?.abort()
+    if (streaming) { abortRef.current?.abort(); chatRuntimeStore.abort() }
     setNotice(null)
     setHistoryLoading(true)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
 
     apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages`)
       .then((history) => {
         setAgentSession(history.session)
         setMessages(history.messages)
         setActivities(history.activities)
+        setRuntimeInfo(Object.fromEntries(
+          history.messages
+            .filter((message) => message.role === 'assistant' && message.duration_ms)
+            .map((message) => [message.id, {
+              message_id: message.id,
+              model_name: message.model_name || '未知模型',
+              prompt_tokens: message.prompt_tokens || 0,
+              completion_tokens: message.completion_tokens || 0,
+              total_tokens: message.total_tokens || 0,
+              duration_ms: message.duration_ms || 0,
+            }]),
+        ))
         setPendingAttachments([])
         setGeneratedFiles({})
         // Restore user image attachments
@@ -558,10 +870,15 @@ export function AgentChatView({
   // Reset to new chat when newChatTrigger increments
   useEffect(() => {
     if (newChatTrigger === 0) return
-    if (streaming) abortRef.current?.abort()
+    if (streaming) { abortRef.current?.abort(); chatRuntimeStore.abort() }
     setAgentSession(null)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
+    setHeartbeats({})
+    streamStartRef.current = null
+    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setPendingAttachments([])
     setGeneratedFiles({})
     setInputValue('')
@@ -577,77 +894,40 @@ export function AgentChatView({
     setAgentSession(created)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
+    setHeartbeats({})
+    streamStartRef.current = null
+    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setPendingAttachments([])
     setGeneratedFiles({})
     return created
   }, [agentType])
 
-  const upsertActivity = (activity: AgentActivity) => {
-    setActivities((prev) => {
-      const idx = prev.findIndex((a) => a.id === activity.id)
-      if (idx < 0) return [...prev, activity]
-      const next = [...prev]
-      next[idx] = activity
-      return next
-    })
+
+  const ensureResumeCapacity = async () => {
+    try {
+      const resumes = await apiRequest<unknown[]>('/api/v1/student/resumes')
+      if (resumes.length >= MAX_RESUMES) {
+        setNotice(`简历数量已达上限（${MAX_RESUMES} 份），请先前往「简历制作」删除一份简历后再继续生成。`)
+        return false
+      }
+      return true
+    } catch (error) {
+      setNotice(error instanceof ApiError ? error.message : '暂时无法检查简历数量，请稍后重试')
+      return false
+    }
   }
 
-  const appendAssistantDelta = (messageId: number, delta: string, sessionId: number) => {
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === messageId)
-      if (idx < 0) {
-        return [...prev, { id: messageId, session_id: sessionId, role: 'assistant', content: delta, created_at: new Date().toISOString() }]
-      }
-      const next = [...prev]
-      next[idx] = { ...next[idx], content: next[idx].content + delta }
-      return next
-    })
+  const startResumeCreation = async () => {
+    if (!(await ensureResumeCapacity())) return
+    await submitMessage('AI简历制作：请先读取我的个人信息，然后帮我制作一份针对目标岗位的简历')
   }
 
-  const handleStreamEvent = (evt: StreamEvent, optimisticId: number, sessionId: number) => {
-    const { event, data } = evt
-    if (event === 'message.saved') {
-      const messageId = Number(data.message_id)
-      setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, id: messageId } : m)))
-      setUserMessageAttachments((prev) => {
-        if (!prev[optimisticId]) return prev
-        const next = { ...prev }
-        next[messageId] = next[optimisticId]
-        delete next[optimisticId]
-        return next
-      })
-      return
-    }
-    if (event === 'activity.started' || event === 'activity.completed' || event === 'activity.failed') {
-      const activity = data as AgentActivity
-      upsertActivity(activity)
-      if (event === 'activity.completed') {
-        const detail = activity.detail
-        if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
-          pendingResumeNavRef.current = detail.resume_id as number
-        }
-      }
-      return
-    }
-    if (event === 'message.delta') {
-      appendAssistantDelta(Number(data.message_id), String(data.delta ?? ''), sessionId)
-      return
-    }
-    if (event === 'attachment.created') {
-      const messageId = Number(data.message_id)
-      const downloadUrl = String(data.download_url ?? '')
-      if (!downloadUrl) return
-      const file: GeneratedFile = {
-        attachment_id: Number(data.attachment_id),
-        download_url: downloadUrl,
-        filename: String(data.filename ?? '简历.pdf'),
-      }
-      setGeneratedFiles((prev) => {
-        const list = prev[messageId] ?? []
-        if (list.some((f) => f.attachment_id === file.attachment_id)) return prev
-        return { ...prev, [messageId]: [...list, file] }
-      })
-    }
+  const startResumeOptimization = async () => {
+    if (!(await ensureResumeCapacity())) return
+    setInputValue('请帮我优化简历，我会上传简历 PDF 和目标岗位 JD。')
+    fileInputRef.current?.click()
   }
 
   const submitMessage = async (preset?: string) => {
@@ -673,6 +953,11 @@ export function AgentChatView({
     setInputValue('')
     setNotice(null)
     setStreaming(true)
+    setRuntimeStatuses({})
+    setHeartbeats({})
+    streamStartRef.current = Date.now()
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current)
+    elapsedTimerRef.current = setInterval(() => setElapsedTick((t) => t + 1), 1000)
     const sendingAttachments = [...pendingAttachments]
     setPendingAttachments([])
     setMessages((prev) => [
@@ -695,60 +980,56 @@ export function AgentChatView({
     }
     onSessionUpdated(sessionForParent)
 
-    const controller = new AbortController()
-    abortRef.current = controller
+    // Store-driven streaming: chatRuntimeStore manages the SSE connection
+    abortRef.current = new AbortController() // kept for stopStreaming compat
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/student/master/sessions/${currentSession.id}/messages/stream`,
+      await chatRuntimeStore.startRun(
+        currentSession.id,
+        agentType,
         {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session?.access ?? ''}`,
-            'Content-Type': 'application/json',
+          content,
+          model_id: selectedModelId,
+          reasoning_effort: reasoningEffort,
+          attachment_ids: sendingAttachments.map((a) => a.id),
+          optimisticUserMessageId: optimisticId,
+          sendingAttachments,
+        },
+        {
+          onSessionUpdated: (sess) => onSessionUpdated(sess as AgentChatSession),
+          onResumeNav: (resumeId) => {
+            pendingResumeNavRef.current = resumeId
           },
-          body: JSON.stringify({
-            content,
-            model_id: selectedModelId,
-            reasoning_effort: reasoningEffort,
-            attachment_ids: sendingAttachments.map((a) => a.id),
-          }),
-          signal: controller.signal,
         },
       )
-      if (!response.ok || !response.body) throw new Error(`请求失败（${response.status}）`)
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
-        buffer = blocks.pop() ?? ''
-        for (const block of blocks) {
-          const parsed = parseSseBlock(block)
-          if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
-        }
-      }
-      if (buffer.trim()) {
-        const parsed = parseSseBlock(buffer)
-        if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
-      }
+      // After startRun resolves, check pending resume navigation
       if (pendingResumeNavRef.current !== null) {
         const resumeId = pendingResumeNavRef.current
         pendingResumeNavRef.current = null
         navigate(`/student/resumes/${resumeId}`)
       }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setNotice(error instanceof Error ? error.message : '回复失败')
+      // Check store error
+      const storeState = chatRuntimeStore.getState(currentSession.id)
+      if (storeState?.error) {
+        const message = storeState.error
+        const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
+          : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
+          : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
+          : message
+        setNotice(hint)
         setPendingAttachments((prev) => [...sendingAttachments, ...prev])
-        setInputValue(content)
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '回复失败'
+      const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
+        : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
+        : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
+        : message
+      setNotice(hint)
+      setPendingAttachments((prev) => [...sendingAttachments, ...prev])
     } finally {
       setStreaming(false)
       abortRef.current = null
+      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     }
   }
 
@@ -760,9 +1041,17 @@ export function AgentChatView({
     }
   }
 
+  const scrollToBottom = () => {
+    const node = threadRef.current
+    if (!node) return
+    node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+  }
+
   const stopStreaming = () => {
     abortRef.current?.abort()
+    chatRuntimeStore.abort()
     setStreaming(false)
+    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setMessages((prev) => {
       const last = prev[prev.length - 1]
       if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
@@ -851,6 +1140,118 @@ export function AgentChatView({
     return messages.slice(idx + 1).some((m) => m.role === 'assistant')
   }, [latestUserMessage, messages])
 
+  // ── Sync store events → component state ──────────────────────────────────
+  useEffect(() => {
+    const sid = agentSession?.id
+    if (sid == null || storeTick === 0) return // storeTick===0 means no store notify yet
+    const storeState = chatRuntimeStore.getState(sid)
+    if (!storeState) return
+
+    // Update streaming flag from store
+    setStreaming(storeState.streaming)
+
+    // Sync stream start ref
+    if (storeState.streamStartMs != null) {
+      streamStartRef.current = storeState.streamStartMs
+    }
+
+    // Sync segments
+    if (storeState.segments.length > 0) {
+      setStoreSegments(storeState.segments)
+    }
+
+    // Sync activities
+    if (storeState.activities.length > 0) {
+      setActivities((prev) => {
+        const merged = [...prev]
+        for (const act of storeState.activities) {
+          const idx = merged.findIndex((a) => a.id === act.id)
+          if (idx >= 0) merged[idx] = act
+          else merged.push(act)
+        }
+        return merged
+      })
+    }
+
+    // Sync runtime status
+    if (storeState.runtimeStatus) {
+      setRuntimeStatuses((prev) => ({ ...prev, [storeState.runtimeStatus!.message_id]: storeState.runtimeStatus! }))
+    } else {
+      // Clear runtime statuses when store has none
+      setRuntimeStatuses({})
+    }
+
+    // Sync heartbeat
+    if (storeState.heartbeat) {
+      setHeartbeats((prev) => ({ ...prev, [storeState.heartbeat!.message_id]: { output_chars: storeState.heartbeat!.output_chars, phase: storeState.heartbeat!.phase } }))
+    }
+
+    // Sync runtime info
+    if (storeState.runtimeInfo) {
+      setRuntimeInfo((prev) => ({ ...prev, [storeState.runtimeInfo!.message_id]: storeState.runtimeInfo! }))
+    }
+
+    // Sync assistant content (delta-based incremental append)
+    if (storeState.assistantContent && storeState.assistantMessageId) {
+      // store.assistantContent 是全量累加内容，组件 messages 里已有部分内容，
+      // 只追加增量部分，避免复读
+      const fullContent = storeState.assistantContent
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === storeState.assistantMessageId)
+        if (idx < 0) {
+          return [...prev, { id: storeState.assistantMessageId!, session_id: sid, role: 'assistant', content: fullContent, created_at: new Date().toISOString() }]
+        }
+        const existing = prev[idx].content
+        if (fullContent.length <= existing.length) return prev // 无新内容
+        const delta = fullContent.slice(existing.length)
+        if (!delta) return prev
+        const next = [...prev]
+        next[idx] = { ...next[idx], content: existing + delta }
+        return next
+      })
+    }
+
+    // Sync message.saved：把乐观负数 id 替换为数据库真实 id。
+    // 活动(activity)事件按 user_message 的真实 id 关联——不替换的话，
+    // 流式期间步骤列表按 message_id 过滤永远匹配不上，整个执行过程区域不渲染。
+    const realUserMsgId = storeState.pendingUserMessageId
+    if (typeof realUserMsgId === 'number' && realUserMsgId > 0) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === realUserMsgId)) return prev
+        let optimisticIdx = -1
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].role === 'user' && prev[i].id < 0) { optimisticIdx = i; break }
+        }
+        if (optimisticIdx < 0) return prev
+        const next = [...prev]
+        next[optimisticIdx] = { ...next[optimisticIdx], id: realUserMsgId }
+        return next
+      })
+      setUserMessageAttachments((prev) => {
+        const negKey = Object.keys(prev).map(Number).find((k) => k < 0)
+        if (negKey == null || prev[realUserMsgId]) return prev
+        const { [negKey]: moved, ...rest } = prev
+        return { ...rest, [realUserMsgId]: moved }
+      })
+    }
+
+    // Sync generated files
+    for (const [msgId, files] of storeState.generatedFiles) {
+      setGeneratedFiles((prev) => {
+        const list = prev[msgId] ?? []
+        const newFiles = files.filter((f) => !list.some((l) => l.attachment_id === f.attachment_id))
+        if (newFiles.length === 0) return prev
+        return { ...prev, [msgId]: [...list, ...newFiles] }
+      })
+    }
+
+    // Sync user attachments
+    for (const [msgId, atts] of storeState.userAttachments) {
+      setUserMessageAttachments((prev) => ({ ...prev, [msgId]: atts as AgentAttachment[] }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeTick, agentSession?.id])
+
   // ── Render ──
 
   const emptyState = agentType === 'resume' ? (
@@ -865,7 +1266,7 @@ export function AgentChatView({
           <button
             className="agent-home-card"
             type="button"
-            onClick={() => void submitMessage('AI简历制作：请先读取我的个人信息，然后帮我制作一份针对目标岗位的简历')}
+            onClick={() => void startResumeCreation()}
           >
             <strong>AI订制简历</strong>
             <span>读取个人信息档案，结合你提供的目标岗位 JD，自动生成一份在线简历。</span>
@@ -873,10 +1274,7 @@ export function AgentChatView({
           <button
             className="agent-home-card"
             type="button"
-            onClick={() => {
-              setInputValue('请帮我优化简历，我会上传简历 PDF 和目标岗位 JD。')
-              fileInputRef.current?.click()
-            }}
+            onClick={() => void startResumeOptimization()}
           >
             <strong>简历优化</strong>
             <span>上传简历 PDF + 粘贴目标岗位 JD，AI 给出优化建议并保存到简历制作。</span>
@@ -968,6 +1366,12 @@ export function AgentChatView({
               message={message}
               activities={activitiesForAssistant(messages, activities, index)}
               files={generatedFiles[message.id] ?? []}
+              pending={streaming && index === messages.length - 1}
+              runtimeStatus={runtimeStatuses[message.id]}
+              runtimeInfo={runtimeInfo[message.id]}
+              heartbeat={heartbeats[message.id]}
+              streamStartMs={streamStartRef.current}
+              elapsedTick={elapsedTick}
             />
           ),
         )}
@@ -976,15 +1380,23 @@ export function AgentChatView({
           <AssistantMessage
             message={{ id: 0, session_id: latestUserMessage.session_id, role: 'assistant', content: '', created_at: new Date().toISOString() }}
             activities={activities.filter((a) => a.message_id === latestUserMessage.id)}
+            runtimeStatus={Object.values(runtimeStatuses).at(-1)}
+            heartbeat={Object.values(heartbeats).at(-1)}
+            streamStartMs={streamStartRef.current}
+            elapsedTick={elapsedTick}
             pending
+            segments={storeSegments}
           />
         )}
       </div>
 
       {showScrollBtn && (
         <button
+          type="button"
           className="scroll-to-bottom-btn"
-          onClick={() => { const node = threadRef.current; if (node) node.scrollTop = node.scrollHeight }}
+          title="回到底部"
+          aria-label="回到底部"
+          onClick={scrollToBottom}
         >
           <IconCaretDown />
         </button>

@@ -4,9 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-智培职联（CareerForge-AI）—— 面向高校学生的 AI 就业辅助平台。学生端是一个「主智能体」对话系统（Agent = Model + Harness），管理端负责配置模型、子智能体、Skill、MCP 与系统设置。后端 FastAPI + SQLAlchemy，前端 React 19 + Arco Design，Docker Compose 一键部署。
-
-文档说明（README 的 Roadmap 已过时）：代码实际已实现学生端主智能体对话、模型广场、子智能体路由、Skill/MCP 广场。架构细节见 `STUDENT_MASTER_AGENT_DEV_REPORT.md` 和 `MODEL_PLAZA_DEV_DOC.md`。
+智培职联（CareerForge-AI）—— 面向高校学生的 AI 就业辅助平台。学生端内置两个对话智能体：**AI简历助手**（制作/优化简历）和 **AI面试官**（模拟面试训练），均采用 Agentic Loop（Model + Harness）架构，对话历史存储在同一张表里通过 `agent_type` 字段区分。管理端负责配置模型、Skill、MCP 与系统设置。后端 FastAPI + SQLAlchemy，前端 React 19 + Arco Design，Docker Compose 一键部署。
 
 ## 常用命令
 
@@ -44,7 +42,7 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 
 - `main` 生产（仅负责人合并）→ `master` 开发主线 → `dev-xxx` 个人分支（从 master 切出）。
 - 工作流：从 master 切分支 → 开发完 PR 到 master → 负责人审批合并 → 部署到 main。
-- 当前工作分支是 `master`；提交前确认不要把真实密钥（`.env.docker`）带进版本库。
+- 提交前确认不要把真实密钥（`.env.docker`）带进版本库。
 
 ## 架构要点
 
@@ -65,33 +63,57 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 **所有数据查询都按 `tenant_id` 隔离**，且零外键约束（MySQL 设计要求，靠应用层保证一致性）。新增表/查询时必须带上 `tenant_id` 过滤，否则会跨租户泄漏数据。
 
 ### 学生端主智能体运行时（`student/agent_runtime.py`）—— 项目最复杂的部分
-一个自研的 **Agentic Loop（Model + Harness）**：模型用 OpenAI function-calling 自主决定调哪些工具，Harness 负责执行/校验/审计并把结果回灌，直到模型给出最终答复或触顶 `max_iterations`。设计纲领见仓库 `Agent = Model + Harness ...docx`（“Harness 提供信任”）。
+一个自研的 **Agentic Loop（Model + Harness）**：模型用 OpenAI function-calling 自主决定调哪些工具，Harness 负责执行/校验/审计并把结果回灌，直到模型给出最终答复或触顶 `max_iterations`。
 
-1. `assemble_active_tools()` 组装**克制的安全工具池**：内置工具白名单 `ACTIVE_BUILTIN_TOOL_NAMES`（query_student_profile / read_resume / analyze_uploaded_file / get_session_context / export_resume_pdf）+ 已启用 Skill（`skill__<slug>`）。**主智能体只调 Skill，不调子智能体**（设计决策 2026-06，见下 4.5）；会编造结果的占位工具（岗位库 / 知识库 / MCP）也刻意不进池——对应准则「禁止编造」。
-2. `stream_master_reply()` 是 SSE 入口：保存用户消息 → 选模型 → `_build_initial_messages()`（硬化 system prompt + 历史多轮 + 附件）→ 创建空 assistant 行 → 进入 `run_agent_loop()`。
-3. `run_agent_loop()` 是 Harness 主循环（**模型不控制循环**）：`_stream_llm_turn()` 带 `tools` 流式调用 → 若返回 `tool_calls` 则先过 `_permission_decision()` 四态权限裁决、再 `_dispatch_tool()` 逐个执行（发 `activity.*` 事件、写 `StudentAgentActivity` 审计）并把结果作为 `role=tool` 回灌 → 否则直接流式输出最终答复。`max_iterations` 取 `MasterAgentConfig.max_iterations`（默认 8，安全上限 20）。模型不支持 `tools`（请求报错）时自动降级为无工具纯文本回答。
-4. **Harness 护栏**：未知工具名 / 非法参数 → 返回结构化错误让模型自我纠正而非崩溃；只暴露能诚实兑现的工具；`permission_mode`（auto/ask/strict）`strict` 时只放行内置工具、拒绝 Skill；`_harness_system_prompt()` 把反幻觉铁律写进 system（简历建议必须先 `read_resume`、禁止虚构经历），并要求把「面试官 / 职业规划」等沉浸式需求引导到智能体广场。
-4.5. **主智能体与子智能体解耦（2026-06 决策）**：主智能体**不再调用子智能体**，只编排 Skill + 内置工具。任务型能力（简历优化 / 岗位匹配）应做成 Skill；沉浸型人格（AI 面试官 / 职业规划师 / 岗位推荐师）是「智能体广场」里的独立 `Agent`，由学生从广场直接进入**流式多轮对话**（`agent/router.py` 的 `POST /agents/{id}/chat/stream` + 前端 `StudentAgentChat`）。`MasterRouteRule` 仍存在但已不被主循环消费。
-5. **简历工具**：`read_resume` 读取学生在「个人中心—我的简历」已存的 PDF（profile 级附件 `session_id=0`），缺 `extracted_text` 时用 `_ensure_attachment_text()` 现抽现存；`export_resume_pdf` 用 reportlab + **内嵌 CJK 字体**（`_register_cjk_font()` 优先嵌入真实 TTF/TTC，Docker 靠 `fonts-noto-cjk`）渲染可下载 PDF，存为附件并返回 `/data/...` 下载链接，模型以 Markdown 链接呈现给学生。
-6. 模型选择 `_select_chat_model()`：请求指定 model_id > 主智能体配置 model > 第一个对学生开放的 chat 模型。只接受 `capability in ("text","multimodal","chat")` 且 `open_to_student` 且 `status=="active"`。
+1. **两类工具池**（按 `session.agent_type` 路由）：
+   - `assemble_active_tools()` — **AI简历助手**完整工具池：`query_student_profile / read_resume / analyze_uploaded_file / get_session_context / export_resume_pdf` + 启用 Skill。
+   - `assemble_interviewer_tools()` — **AI面试官**精简只读池：`query_student_profile / read_resume / get_session_context / analyze_uploaded_file`，**不含生成/导出简历类工具**。
 
-SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.completed` / `done`（外加 `attachment.created`，前端目前忽略）。
+2. `stream_master_reply()` 是 SSE 入口：保存用户消息 → 选模型 → 读 `session.agent_type` 决定工具池 → `_build_initial_messages(..., agent_type)` → 创建空 assistant 行 → 进入 `run_agent_loop()`。
 
-> 旧的关键词预规划函数（`_plan_tool_calls` / `_run_tool_planning` / `_compose_prompt` / `_stream_llm_response` / `assemble_tool_pool`）已被循环取代，目前是**死代码**，保留未删。
+3. `run_agent_loop()` 是 Harness 主循环：流式调用 LLM → 若有 `tool_calls` 则四态权限裁决 → 执行 → 审计 → 回灌 → 否则流式输出最终答复。`max_iterations` 默认 8，安全上限 20。
 
-附件：`save_attachment()` 落盘到 `data/agent_uploads/{tenant}/{user}/`，并同步抽取文本（pypdf/python-docx/openpyxl/Pillow）。图片在模型支持视觉时以 base64 data-url 内联进 prompt（`_supports_image_input` 用排除法：非 embedding/rerank/audio 即尝试视觉直传）。
+4. **`_harness_system_prompt(config, reasoning_effort, agent_type)`**：
+   - `agent_type == "interviewer"` → 返回 `INTERVIEWER_SYSTEM_PROMPT`（面试官人格，禁止操作简历）。
+   - 其他 → 返回简历助手 prompt（反幻觉铁律 + 简历制作/优化两条流程 + 联网指引）。
+
+5. **session 区分**：`StudentAgentSession.agent_type VARCHAR(32) DEFAULT 'resume'`，迁移 `20260610_0016`。`POST /student/master/sessions` 从 `AgentSessionCreate.agent_type` 读取并写入。
+
+SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.completed` / `done` / `attachment.created`。
+
+> 旧的关键词预规划函数（`_plan_tool_calls` 等）已是**死代码**，保留未删。
+
+### 简历工具
+`read_resume` 读取学生在「简历制作」保存的 PDF（`session_id=0` 的附件），缺 `extracted_text` 时用 `_ensure_attachment_text()` 现抽现存；`export_resume_pdf` 用 reportlab + **内嵌 CJK 字体**渲染可下载 PDF，存为附件并返回 `/data/...` 下载链接。
 
 ### 前端（`frontend/src/`）
-- `App.tsx` 路由：`/auth`、`/student`、`/admin`，按 `session.role` 重定向；`shared/ProtectedRoute.tsx` 做角色守卫，`shared/AuthProvider.tsx` 管登录态。
-- `shared/api.ts` 统一请求封装：自动从 localStorage 附加 JWT；`extractErrorMessage` 把 422 校验错误用 `FIELD_LABELS`/`ERROR_TYPES` 映射成字段级中文提示。新增表单字段时记得补这两张映射表。
-- `admin/` 与 `student/` 各自一个大首页组件，内部用导航切换子页面（ModelPlaza、SystemSettings、AgentManagement、StudentAgentChat 等）。
+
+**路由结构**：`/auth`、`/student`、`/admin`，按 `session.role` 重定向；`shared/ProtectedRoute.tsx` 角色守卫，`shared/AuthProvider.tsx` 管登录态。
+
+**学生端路由（`StudentHomePage.tsx` 内）**：
+| 路径 | 页面 |
+|------|------|
+| `/student` | AI简历助手（`AgentChatView agentType="resume"`） |
+| `/student/interviewer` | AI面试官（`AgentChatView agentType="interviewer"`） |
+| `/student/resumes` | 简历制作（`ResumeCenterPage`） |
+| `/student/resumes/:id` | 简历编辑器（`ResumeEditorPage`） |
+| `/student/profile` | 个人中心（`ProfilePage`） |
+
+**关键组件**：
+- **`AgentChatView.tsx`** — 通用对话视图。`agentType` 决定空状态样式和 session 创建时的类型；父组件通过 `loadTrigger`（数字计数器）+ `sessionToLoad` 触发加载，通过 `newChatTrigger` 触发重置；`onSessionUpdated` 回调通知父组件维护侧栏列表；`onActiveSessionChange` 通知当前活跃 session id 用于高亮。
+- **`StudentHomePage.tsx`** — Shell。管理两套 session 列表（`resumeSessions` / `interviewerSessions`）和两套触发器，侧边栏分组显示对话历史（每组有独立 [+] 新建按钮），侧边栏宽度可拖动（180–480px，存 localStorage）。
+
+**导航（4项）**：AI简历助手 · AI面试官 · 简历制作 · 个人中心（已移除「智能体广场」入口）。
+
+`shared/api.ts` 统一请求封装：自动附加 JWT；`extractErrorMessage` 映射 422 错误为中文字段提示。新增表单字段时补 `FIELD_LABELS`/`ERROR_TYPES`。
 
 ## 关键约定与陷阱
 
-- **统一响应信封**：后端返回 `{code, msg, data}`（`core/response.py`）；前端按此解析。
-- **软删除**：`is_deleted` 字段，查询默认要过滤掉，不物理删除。
-- **API Key 存储**：`ModelConfig.api_key_cipher` 经 `model_service.encrypt/decrypt_api_key`。
-- **React 19 + Arco**：用 `Alert` 而非 Arco `Message`（后者在 React 19 有兼容问题）；`element.ref` 警告可忽略。
-- **启动种子**：`main.py` 的 lifespan 会建表 + bootstrap 管理员 + seed 默认模型/智能体；默认管理员 `admin`/`123456`（可在 env 改）。
-- **迁移在容器内的特殊处理**：`entrypoint.sh` 对「已有库但无 `alembic_version`」的情况按表存在性 `alembic stamp` 到对应版本再 upgrade。新增迁移若改了这个判定链，记得同步 entrypoint。
-- 配置全部走 env（`core/config.py`），新增配置项加 `Field(..., alias="ENV_NAME")` 并更新 `.env.example`。
+- **统一响应信封**：后端返回 `{code, msg, data}`；前端按此解析（流式 SSE 端点除外）。
+- **软删除**：`is_deleted` 字段，查询默认过滤，不物理删除。
+- **API Key 存储**：`api_key_cipher` 经 `encrypt/decrypt_api_key`（当前实为 base64，生产待加固）。
+- **React 19 + Arco**：用 `Alert` 而非 Arco `Message`；`element.ref` 警告可忽略。
+- **启动种子**：lifespan 建表 → bootstrap 管理员 → seed 默认模型/智能体；默认 `admin`/`123456`。
+- **迁移在容器内**：`entrypoint.sh` 对「有表无 alembic_version」自动 stamp 再 upgrade。新增迁移若改了判定链记得同步 entrypoint。
+- **配置全走 env**：新增配置项加 `Field(..., alias="ENV_NAME")` 并更新 `.env.example`。
+- **`agent_type` 约定**：合法值 `"resume"`（默认）/ `"interviewer"`。前端创建 session 时传入，后端据此选工具池和 system prompt。新增类型须同步更新 `agent_runtime.py` 的分支逻辑。

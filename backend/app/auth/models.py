@@ -54,6 +54,7 @@ class StudentUser(TimestampMixin, Base):
     signature: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    birth_date: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     personal_advantages: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     job_search_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     expected_position: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

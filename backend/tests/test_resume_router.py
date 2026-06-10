@@ -79,24 +79,24 @@ class ResumeRouterTests(unittest.TestCase):
         )
 
     def test_create_limit_and_delete_flow(self):
-        for index in range(5):
+        for index in range(6):
             response = self._create_resume(self.token_a, f"简历{index + 1}")
             self.assertEqual(response.status_code, 201)
 
-        sixth = self._create_resume(self.token_a, "第六份")
-        self.assertEqual(sixth.status_code, 400)
-        self.assertIn("最多保留 5 份简历", sixth.json()["detail"])
+        seventh = self._create_resume(self.token_a, "第七份")
+        self.assertEqual(seventh.status_code, 400)
+        self.assertIn("简历数量已达上限（6 份）", seventh.json()["detail"])
 
         listing = self.client.get("/api/v1/student/resumes", headers=self._headers(self.token_a))
         self.assertEqual(listing.status_code, 200)
-        self.assertEqual(len(listing.json()["data"]), 5)
+        self.assertEqual(len(listing.json()["data"]), 6)
 
         resume_id = listing.json()["data"][0]["id"]
         deleted = self.client.delete(f"/api/v1/student/resumes/{resume_id}", headers=self._headers(self.token_a))
         self.assertEqual(deleted.status_code, 200)
 
         listing_after = self.client.get("/api/v1/student/resumes", headers=self._headers(self.token_a))
-        self.assertEqual(len(listing_after.json()["data"]), 4)
+        self.assertEqual(len(listing_after.json()["data"]), 5)
 
     def test_update_overwrites_document(self):
         created = self._create_resume(self.token_a, "初始简历")
