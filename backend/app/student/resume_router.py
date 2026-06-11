@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -616,6 +616,78 @@ def import_resume(
     db.commit()
     db.refresh(row)
     return ok(_serialize_detail(row).model_dump(mode="json"), msg="created")
+
+
+@router.post("/upload", status_code=201)
+async def upload_resume_file(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """上传 PDF/DOCX/TXT/MD 简历文件，提取文本后创建一条新的简历记录。"""
+    import tempfile
+
+    identity, _ = current
+    _ensure_resume_limit(db, identity.user_id, identity.tenant_id)
+
+    original_name = file.filename or "resume"
+    ext = Path(original_name).suffix.lower()
+    if ext not in {".pdf", ".docx", ".txt", ".md"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 PDF、DOCX、TXT、Markdown 格式")
+
+    content = await file.read()
+    if len(content) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="简历文件不能超过 8MB")
+
+    text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(tmp_path))
+            for page in reader.pages[:20]:
+                page_text = (page.extract_text() or "").strip()
+                if page_text:
+                    text += page_text + "\n"
+        elif ext == ".docx":
+            from docx import Document
+
+            doc = Document(str(tmp_path))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        else:
+            text = content.decode("utf-8", errors="replace")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    text = text.strip()[:30000]
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未能从文件中提取到文本内容")
+
+    # 从学生档案自动填充基本信息
+    student = db.get(StudentUser, identity.user_id)
+    title = Path(original_name).stem[:60] or "上传的简历"
+
+    document = _default_resume_data(student, title, "blank", False)
+    document["selfEvaluation"] = text
+
+    if identity.tenant_id:
+        pass  # tenant 隔离由 _ensure_resume_limit 保证
+
+    row = StudentResume(
+        tenant_id=identity.tenant_id,
+        student_id=identity.user_id,
+        title=title,
+        template_id="blank",
+        visibility=False,
+        data_json=json.dumps(document, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return ok({"id": row.id, "title": title, "chars": len(text)}, msg="uploaded")
 
 
 @router.get("/{resume_id}")

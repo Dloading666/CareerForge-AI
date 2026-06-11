@@ -1,11 +1,11 @@
 import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
-import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
+import { IconDelete, IconDownload, IconEdit, IconFile, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
 import { ApiError } from '../shared/api'
-import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume } from './api'
+import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume, uploadResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { ResumeTemplatePreview, TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
@@ -23,6 +23,7 @@ export function ResumeCenterPage() {
   const [newResumeModalVisible, setNewResumeModalVisible] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>('classic')
   const importRef = useRef<HTMLInputElement | null>(null)
+  const uploadRef = useRef<HTMLInputElement | null>(null)
 
   const mode = searchParams.get('mode')
 
@@ -128,6 +129,21 @@ export function ResumeCenterPage() {
     }
   }
 
+  const handleUpload = async (file: File) => {
+    if (resumes.length >= MAX_RESUMES) {
+      Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
+      return
+    }
+    try {
+      const res = await uploadResume(file)
+      Message.success(`已解析 ${res.title}，约 ${res.chars.toLocaleString()} 字符`)
+      await refresh()
+      navigate(`/student/resumes/${res.id}`)
+    } catch (error) {
+      Message.error(error instanceof ApiError ? error.message : '上传解析失败，请检查文件格式')
+    }
+  }
+
   return (
     <div className="resume-center-page">
       <div className="resume-center-header">
@@ -138,6 +154,9 @@ export function ResumeCenterPage() {
           </Button>
           <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
             导入 JSON
+          </Button>
+          <Button icon={<IconFile />} onClick={() => uploadRef.current?.click()}>
+            上传简历
           </Button>
           <Button
             type="primary"
@@ -161,6 +180,17 @@ export function ResumeCenterPage() {
             onChange={(event) => {
               const file = event.target.files?.[0]
               if (file) void handleImport(file)
+              event.target.value = ''
+            }}
+          />
+          <input
+            ref={uploadRef}
+            type="file"
+            hidden
+            accept=".pdf,.docx,.txt,.md"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) void handleUpload(file)
               event.target.value = ''
             }}
           />

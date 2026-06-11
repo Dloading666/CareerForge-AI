@@ -63,6 +63,7 @@
       - ./backend/.env.docker
     environment:
       - WEB_CONCURRENCY=1
+      - INTERVIEW_KNOWLEDGE_BASE_DIR=/app/knowledge-base
     depends_on:
       mysql:
         condition: service_healthy
@@ -72,6 +73,7 @@
       - "8000:8000"
     volumes:
       - skill-data:/app/data
+      - "D:/Ai Agent/Knowledge Base:/app/knowledge-base:ro"
     healthcheck:
       test:
         [

@@ -27,6 +27,7 @@ import { AnnouncementBellDropdown } from './StudentAnnouncementBar'
 import { chatRuntimeStore } from './chatRuntimeStore'
 import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
 import { ProfilePage } from './ProfilePage'
+import { AIInterviewerPage } from './AIInterviewerPage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
 import { ResumeEditorPage } from '../resume/ResumeEditorPage'
 
@@ -293,10 +294,6 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
     })
   }, [])
 
-  // 面试官历史由其模块内部管理（团队成员开发中），首页侧栏不再跟踪
-  const noopSessionUpdated = useCallback(() => {}, [])
-  const noopActiveSessionChange = useCallback(() => {}, [])
-
   const userMenu = (
     <div className="user-card-menu">
       <div className="user-card-menu-header">
@@ -457,20 +454,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           />
           <Route
             path="interviewer"
-            element={
-              <AgentChatView
-                agentType="interviewer"
-                modelOptions={modelOptions}
-                loadTrigger={0}
-                sessionToLoad={null}
-                newChatTrigger={0}
-                onSessionUpdated={noopSessionUpdated}
-                onActiveSessionChange={noopActiveSessionChange}
-                todayEvents={todayEvents}
-                remindersDismissed={remindersDismissed}
-                onDismissReminders={() => setRemindersDismissed(true)}
-              />
-            }
+            element={<AIInterviewerPage />}
           />
 
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
