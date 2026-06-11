@@ -4,7 +4,6 @@ import {
   DatePicker,
   Form,
   Input,
-  InputNumber,
   Message,
   Modal,
   Radio,
@@ -27,7 +26,6 @@ import {
   IconDelete,
   IconEdit,
   IconFile,
-  IconHome,
   IconInfoCircle,
   IconLocation,
   IconPhone,
@@ -111,6 +109,7 @@ type Profile = {
   grade: string | null
   phone: string | null
   avatar_url: string | null
+  resume_avatar_url: string | null
   banner_url: string | null
   signature: string | null
   personal_advantages: string | null
@@ -137,6 +136,8 @@ type Project = {
   role: string
   start_date: string
   end_date: string
+  link: string
+  link_label: string
   description: string
 }
 
@@ -146,6 +147,7 @@ type Education = {
   major: string
   degree: string
   duration: string
+  gpa: string
   description: string
 }
 
@@ -201,6 +203,8 @@ const emptyProject = (): Project => ({
   role: '',
   start_date: '',
   end_date: '',
+  link: '',
+  link_label: '',
   description: '',
 })
 
@@ -227,8 +231,20 @@ const emptyEducation = (): Education => ({
   major: '',
   degree: '',
   duration: '',
+  gpa: '',
   description: '',
 })
+
+function parseSkillLine(line: string) {
+  const separatorIndex = line.indexOf(' / ')
+  if (separatorIndex === -1) {
+    return { name: line.trim(), description: '' }
+  }
+  return {
+    name: line.slice(0, separatorIndex).trim(),
+    description: line.slice(separatorIndex + 3).trim(),
+  }
+}
 
 // ---------- Reusable UI ----------
 
@@ -550,7 +566,9 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
   const [pwdCaptcha, setPwdCaptcha] = useState('')
   const [basicForm] = Form.useForm()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const resumeFileInputRef = useRef<HTMLInputElement>(null)
   const bannerInputRef = useRef<HTMLInputElement>(null)
+  const hydratedProfileIdRef = useRef<number | null>(null)
   const inModal = !!activeTab
 
   // Edit modal state
@@ -565,6 +583,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
   const [educations, setEducations] = useState<Education[]>([])
   const [certifications, setCertifications] = useState<Certification[]>([])
   const [skillText, setSkillText] = useState<string>('')
+  const [detailsReady, setDetailsReady] = useState(false)
 
   const fetchProfile = async () => {
     try {
@@ -608,28 +627,28 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
   }
 
   useEffect(() => {
+    // Initial profile hydration is intentionally driven by the mounted page.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchProfile()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const openEdit = async () => {
+  const openEdit = async (sourceProfile: Profile | null = profile) => {
+    if (!sourceProfile) return
     basicForm.setFieldsValue({
-      name: profile?.name ?? '',
-      gender: profile?.gender ?? undefined,
-      age: profile?.age ?? undefined,
-      birth_date: profile?.birth_date ?? '',
-      college: profile?.college ?? '',
-      major: profile?.major ?? '',
-      grade: profile?.grade ?? '',
-      phone: profile?.phone ?? '',
-      signature: profile?.signature ?? '',
+      name: sourceProfile.name ?? '',
+      gender: sourceProfile.gender ?? undefined,
+      birth_date: toDate(sourceProfile.birth_date),
+      phone: sourceProfile.phone ?? '',
+      signature: sourceProfile.signature ?? '',
     })
-    setAdvantageText(profile?.personal_advantages ?? '')
-    setJobStatus(profile?.job_search_status ?? undefined)
-    setExpectedPosition(profile?.expected_position ?? '')
-    setExpectedSalary(profile?.expected_salary ?? '')
-    setExpectedLocation(profile?.expected_location ?? '')
+    setAdvantageText(sourceProfile.personal_advantages ?? '')
+    setJobStatus(sourceProfile.job_search_status ?? undefined)
+    setExpectedPosition(sourceProfile.expected_position ?? '')
+    setExpectedSalary(sourceProfile.expected_salary ?? '')
+    setExpectedLocation(sourceProfile.expected_location ?? '')
     setLastSavedAt(null)
+    setDetailsReady(false)
     try {
       const details = await apiRequest<{
         work_experiences?: WorkExperience[]
@@ -637,7 +656,11 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         educations?: Education[]
         honors?: Honor[]
         certifications?: Certification[]
-        skills?: { name?: string | null }[]
+        skills?: {
+          name?: string | null
+          level?: number | null
+          description?: string | null
+        }[]
       }>('/api/v1/student/profile/details', {
         headers: { Authorization: `Bearer ${session?.access}` },
       })
@@ -658,6 +681,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           role: it.role ?? '',
           start_date: it.start_date ?? '',
           end_date: it.end_date ?? '',
+          link: it.link ?? '',
+          link_label: it.link_label ?? '',
           description: it.description ?? '',
         })),
       )
@@ -677,6 +702,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           major: it.major ?? '',
           degree: it.degree ?? '',
           duration: it.duration ?? '',
+          gpa: it.gpa ?? '',
           description: it.description ?? '',
         })),
       )
@@ -692,36 +718,51 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       )
       setSkillText(
         (details.skills ?? [])
-          .map((it) => (it.name ?? '').trim())
+          .map((it) => {
+            const name = (it.name ?? '').trim()
+            const description = (it.description ?? '').trim()
+            return description ? `${name} / ${description}` : name
+          })
           .filter(Boolean)
           .join('\n'),
       )
+      setDetailsReady(true)
     } catch {
-      setWorkExperiences([])
-      setProjects([])
-      setHonors([])
-      setEducations([])
-      setCertifications([])
-      setSkillText('')
+      Message.error('档案经历加载失败，请稍后重试')
     }
     setEditTab('basic')
     if (!inModal) setEditVisible(true)
   }
 
+  useEffect(() => {
+    if (!inModal || !profile || hydratedProfileIdRef.current === profile.id) return
+    hydratedProfileIdRef.current = profile.id
+    void openEdit(profile)
+    // openEdit intentionally hydrates once for each mounted profile editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inModal, profile])
+
   const handleSave = async () => {
     try {
+      if (!detailsReady) {
+        Message.error('档案尚未完整加载，为避免覆盖已有数据，请稍后重试')
+        return
+      }
       const values = await basicForm.validate()
       setSaving(true)
       const skillItems = skillText
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)
-        .map((name) => ({
+        .map((line) => {
+          const { name, description } = parseSkillLine(line)
+          return {
           id: null,
           name,
           level: 3,
-          description: '',
-        }))
+            description,
+          }
+        })
       await apiRequest('/api/v1/student/profile', {
         method: 'PUT',
         headers: {
@@ -730,6 +771,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         },
         body: JSON.stringify({
           ...values,
+          birth_date: formatDay(values.birth_date),
           personal_advantages: advantageText,
           job_search_status: jobStatus ?? null,
           expected_position: expectedPosition,
@@ -797,6 +839,12 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       // ignore, user can click image to retry
     }
   }
+
+  // 在 modal 内切换到安全 tab 时自动加载图形验证码
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (inModal && activeTab === 'security') void loadPwdCaptcha()
+  }, [inModal, activeTab])
 
   const openSecurity = () => {
     setPwdCode('')
@@ -891,12 +939,16 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     fd.append('file', file)
     try {
       setUploadingFlag(true)
-      const res = await apiRequest<{ avatar_url?: string; banner_url?: string }>(endpoint, {
+      const res = await apiRequest<{
+        avatar_url?: string
+        resume_avatar_url?: string
+        banner_url?: string
+      }>(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session?.access}` },
         body: fd,
       })
-      const url = res.avatar_url || res.banner_url
+      const url = res.avatar_url || res.resume_avatar_url || res.banner_url
       if (url) onSuccess(url)
       Message.success('更新成功')
     } catch {
@@ -920,6 +972,24 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         setProfile((p) => (p ? { ...p, avatar_url: url } : p))
         onAvatarChange?.(url)
       },
+      setUploading,
+    )
+    e.target.value = ''
+  }
+
+  const handleResumeAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      Message.error('文件不能超过 2MB')
+      return
+    }
+    uploadFile(
+      file,
+      '/api/v1/student/profile/resume-avatar',
+      (url) => setProfile((current) => (
+        current ? { ...current, resume_avatar_url: url } : current
+      )),
       setUploading,
     )
     e.target.value = ''
@@ -995,7 +1065,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       />
       </>
       )}
-      <div style={{ position: 'relative', zIndex: 2, padding: inModal ? '24px 28px 40px' : '0 28px 40px' }}>
+      <div style={{ position: 'relative', zIndex: 2, padding: inModal ? 0 : '0 28px 40px' }}>
         {!inModal && (
         <div
           style={{
@@ -1232,7 +1302,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           />
           <MenuCard
             icon={<IconBug style={{ fontSize: 26, color: '#f53f3f' }} />}
-            label="反馈Bug"
+            label="意见反馈"
             desc="提交问题截图和描述，帮助我们改进"
             accentColor="#f53f3f"
             onClick={() => { if (!inModal) setFeedbackVisible(true) }}
@@ -1251,7 +1321,34 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
             <Tabs activeTab={editTab} onChange={setEditTab} type="rounded" size="small">
               <Tabs.TabPane key="basic" title={<span><IconUser /> 基本信息</span>}>
                 <Form form={basicForm} layout="vertical" style={{ marginTop: 12 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                  <div className="profile-resume-avatar">
+                    <div className="profile-resume-avatar-preview">
+                      {profile?.resume_avatar_url ? (
+                        <img src={profile.resume_avatar_url} alt="简历头像" />
+                      ) : (
+                        <span>{initials}</span>
+                      )}
+                    </div>
+                    <div className="profile-resume-avatar-copy">
+                      <strong>简历头像</strong>
+                      <span>仅用于简历模板展示，不影响账号头像</span>
+                    </div>
+                    <Button
+                      icon={<IconCamera />}
+                      loading={uploading}
+                      onClick={() => resumeFileInputRef.current?.click()}
+                    >
+                      更换头像
+                    </Button>
+                    <input
+                      ref={resumeFileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={handleResumeAvatarChange}
+                    />
+                  </div>
+                  <div className="profile-form-grid">
                     <FieldRow label="姓名" required>
                       <Form.Item field="name" noStyle><Input placeholder="请输入姓名" allowClear /></Form.Item>
                     </FieldRow>
@@ -1262,23 +1359,18 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                         </Radio.Group>
                       </Form.Item>
                     </FieldRow>
-                    <FieldRow label="年龄">
-                      <Form.Item field="age" noStyle><InputNumber placeholder="请输入年龄" min={10} max={100} style={{ width: '100%' }} /></Form.Item>
-                    </FieldRow>
                     <FieldRow label="出生日期">
-                      <Form.Item field="birth_date" noStyle><Input placeholder="YYYY-MM-DD" allowClear /></Form.Item>
+                      <Form.Item field="birth_date" noStyle>
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          placeholder="请选择出生日期"
+                          allowClear
+                          style={{ width: '100%' }}
+                        />
+                      </Form.Item>
                     </FieldRow>
                     <FieldRow label="手机号">
-                      <Form.Item field="phone" noStyle><Input placeholder="请输入手机号" allowClear prefix="📞" /></Form.Item>
-                    </FieldRow>
-                    <FieldRow label="学校">
-                      <Form.Item field="college" noStyle><Input placeholder="请输入学校" allowClear prefix="🏫" /></Form.Item>
-                    </FieldRow>
-                    <FieldRow label="专业">
-                      <Form.Item field="major" noStyle><Input placeholder="请输入专业" allowClear prefix="📖" /></Form.Item>
-                    </FieldRow>
-                    <FieldRow label="年级">
-                      <Form.Item field="grade" noStyle><Input placeholder="如：2023级" allowClear /></Form.Item>
+                      <Form.Item field="phone" noStyle><Input placeholder="请输入手机号" allowClear prefix={<IconPhone />} /></Form.Item>
                     </FieldRow>
                   </div>
                   <Form.Item field="signature" label="个性签名" style={{ marginTop: 8 }}>
@@ -1286,18 +1378,25 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                   </Form.Item>
                 </Form>
               </Tabs.TabPane>
-              <Tabs.TabPane key="advantage" title={<span><IconCommon /> 个人优势与求职期望</span>}>
+              <Tabs.TabPane key="advantage" title={<span><IconStar /> 求职偏好</span>}>
                 <div style={{ marginTop: 12 }}>
                   <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#4e5969', marginBottom: 6 }}>个人优势</div>
-                    <Input.TextArea value={advantageText} onChange={setAdvantageText} placeholder="描述你的核心优势和特长..." rows={4} />
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#4e5969', marginBottom: 6 }}>个人优势 / 自我评价</div>
+                    <Input.TextArea
+                      value={advantageText}
+                      onChange={setAdvantageText}
+                      placeholder="描述你的核心优势、工作方式和职业特点..."
+                      rows={4}
+                    />
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                  <div className="profile-form-grid">
                     <FieldRow label="求职状态">
                       <Select value={jobStatus} onChange={setJobStatus} placeholder="选择状态" allowClear>
-                        <Select.Option value="looking">正在找工作</Select.Option>
-                        <Select.Option value="open">考虑新机会</Select.Option>
-                        <Select.Option value="not_looking">暂不考虑</Select.Option>
+                        {jobStatusOptions.map((option) => (
+                          <Select.Option key={option.value} value={option.value}>
+                            {option.label}
+                          </Select.Option>
+                        ))}
                       </Select>
                     </FieldRow>
                     <FieldRow label="期望岗位"><Input value={expectedPosition} onChange={setExpectedPosition} placeholder="如：前端开发工程师" /></FieldRow>
@@ -1306,16 +1405,427 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                   </div>
                 </div>
               </Tabs.TabPane>
+              <Tabs.TabPane key="education" title={<span><IconBook /> 教育经历</span>}>
+                <div style={{ marginTop: 12 }}>
+                  <SectionHeader
+                    icon={<IconBook />}
+                    title="教育经历"
+                    hint="作为简历生成的唯一教育事实来源"
+                    onAdd={() => setEducations((items) => [...items, emptyEducation()])}
+                    addText="新增教育经历"
+                  />
+                  <ListSection
+                    items={educations}
+                    setItems={setEducations}
+                    renderItem={(item, idx, total, update, remove, move) => (
+                      <CardShell
+                        key={`inline-edu-${item.id ?? idx}`}
+                        index={idx}
+                        total={total}
+                        onMoveUp={() => move(-1)}
+                        onMoveDown={() => move(1)}
+                        onRemove={remove}
+                      >
+                        <div className="profile-form-grid">
+                          <FieldRow label="学校" required>
+                            <Input
+                              value={item.school}
+                              onChange={(value) => update({ ...item, school: value })}
+                              placeholder="如：重庆工程学院"
+                            />
+                          </FieldRow>
+                          <FieldRow label="专业">
+                            <Input
+                              value={item.major}
+                              onChange={(value) => update({ ...item, major: value })}
+                              placeholder="如：软件工程"
+                            />
+                          </FieldRow>
+                          <FieldRow label="学历 / 学位">
+                            <Input
+                              value={item.degree}
+                              onChange={(value) => update({ ...item, degree: value })}
+                              placeholder="如：本科"
+                            />
+                          </FieldRow>
+                          <FieldRow label="起止日期">
+                            {(() => {
+                              const [startDate, endDate] = splitDateRange(item.duration)
+                              return (
+                                <div className="profile-date-range-inputs">
+                                  <Input
+                                    value={startDate}
+                                    onChange={(value) =>
+                                      update({ ...item, duration: joinDateRange(value, endDate) })
+                                    }
+                                    placeholder="开始 YYYY-MM"
+                                    maxLength={7}
+                                  />
+                                  <span>至</span>
+                                  <Input
+                                    value={endDate}
+                                    onChange={(value) =>
+                                      update({ ...item, duration: joinDateRange(startDate, value) })
+                                    }
+                                    placeholder="结束 YYYY-MM"
+                                    maxLength={7}
+                                  />
+                                </div>
+                              )
+                            })()}
+                          </FieldRow>
+                          <FieldRow label="GPA / 排名">
+                            <Input
+                              value={item.gpa}
+                              onChange={(value) => update({ ...item, gpa: value })}
+                              placeholder="如：3.8/4.0，专业前 5%"
+                            />
+                          </FieldRow>
+                          <FieldRow label="在校经历与亮点" span={2}>
+                            <Input.TextArea
+                              value={item.description}
+                              onChange={(value) => update({ ...item, description: value })}
+                              placeholder="课程、奖项、学生工作或其他亮点，每行一条"
+                              autoSize={{ minRows: 2, maxRows: 4 }}
+                            />
+                          </FieldRow>
+                        </div>
+                      </CardShell>
+                    )}
+                  />
+                </div>
+              </Tabs.TabPane>
+              <Tabs.TabPane key="experience" title={<span><IconCommon /> 工作经历</span>}>
+                <div style={{ marginTop: 12 }}>
+                  <SectionHeader
+                    icon={<IconCommon />}
+                    title="工作 / 实习经历"
+                    hint="按时间倒序维护"
+                    onAdd={() => setWorkExperiences((items) => [...items, emptyWorkExperience()])}
+                    addText="新增经历"
+                  />
+                  <ListSection
+                    items={workExperiences}
+                    setItems={setWorkExperiences}
+                    renderItem={(item, idx, total, update, remove, move) => (
+                      <CardShell
+                        key={`inline-work-${item.id ?? idx}`}
+                        index={idx}
+                        total={total}
+                        onMoveUp={() => move(-1)}
+                        onMoveDown={() => move(1)}
+                        onRemove={remove}
+                      >
+                        <div className="profile-form-grid">
+                          <FieldRow label="公司 / 实习单位" required>
+                            <Input
+                              value={item.company}
+                              onChange={(value) => update({ ...item, company: value })}
+                              placeholder="如：字节跳动"
+                            />
+                          </FieldRow>
+                          <FieldRow label="岗位">
+                            <Input
+                              value={item.position}
+                              onChange={(value) => update({ ...item, position: value })}
+                              placeholder="如：前端开发实习生"
+                            />
+                          </FieldRow>
+                          <FieldRow label="开始日期">
+                            <DatePicker
+                              format={DAY_FORMAT}
+                              value={toDate(item.start_date)}
+                              onChange={(_dateString, date) =>
+                                update({ ...item, start_date: formatDay(date) })
+                              }
+                              placeholder="请选择开始日期"
+                              allowClear
+                              style={{ width: '100%' }}
+                            />
+                          </FieldRow>
+                          <FieldRow label="结束日期">
+                            <div className="profile-date-with-present">
+                              <DatePicker
+                                format={DAY_FORMAT}
+                                value={toDate(item.end_date)}
+                                onChange={(_dateString, date) =>
+                                  update({ ...item, end_date: formatDay(date) })
+                                }
+                                placeholder="请选择结束日期"
+                                allowClear
+                                disabled={isPresentFlag(item.end_date)}
+                                style={{ flex: 1 }}
+                              />
+                              <Checkbox
+                                checked={isPresentFlag(item.end_date)}
+                                onChange={(checked) =>
+                                  update({ ...item, end_date: checked ? '至今' : '' })
+                                }
+                              >
+                                至今
+                              </Checkbox>
+                            </div>
+                          </FieldRow>
+                          <FieldRow label="工作内容与成果" span={2}>
+                            <Input.TextArea
+                              value={item.description}
+                              onChange={(value) => update({ ...item, description: value })}
+                              placeholder="职责、使用的技术与量化成果"
+                              autoSize={{ minRows: 3, maxRows: 6 }}
+                            />
+                          </FieldRow>
+                        </div>
+                      </CardShell>
+                    )}
+                  />
+                </div>
+              </Tabs.TabPane>
+              <Tabs.TabPane key="projects" title={<span><IconCode /> 项目经历</span>}>
+                <div style={{ marginTop: 12 }}>
+                  <SectionHeader
+                    icon={<IconCode />}
+                    title="项目经历"
+                    hint="课程、个人、比赛与实战项目"
+                    onAdd={() => setProjects((items) => [...items, emptyProject()])}
+                    addText="新增项目"
+                  />
+                  <ListSection
+                    items={projects}
+                    setItems={setProjects}
+                    renderItem={(item, idx, total, update, remove, move) => (
+                      <CardShell
+                        key={`inline-project-${item.id ?? idx}`}
+                        index={idx}
+                        total={total}
+                        onMoveUp={() => move(-1)}
+                        onMoveDown={() => move(1)}
+                        onRemove={remove}
+                      >
+                        <div className="profile-form-grid">
+                          <FieldRow label="项目名称" required>
+                            <Input
+                              value={item.name}
+                              onChange={(value) => update({ ...item, name: value })}
+                              placeholder="如：校园智能问答助手"
+                            />
+                          </FieldRow>
+                          <FieldRow label="担任角色">
+                            <Input
+                              value={item.role}
+                              onChange={(value) => update({ ...item, role: value })}
+                              placeholder="如：前端负责人"
+                            />
+                          </FieldRow>
+                          <FieldRow label="开始日期">
+                            <DatePicker
+                              format={DAY_FORMAT}
+                              value={toDate(item.start_date)}
+                              onChange={(_dateString, date) =>
+                                update({ ...item, start_date: formatDay(date) })
+                              }
+                              placeholder="请选择开始日期"
+                              allowClear
+                              style={{ width: '100%' }}
+                            />
+                          </FieldRow>
+                          <FieldRow label="结束日期">
+                            <div className="profile-date-with-present">
+                              <DatePicker
+                                format={DAY_FORMAT}
+                                value={toDate(item.end_date)}
+                                onChange={(_dateString, date) =>
+                                  update({ ...item, end_date: formatDay(date) })
+                                }
+                                placeholder="请选择结束日期"
+                                allowClear
+                                disabled={isPresentFlag(item.end_date)}
+                                style={{ flex: 1 }}
+                              />
+                              <Checkbox
+                                checked={isPresentFlag(item.end_date)}
+                                onChange={(checked) =>
+                                  update({ ...item, end_date: checked ? '至今' : '' })
+                                }
+                              >
+                                至今
+                              </Checkbox>
+                            </div>
+                          </FieldRow>
+                          <FieldRow label="项目链接">
+                            <Input
+                              value={item.link}
+                              onChange={(value) => update({ ...item, link: value })}
+                              placeholder="如：https://project.demo"
+                            />
+                          </FieldRow>
+                          <FieldRow label="链接文案">
+                            <Input
+                              value={item.link_label}
+                              onChange={(value) => update({ ...item, link_label: value })}
+                              placeholder="如：在线访问 / GitHub"
+                            />
+                          </FieldRow>
+                          <FieldRow label="项目亮点" span={2}>
+                            <Input.TextArea
+                              value={item.description}
+                              onChange={(value) => update({ ...item, description: value })}
+                              placeholder="项目背景、个人贡献、技术栈与量化成果"
+                              autoSize={{ minRows: 3, maxRows: 6 }}
+                            />
+                          </FieldRow>
+                        </div>
+                      </CardShell>
+                    )}
+                  />
+                </div>
+              </Tabs.TabPane>
+              <Tabs.TabPane
+                key="skills"
+                title={
+                  <span>
+                    <IconThunderbolt /> 专业技能
+                    {skillItemCount > 0 && <Tag color="arcoblue" size="small">{skillItemCount}</Tag>}
+                  </span>
+                }
+              >
+                <div style={{ marginTop: 12 }}>
+                  <FieldRow label="专业技能">
+                    <Input.TextArea
+                      value={skillText}
+                      onChange={setSkillText}
+                      placeholder={'每行一个技能，例如：\nReact / 熟悉 Hooks 与状态管理\nPython / 熟悉数据处理'}
+                      autoSize={{ minRows: 8, maxRows: 16 }}
+                      maxLength={2000}
+                      showWordLimit
+                    />
+                  </FieldRow>
+                </div>
+              </Tabs.TabPane>
+              <Tabs.TabPane key="credentials" title={<span><IconTrophy /> 荣誉与证书</span>}>
+                <div className="profile-credential-sections">
+                  <div>
+                    <SectionHeader
+                      icon={<IconTrophy />}
+                      title="获得荣誉"
+                      hint="奖学金、竞赛与称号"
+                      onAdd={() => setHonors((items) => [...items, emptyHonor()])}
+                      addText="新增荣誉"
+                    />
+                    <ListSection
+                      items={honors}
+                      setItems={setHonors}
+                      renderItem={(item, idx, total, update, remove, move) => (
+                        <CardShell
+                          key={`inline-honor-${item.id ?? idx}`}
+                          index={idx}
+                          total={total}
+                          onMoveUp={() => move(-1)}
+                          onMoveDown={() => move(1)}
+                          onRemove={remove}
+                        >
+                          <div className="profile-form-grid">
+                            <FieldRow label="荣誉名称" required>
+                              <Input value={item.title} onChange={(value) => update({ ...item, title: value })} />
+                            </FieldRow>
+                            <FieldRow label="级别 / 颁奖方">
+                              <Input value={item.level} onChange={(value) => update({ ...item, level: value })} />
+                            </FieldRow>
+                            <FieldRow label="获奖日期">
+                              <DatePicker
+                                format={DAY_FORMAT}
+                                value={toDate(item.award_date)}
+                                onChange={(_dateString, date) =>
+                                  update({ ...item, award_date: formatDay(date) })
+                                }
+                                style={{ width: '100%' }}
+                                allowClear
+                              />
+                            </FieldRow>
+                            <FieldRow label="补充说明" span={2}>
+                              <Input.TextArea
+                                value={item.description}
+                                onChange={(value) => update({ ...item, description: value })}
+                                autoSize={{ minRows: 2, maxRows: 4 }}
+                              />
+                            </FieldRow>
+                          </div>
+                        </CardShell>
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <SectionHeader
+                      icon={<IconSafe />}
+                      title="资格证书"
+                      hint="职业资格与等级证书"
+                      onAdd={() => setCertifications((items) => [...items, emptyCertification()])}
+                      addText="新增证书"
+                    />
+                    <ListSection
+                      items={certifications}
+                      setItems={setCertifications}
+                      renderItem={(item, idx, total, update, remove, move) => (
+                        <CardShell
+                          key={`inline-cert-${item.id ?? idx}`}
+                          index={idx}
+                          total={total}
+                          onMoveUp={() => move(-1)}
+                          onMoveDown={() => move(1)}
+                          onRemove={remove}
+                        >
+                          <div className="profile-form-grid">
+                            <FieldRow label="证书名称" required>
+                              <Input value={item.name} onChange={(value) => update({ ...item, name: value })} />
+                            </FieldRow>
+                            <FieldRow label="颁发机构">
+                              <Input value={item.issuer} onChange={(value) => update({ ...item, issuer: value })} />
+                            </FieldRow>
+                            <FieldRow label="获得日期">
+                              <DatePicker
+                                format={DAY_FORMAT}
+                                value={toDate(item.issue_date)}
+                                onChange={(_dateString, date) =>
+                                  update({ ...item, issue_date: formatDay(date) })
+                                }
+                                style={{ width: '100%' }}
+                                allowClear
+                              />
+                            </FieldRow>
+                            <FieldRow label="有效期至">
+                              <DatePicker
+                                format={DAY_FORMAT}
+                                value={toDate(item.expire_date)}
+                                onChange={(_dateString, date) =>
+                                  update({ ...item, expire_date: formatDay(date) })
+                                }
+                                style={{ width: '100%' }}
+                                allowClear
+                              />
+                            </FieldRow>
+                            <FieldRow label="补充说明" span={2}>
+                              <Input.TextArea
+                                value={item.description}
+                                onChange={(value) => update({ ...item, description: value })}
+                                autoSize={{ minRows: 2, maxRows: 4 }}
+                              />
+                            </FieldRow>
+                          </div>
+                        </CardShell>
+                      )}
+                    />
+                  </div>
+                </div>
+              </Tabs.TabPane>
             </Tabs>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 0', borderTop: '1px solid #f0f0f0', marginTop: 12 }}>
-              <Button type="primary" loading={saving} onClick={handleSave} style={{ minWidth: 100 }}>
-                {lastSavedAt ? '保存修改' : '保存'}
-              </Button>
+            <div className="profile-edit-actions">
               {lastSavedAt && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#00b42a', marginLeft: 12 }}>
+                <span className="profile-saved-status">
                   <IconCheck /> 已保存
                 </span>
               )}
+              <Button type="primary" loading={saving} onClick={handleSave} style={{ minWidth: 100 }}>
+                {lastSavedAt ? '保存修改' : '保存'}
+              </Button>
             </div>
           </div>
         )}
@@ -1373,7 +1883,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
 
         {inModal && activeTab === 'feedback' && (
           <div style={{ padding: '32px 36px' }}>
-            <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 600, color: '#1d2129' }}>反馈 Bug</h3>
+            <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 600, color: '#1d2129' }}>意见反馈</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 520 }}>
               <Select value={feedbackCategory} onChange={setFeedbackCategory} size="large" placeholder="选择分类">
                 <Select.Option value="bug">🐛 Bug 反馈</Select.Option>
@@ -1403,7 +1913,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         )}
 
         {inModal && activeTab === 'about' && (
-          <div style={{ padding: '40px 36px', textAlign: 'center' }}>
+          <div style={{ padding: '40px 36px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
             <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" style={{ width: 64, height: 64, margin: '0 auto 16px' }} />
             <h3 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#1d2129' }}>CareerForge AI</h3>
             <p style={{ margin: '0 0 24px', fontSize: 14, color: '#86909c' }}>智能辅助简历制作、优化表达与岗位匹配</p>
@@ -1541,11 +2051,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     </Radio.Group>
                   </Form.Item>
                 </FieldRow>
-                <FieldRow label="年龄">
-                  <Form.Item field="age" noStyle>
-                    <InputNumber placeholder="请输入年龄" min={1} max={150} style={{ width: '100%' }} />
-                  </Form.Item>
-                </FieldRow>
                 <FieldRow label="出生日期">
                   <Form.Item field="birth_date" noStyle>
                     <DatePicker
@@ -1559,21 +2064,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                 <FieldRow label="手机号">
                   <Form.Item field="phone" noStyle>
                     <Input placeholder="请输入手机号" prefix={<IconPhone />} />
-                  </Form.Item>
-                </FieldRow>
-                <FieldRow label="学校">
-                  <Form.Item field="college" noStyle>
-                    <Input placeholder="请输入学校名称" prefix={<IconHome />} />
-                  </Form.Item>
-                </FieldRow>
-                <FieldRow label="专业">
-                  <Form.Item field="major" noStyle>
-                    <Input placeholder="请输入专业" prefix={<IconBook />} />
-                  </Form.Item>
-                </FieldRow>
-                <FieldRow label="年级">
-                  <Form.Item field="grade" noStyle>
-                    <Input placeholder="如：2025级" />
                   </Form.Item>
                 </FieldRow>
                 <FieldRow label="个性签名" span={2}>
@@ -2159,7 +2649,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         </Tabs>
       </Modal>
       <Modal
-        title="反馈Bug"
+        title="意见反馈"
         visible={feedbackVisible}
         onCancel={() => {
           setFeedbackVisible(false)

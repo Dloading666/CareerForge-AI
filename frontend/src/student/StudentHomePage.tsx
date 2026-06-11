@@ -530,9 +530,10 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
         onCancel={() => setProfileModalVisible(false)}
         footer={null}
         closable
-        maskClosable
+        maskClosable={false}
         className="profile-modal"
-        style={{ top: '5vh', width: 960, height: '90vh', maxWidth: 'calc(100vw - 60px)' }}
+        style={{ top: '6vh' }}
+        maskStyle={{ background: 'rgba(23, 30, 48, 0.28)', backdropFilter: 'blur(2px)' }}
         unmountOnExit
       >
         <div className="profile-modal-layout">
@@ -542,7 +543,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
-              { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '反馈Bug', color: '#ffece8' },
+              { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
             ].map((item) => (
               <button
@@ -550,9 +551,11 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
                 type="button"
                 className={`profile-modal-nav-item${profileTab === item.key ? ' active' : ''}`}
                 onClick={() => setProfileTab(item.key)}
+                aria-label={item.label}
+                title={item.label}
               >
-                <span className="profile-modal-nav-icon" style={{ background: item.color, width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{item.icon}</span>
-                <span>{item.label}</span>
+                <span className="profile-modal-nav-icon" style={{ background: item.color }}>{item.icon}</span>
+                <span className="profile-modal-nav-label">{item.label}</span>
               </button>
             ))}
           </div>

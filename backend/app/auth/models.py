@@ -50,6 +50,7 @@ class StudentUser(TimestampMixin, Base):
     major: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     grade: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    resume_avatar_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     banner_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     signature: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)

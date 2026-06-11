@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -23,6 +24,12 @@ from app.auth.service import require_role
 from app.core.response import ok
 from app.infra.db import get_db
 from app.student.resume_models import StudentResume
+from app.student.profile_details_models import (
+    StudentEducation,
+    StudentProject,
+    StudentSkill,
+    StudentWorkExperience,
+)
 from app.student.resume_schemas import (
     ResumeCreateRequest,
     ResumeDetailResponse,
@@ -65,24 +72,126 @@ def _normalize_template_id(template_id: str | None) -> str:
     return text[:64] or DEFAULT_TEMPLATE_ID
 
 
-def _default_resume_data(student: StudentUser, title: str, template_id: str, visibility: bool) -> dict[str, Any]:
-    return {
-        "title": title,
-        "templateId": template_id,
-        "visibility": visibility,
-        "basic": {
-            "name": student.name or "",
-            "title": "",
-            "email": student.email or "",
-            "phone": student.phone or "",
-            "location": student.college or "",
-            "birthDate": "",
-            "gender": student.gender or "",
-            "photo": student.avatar_url or "",
-        },
-        "education": [
+JOB_STATUS_LABELS = {
+    "unemployed": "求职中",
+    "employed": "已就业，看新机会",
+    "considering": "观望中",
+    "not_looking": "暂不求职",
+}
+
+DEFAULT_BASIC_ICONS = {
+    "birthDate": "calendar",
+    "employementStatus": "briefcase",
+    "email": "mail",
+    "phone": "phone",
+    "location": "location",
+}
+
+DEFAULT_BASIC_FIELD_ORDER = [
+    {"id": "name", "key": "name", "label": "姓名", "type": "text", "visible": True},
+    {"id": "title", "key": "title", "label": "职位", "type": "text", "visible": True},
+    {"id": "birthDate", "key": "birthDate", "label": "生日", "type": "date", "visible": True},
+    {
+        "id": "employementStatus",
+        "key": "employementStatus",
+        "label": "状态",
+        "type": "text",
+        "visible": True,
+    },
+    {"id": "email", "key": "email", "label": "邮箱", "type": "text", "visible": True},
+    {"id": "phone", "key": "phone", "label": "电话", "type": "text", "visible": True},
+    {"id": "location", "key": "location", "label": "地址", "type": "text", "visible": True},
+]
+
+DEFAULT_PHOTO_CONFIG = {
+    "width": 90,
+    "height": 120,
+    "aspectRatio": "1:1",
+    "borderRadius": "none",
+    "customBorderRadius": 0,
+    "visible": True,
+}
+
+
+def _split_profile_duration(value: str | None) -> tuple[str, str]:
+    text = (value or "").strip()
+    if not text:
+        return "", ""
+    for separator in (" ~ ", " - ", " 至 ", "~", "～"):
+        if separator in text:
+            start, end = text.split(separator, 1)
+            return start.strip(), end.strip()
+    return text, ""
+
+
+def _profile_date_range(start: str | None, end: str | None) -> str:
+    start_text = (start or "").strip()
+    end_text = (end or "").strip()
+    if start_text and end_text:
+        return f"{start_text} - {end_text}"
+    return start_text or end_text
+
+
+def _plain_text_to_list_html(value: str | None) -> str:
+    lines = [line.strip() for line in (value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return "<ul>" + "".join(f"<li>{escape(line)}</li>" for line in lines) + "</ul>"
+
+
+def _plain_text_to_paragraph_html(value: str | None) -> str:
+    lines = [line.strip() for line in (value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return "".join(f"<p>{escape(line)}</p>" for line in lines)
+
+
+def _load_profile_rows(db: Session, model, student_id: int, tenant_id: int) -> list[Any]:
+    return list(
+        db.scalars(
+            select(model)
+            .where(
+                model.student_id == student_id,
+                model.tenant_id == tenant_id,
+            )
+            .order_by(model.sort_order.asc(), model.id.asc())
+        ).all()
+    )
+
+
+def _default_resume_data(
+    db: Session,
+    student: StudentUser,
+    student_id: int,
+    tenant_id: int,
+    title: str,
+    template_id: str,
+    visibility: bool,
+) -> dict[str, Any]:
+    education_rows = _load_profile_rows(db, StudentEducation, student_id, tenant_id)
+    work_rows = _load_profile_rows(db, StudentWorkExperience, student_id, tenant_id)
+    project_rows = _load_profile_rows(db, StudentProject, student_id, tenant_id)
+    skill_rows = _load_profile_rows(db, StudentSkill, student_id, tenant_id)
+    education = []
+    for index, row in enumerate(education_rows):
+        start_date, end_date = _split_profile_duration(row.duration)
+        education.append(
             {
-                "id": "edu-1",
+                "id": f"edu-{row.id or index + 1}",
+                "school": row.school or "",
+                "major": row.major or "",
+                "degree": row.degree or "",
+                "startDate": start_date,
+                "endDate": end_date,
+                "gpa": row.gpa or "",
+                "description": _plain_text_to_list_html(row.description),
+                "visible": True,
+            }
+        )
+    if not education and (student.college or student.major):
+        education.append(
+            {
+                "id": "edu-legacy",
                 "school": student.college or "",
                 "major": student.major or "",
                 "degree": "",
@@ -92,11 +201,67 @@ def _default_resume_data(student: StudentUser, title: str, template_id: str, vis
                 "description": "",
                 "visible": True,
             }
-        ],
-        "experience": [],
-        "projects": [],
-        "skills": [],
-        "selfEvaluation": "",
+        )
+    experience = [
+        {
+            "id": f"exp-{row.id or index + 1}",
+            "company": row.company or "",
+            "position": row.position or "",
+            "date": _profile_date_range(row.start_date, row.end_date),
+            "details": _plain_text_to_list_html(row.description),
+            "visible": True,
+        }
+        for index, row in enumerate(work_rows)
+    ]
+    projects = [
+        {
+            "id": f"proj-{row.id or index + 1}",
+            "name": row.name or "",
+            "role": row.role or "",
+            "date": _profile_date_range(row.start_date, row.end_date),
+            "description": _plain_text_to_list_html(row.description),
+            "visible": True,
+            "link": row.link or "",
+            "linkLabel": row.link_label or "",
+        }
+        for index, row in enumerate(project_rows)
+    ]
+    skill_lines = []
+    for row in skill_rows:
+        name = (row.name or "").strip()
+        description = (row.description or "").strip()
+        if name:
+            skill_lines.append(f"{name}：{description}" if description else name)
+    return {
+        "title": title,
+        "templateId": template_id,
+        "visibility": visibility,
+        "basic": {
+            "name": student.name or "",
+            "title": student.expected_position or "",
+            "employementStatus": JOB_STATUS_LABELS.get(student.job_search_status or "", ""),
+            "email": student.email or "",
+            "phone": student.phone or "",
+            "location": student.expected_location or "",
+            "birthDate": student.birth_date or "",
+            "photo": student.resume_avatar_url or "",
+            "icons": dict(DEFAULT_BASIC_ICONS),
+            "photoConfig": dict(DEFAULT_PHOTO_CONFIG),
+            "fieldOrder": [dict(item) for item in DEFAULT_BASIC_FIELD_ORDER],
+            "customFields": [],
+            "githubKey": "",
+            "githubUseName": "",
+            "githubContributionsVisible": False,
+        },
+        "education": education,
+        "experience": experience,
+        "projects": projects,
+        "certificates": [],
+        "customData": {},
+        "skillContent": _plain_text_to_list_html("\n".join(skill_lines)),
+        "selfEvaluationContent": _plain_text_to_paragraph_html(student.personal_advantages),
+        "activeSection": "basic",
+        "draggingProjectId": None,
         "globalSettings": {
             "themeColor": "#165dff" if template_id == "modern" else "#0f172a",
             "baseFontSize": 14,
@@ -391,7 +556,19 @@ def create_resume(
     title = _normalize_title(payload.title if payload else None)
     template_id = _normalize_template_id(payload.templateId if payload else None)
     visibility = payload.visibility if payload else False
-    document = payload.data if payload and payload.data is not None else _default_resume_data(student, title, template_id, visibility)
+    document = (
+        payload.data
+        if payload and payload.data is not None
+        else _default_resume_data(
+            db,
+            student,
+            identity.user_id,
+            identity.tenant_id,
+            title,
+            template_id,
+            visibility,
+        )
+    )
     document = _clean_resume_document(document, title=title, template_id=template_id, visibility=visibility)
 
     if visibility:

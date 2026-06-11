@@ -3,7 +3,6 @@ import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
-import { createEmptyResumeDocument, createTemplateResumeDocument } from './constants'
 import { ResumeEditorProvider, useResumeEditor } from './ResumeEditorContext'
 import { TEMPLATE_REGISTRY } from './templates/registry'
 import { createResume, getResume, updateResume } from './api'
@@ -87,9 +86,7 @@ function ResumeEditorInner() {
       setAuthExpired(false)
       try {
         if (resumeId === 'new' || !resumeId) {
-          const created = await createResume(
-            draftTemplateId !== 'blank' ? createTemplateResumeDocument(draftTemplateId) : createEmptyResumeDocument(draftTemplateId),
-          )
+          const created = await createResume({ templateId: draftTemplateId })
           if (!alive) return
           setResume(created)
           navigate(`/student/resumes/${created.id}`, { replace: true })

@@ -1752,6 +1752,8 @@ def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any
             "role": row.role,
             "start_date": row.start_date,
             "end_date": row.end_date,
+            "link": row.link,
+            "link_label": row.link_label,
             "description": text(row.description),
         }
         for row in load_rows(StudentProject)
@@ -1762,6 +1764,7 @@ def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any
             "major": row.major,
             "degree": row.degree,
             "duration": row.duration,
+            "gpa": row.gpa,
             "description": text(row.description),
         }
         for row in load_rows(StudentEducation)
@@ -1805,6 +1808,7 @@ def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any
         "major": student.major,
         "grade": student.grade,
         "signature": student.signature,
+        "resume_avatar_url": student.resume_avatar_url,
         "personal_advantages": text(student.personal_advantages),
         "job_search_status": student.job_search_status,
         "expected_position": student.expected_position,
@@ -3267,19 +3271,27 @@ def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, 
             "date": item.get("date") or "",
             "description": _ta_to_list(raw) if raw else "",
             "visible": True,
-            "link": "",
-            "linkLabel": "",
+            "link": item.get("link") or "",
+            "linkLabel": item.get("link_label") or item.get("linkLabel") or "",
         }
 
     basic = {
         "name": basic_in.get("name") or (getattr(student, "name", None) if student else None) or "",
-        "title": basic_in.get("target_position") or basic_in.get("title") or "",
+        "title": basic_in.get("target_position")
+        or basic_in.get("title")
+        or (getattr(student, "expected_position", None) if student else None)
+        or "",
         "email": basic_in.get("email") or (getattr(student, "email", None) if student else None) or "",
         "phone": basic_in.get("phone") or (getattr(student, "phone", None) if student else None) or "",
-        "location": basic_in.get("location") or (getattr(student, "college", None) if student else None) or "",
-        "birthDate": basic_in.get("birth_date") or basic_in.get("birthDate") or "",
+        "location": basic_in.get("location")
+        or (getattr(student, "expected_location", None) if student else None)
+        or "",
+        "birthDate": basic_in.get("birth_date")
+        or basic_in.get("birthDate")
+        or (getattr(student, "birth_date", None) if student else None)
+        or "",
         "employementStatus": "",
-        "photo": (getattr(student, "avatar_url", None) if student else None) or "",
+        "photo": (getattr(student, "resume_avatar_url", None) if student else None) or "",
         "icons": {"birthDate": "calendar", "employementStatus": "briefcase", "email": "mail", "phone": "phone", "location": "location"},
         "photoConfig": {"width": 90, "height": 120, "aspectRatio": "1:1", "borderRadius": "none", "customBorderRadius": 0, "visible": True},
         "fieldOrder": [dict(f) for f in _DEFAULT_FIELD_ORDER],
@@ -3485,6 +3497,7 @@ def _profile_backed_resume_args(
                 "degree": item.get("degree") or "",
                 "start_date": start_date,
                 "end_date": end_date,
+                "gpa": item.get("gpa") or "",
                 "description": item.get("description") or "",
             }
         )
@@ -3519,6 +3532,8 @@ def _profile_backed_resume_args(
             "role": item.get("role") or "",
             "date": _date_range(item.get("start_date"), item.get("end_date")),
             "description": item.get("description") or "",
+            "link": item.get("link") or "",
+            "link_label": item.get("link_label") or "",
         }
         for item in selected_projects
     ]
@@ -4629,4 +4644,3 @@ def _render_resume_pdf(
         leftMargin=16 * mm, rightMargin=16 * mm, topMargin=16 * mm, bottomMargin=14 * mm, title=title,
     )
     doc.build(flow)
-

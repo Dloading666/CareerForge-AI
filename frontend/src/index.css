@@ -40,6 +40,12 @@
   --text-subtle: #5e6475;
   --success: #00b42a;
   --warning: #ff7d00;
+  --control-radius: 10px;
+  --control-border: #dfe3eb;
+  --control-border-hover: #b8c2d6;
+  --control-border-focus: #6f9cff;
+  --control-background: #ffffff;
+  --control-background-disabled: #f5f7fa;
 }
 
 * {
@@ -70,6 +76,92 @@ textarea {
 
 #root {
   min-height: 100vh;
+}
+
+/* ── Shared form controls ───────────────────────────────────────────
+   All workspace forms use one stable rounded-rectangle geometry.
+   Decoration lives on the outer Arco control so prefixed inputs never
+   render a second inset focus ring. */
+.arco-input,
+.arco-input-inner-wrapper,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside),
+.arco-select-view,
+.arco-picker,
+.arco-cascader-view,
+.arco-tree-select-view,
+.arco-input-tag {
+  border: 1px solid var(--control-border) !important;
+  border-radius: var(--control-radius) !important;
+  background-color: var(--control-background) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transform: none !important;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease !important;
+}
+
+.arco-input:hover,
+.arco-input-inner-wrapper:hover,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside):hover,
+.arco-select:not(.arco-select-disabled) .arco-select-view:hover,
+.arco-picker:not(.arco-picker-disabled):hover,
+.arco-cascader:not(.arco-cascader-disabled) .arco-cascader-view:hover,
+.arco-tree-select:not(.arco-tree-select-disabled) .arco-tree-select-view:hover,
+.arco-input-tag:hover {
+  border-color: var(--control-border-hover) !important;
+  background-color: #fbfcfe !important;
+}
+
+.arco-input.arco-input-focus,
+.arco-input:focus,
+.arco-input-inner-wrapper.arco-input-inner-wrapper-focus,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside):focus-within,
+.arco-select.arco-select-focused .arco-select-view,
+.arco-picker.arco-picker-focused:not(.arco-picker-disabled),
+.arco-cascader.arco-cascader-focused .arco-cascader-view,
+.arco-tree-select.arco-tree-select-focused .arco-tree-select-view,
+.arco-input-tag.arco-input-tag-focus {
+  border-color: var(--control-border-focus) !important;
+  background-color: var(--control-background) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transform: none !important;
+}
+
+.arco-input-inner-wrapper > .arco-input,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside) > .arco-textarea,
+.arco-picker input,
+.arco-select-view input,
+.arco-cascader-view input,
+.arco-tree-select-view input,
+.arco-input-tag input {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transform: none !important;
+}
+
+.arco-input-inner-wrapper > .arco-input:hover,
+.arco-input-inner-wrapper > .arco-input:focus,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside) > .arco-textarea:hover,
+.arco-textarea-wrapper:not(.arco-textarea-wrapper-word-limit-outside) > .arco-textarea:focus {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.arco-input-disabled,
+.arco-input-inner-wrapper-disabled,
+.arco-select-disabled .arco-select-view,
+.arco-picker-disabled,
+.arco-cascader-disabled .arco-cascader-view,
+.arco-tree-select-disabled .arco-tree-select-view {
+  border-color: #e5e8ef !important;
+  background-color: var(--control-background-disabled) !important;
 }
 
 .page-shell {
@@ -6353,241 +6445,397 @@ textarea {
   border-radius: 0 !important;
 }
 
-/* ── Profile Modal (liquid glass) ────────────────────────────────── */
-.profile-modal {
-  top: 0;
-}
-
-.profile-modal .arco-modal-wrapper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2cm;
-}
-
-.profile-modal .arco-modal-container {
-  border-radius: 28px !important;
+/* ── Profile settings modal ───────────────────────────────────────── */
+.profile-modal.arco-modal {
+  width: min(960px, calc(100vw - 48px)) !important;
+  height: min(680px, calc(100vh - 120px));
+  min-height: min(560px, calc(100vh - 24px));
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.86) !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
   box-shadow:
-    0 16px 64px rgba(0, 0, 0, 0.14),
-    0 2px 12px rgba(0, 0, 0, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  width: min(920px, calc(100vw - 4cm));
+    0 24px 64px rgba(31, 38, 56, 0.18),
+    0 4px 16px rgba(31, 38, 56, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
 }
 
-.profile-modal .arco-modal-mask {
-  background: rgba(0, 0, 0, 0.3) !important;
-  backdrop-filter: blur(6px);
-}
-
-.profile-modal .arco-modal-body {
-  padding: 0 !important;
-  display: flex;
-  height: calc(100vh - 4cm);
-  max-height: 720px;
-}
-
-.profile-modal .arco-modal-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.profile-modal .arco-modal-body::-webkit-scrollbar-thumb {
-  background: rgba(120, 130, 160, 0.25);
-  border-radius: 3px;
-}
-
-.profile-modal .arco-modal-close-btn {
+.profile-modal .arco-modal-content {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  inset: 0;
+  display: flex;
+  width: 100%;
+  height: auto !important;
+  min-height: 0;
+  padding: 0 !important;
+  overflow: hidden;
+  background: transparent;
+}
+
+.profile-modal .arco-modal-close-icon {
+  position: absolute;
+  top: 18px;
+  right: 18px;
   z-index: 10;
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #4e5969;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  transition: background 0.15s, color 0.15s;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e5e9f2;
+  border-radius: 8px;
+  color: #5e6475;
+  background: #f7f9fc;
+  box-shadow: none;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
-.profile-modal .arco-modal-close-btn:hover {
-  background: #fff;
+.profile-modal .arco-modal-close-icon:hover {
+  border-color: #c9d5ee;
   color: #165dff;
+  background: #edf3ff;
 }
 
 .profile-modal .profile-scroll {
-  overflow-y: visible;
+  width: 100%;
+  height: 100%;
   max-height: none;
+  overflow-y: visible;
 }
 
-/* ── Profile Modal Layout (sidebar + content) ─────────────────────── */
-.profile-modal .arco-modal-body {
-  padding: 0 !important;
-  display: flex;
-  min-height: 520px;
-  max-height: calc(100vh - 60px);
+.profile-modal .profile-scroll > div {
+  min-height: 100%;
 }
 
 .profile-modal-layout {
   display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .profile-modal-nav {
-  width: 220px;
+  width: 196px;
   flex-shrink: 0;
-  background: rgba(247, 248, 250, 0.5);
-  backdrop-filter: blur(20px);
-  border-right: 1px solid rgba(229, 230, 235, 0.5);
-  padding: 24px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  min-height: 0;
+  padding: 22px 12px;
   overflow-y: auto;
-  border-radius: 28px 0 0 28px;
+  border-right: 1px solid #e5e9f2;
+  background: rgba(247, 249, 252, 0.96);
 }
 
 .profile-modal-nav-header {
-  font-size: 13px;
-  font-weight: 600;
+  padding: 2px 10px 12px;
   color: #86909c;
-  padding: 4px 12px 12px;
-  letter-spacing: 0.03em;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .profile-modal-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
-  padding: 10px 12px;
+  min-height: 44px;
+  padding: 6px 9px;
   border: none;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
   color: #4e5969;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .profile-modal-nav-item:hover {
-  background: #e9ecef;
+  background: #edf1f7;
   color: #1d2129;
 }
 
 .profile-modal-nav-item.active {
-  background: rgba(22, 93, 255, 0.1);
+  background: #eaf1ff;
   color: #165dff;
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(22, 93, 255, 0.15);
+  box-shadow: inset 0 0 0 1px rgba(22, 93, 255, 0.16);
 }
 
 .profile-modal-nav-icon {
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
+  border-radius: 8px;
+  font-size: 17px;
 }
 
 .profile-modal-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
-  padding: 0;
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(20px);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
 }
 
-/* ── Global form input style (rounded rectangle) ────────────────── */
-.arco-input-wrapper,
-.arco-textarea-wrapper {
-  border-radius: 14px !important;
-  background: #f5f7fa !important;
-  border: 1px solid #e5e6eb !important;
-  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-}
-
-.arco-input-wrapper:hover,
-.arco-textarea-wrapper:hover {
-  border-color: #c9cdd4 !important;
-  background: #f0f2f5 !important;
-}
-
-.arco-input-wrapper.arco-input-focus,
-.arco-textarea-wrapper:focus-within {
-  border-color: #165dff !important;
+/* Profile modal form controls use the same restrained geometry as the workspace. */
+.profile-modal-content input.arco-input,
+.profile-modal-content .arco-input-inner-wrapper,
+.profile-modal-content .arco-input-wrapper,
+.profile-modal-content textarea.arco-textarea,
+.profile-modal-content .arco-textarea-wrapper,
+.profile-modal-content .arco-select-view,
+.profile-modal-content .arco-picker,
+.profile-modal-content .arco-input-number {
+  width: 100%;
+  border: 1px solid #dfe3eb !important;
+  border-radius: 10px !important;
   background: #fff !important;
-  box-shadow: 0 0 0 2px rgba(22, 93, 255, 0.1) !important;
+  outline: none !important;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background-color 0.16s ease;
 }
 
-.arco-input {
+.profile-modal-content input.arco-input,
+.profile-modal-content .arco-input-inner-wrapper,
+.profile-modal-content .arco-input-wrapper,
+.profile-modal-content .arco-select-view,
+.profile-modal-content .arco-picker,
+.profile-modal-content .arco-input-number {
+  min-height: 42px;
+}
+
+.profile-modal-content input.arco-input:hover,
+.profile-modal-content .arco-input-inner-wrapper:hover,
+.profile-modal-content .arco-input-wrapper:hover,
+.profile-modal-content textarea.arco-textarea:hover,
+.profile-modal-content .arco-textarea-wrapper:hover,
+.profile-modal-content .arco-select-view:hover,
+.profile-modal-content .arco-picker:not(.arco-picker-disabled):hover,
+.profile-modal-content .arco-input-number:hover {
+  border-color: #b8c2d6 !important;
+  background: #fbfcfe !important;
+}
+
+.profile-modal-content input.arco-input:focus,
+.profile-modal-content .arco-input-inner-wrapper-focus,
+.profile-modal-content .arco-input-wrapper.arco-input-focus,
+.profile-modal-content textarea.arco-textarea:focus,
+.profile-modal-content .arco-textarea-wrapper:focus-within,
+.profile-modal-content .arco-select-view.arco-select-view-focus,
+.profile-modal-content .arco-select.arco-select-focused .arco-select-view,
+.profile-modal-content .arco-picker-focused:not(.arco-picker-disabled),
+.profile-modal-content .arco-input-number:focus-within {
+  border-color: #6f9cff !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Arco inputs with icons render an input inside a focused outer wrapper.
+   Keep all focus decoration on the wrapper to avoid a nested double ring. */
+.profile-modal-content .arco-input-inner-wrapper > input.arco-input,
+.profile-modal-content .arco-input-wrapper > input.arco-input,
+.profile-modal-content .arco-textarea-wrapper > textarea.arco-textarea {
+  min-height: auto;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: color 0.16s ease;
+}
+
+.profile-modal-content .arco-picker input,
+.profile-modal-content .arco-select-view input,
+.profile-modal-content .arco-input-number input {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.profile-modal-content .arco-input-inner-wrapper > input.arco-input:hover,
+.profile-modal-content .arco-input-inner-wrapper > input.arco-input:focus,
+.profile-modal-content .arco-input-wrapper > input.arco-input:hover,
+.profile-modal-content .arco-input-wrapper > input.arco-input:focus,
+.profile-modal-content .arco-textarea-wrapper > textarea.arco-textarea:hover,
+.profile-modal-content .arco-textarea-wrapper > textarea.arco-textarea:focus {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.profile-modal-content .arco-input {
   font-size: 14px;
 }
 
-.arco-input-prefix {
+.profile-modal-content .arco-input-prefix {
   margin-right: 8px;
+  color: #86909c;
 }
 
-.arco-select-view,
-.arco-input-number {
-  border-radius: 14px !important;
-  background: #f5f7fa !important;
-  border: 1px solid #e5e6eb !important;
-}
-
-.arco-select-view:hover,
-.arco-input-number:hover {
-  border-color: #c9cdd4 !important;
-  background: #f0f2f5 !important;
-}
-
-.arco-select-view.arco-select-view-focus,
-.arco-input-number:focus-within {
-  border-color: #165dff !important;
-  background: #fff !important;
-  box-shadow: 0 0 0 2px rgba(22, 93, 255, 0.1) !important;
-}
-
-.arco-input-password .arco-input-wrapper {
-  border-radius: 14px !important;
-}
-
-/* Profile modal tabs */
 .profile-modal-content .arco-tabs-nav-type-rounded .arco-tabs-tab {
-  border-radius: 10px;
-  padding: 6px 16px;
+  padding: 7px 13px;
+  border-radius: 7px;
   font-size: 13px;
 }
 
 .profile-modal-content .arco-tabs-nav-type-rounded .arco-tabs-tab-active {
-  background: #e8f0fe;
+  background: #edf3ff;
   color: #165dff;
   font-weight: 600;
 }
 
 .profile-edit-inline {
-  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  padding: 28px 32px 0;
 }
 
 .profile-edit-inline .arco-tabs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   color: #4e5969;
 }
 
+.profile-edit-inline .arco-tabs-header-scroll {
+  scrollbar-width: none;
+}
+
+.profile-edit-inline .arco-tabs-header-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .profile-edit-inline .arco-tabs-nav::before {
-  border-bottom-color: rgba(229, 230, 235, 0.5);
+  border-bottom-color: #edf0f5;
 }
 
 .profile-edit-inline .arco-form-label {
   font-weight: 500;
   color: #1d2129;
+}
+
+.profile-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.profile-resume-avatar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid #e5e9f2;
+  border-radius: 8px;
+  background: #f8faff;
+}
+
+.profile-resume-avatar-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid #d9e2f2;
+  border-radius: 8px;
+  color: #165dff;
+  background: #edf3ff;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.profile-resume-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-resume-avatar-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.profile-resume-avatar-copy strong {
+  color: #1d2129;
+  font-size: 14px;
+}
+
+.profile-resume-avatar-copy span {
+  color: #86909c;
+  font-size: 12px;
+}
+
+.profile-date-with-present,
+.profile-date-range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-date-range-inputs > span {
+  flex-shrink: 0;
+  color: #86909c;
+  font-size: 12px;
+}
+
+.profile-credential-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-top: 12px;
+}
+
+.profile-edit-actions {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 16px -32px 0;
+  padding: 14px 32px;
+  border-top: 1px solid #edf0f5;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+.profile-edit-actions .arco-btn {
+  min-height: 38px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.profile-saved-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #00a870;
+  font-size: 12px;
 }
 
 .profile-modal-content::-webkit-scrollbar {
@@ -6597,4 +6845,85 @@ textarea {
 .profile-modal-content::-webkit-scrollbar-thumb {
   background: rgba(120, 130, 160, 0.25);
   border-radius: 3px;
+}
+
+@media (max-width: 780px) {
+  .profile-modal.arco-modal {
+    top: 12px !important;
+    width: calc(100vw - 24px) !important;
+    height: calc(100vh - 24px);
+    min-height: 0;
+  }
+
+  .profile-modal-layout {
+    flex-direction: column;
+  }
+
+  .profile-modal-nav {
+    width: 100%;
+    flex-direction: row;
+    flex-shrink: 0;
+    gap: 4px;
+    padding: 10px 52px 10px 10px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid #e5e9f2;
+  }
+
+  .profile-modal-nav-header {
+    display: none;
+  }
+
+  .profile-modal-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: 5px 8px;
+  }
+
+  .profile-modal .arco-modal-close-icon {
+    top: 14px;
+    right: 14px;
+  }
+
+  .profile-edit-inline {
+    height: 100%;
+    padding: 24px 20px 0;
+  }
+
+  .profile-resume-avatar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .profile-resume-avatar-copy {
+    min-width: 180px;
+  }
+
+  .profile-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-date-with-present,
+  .profile-date-range-inputs {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profile-date-range-inputs > span {
+    display: none;
+  }
+
+  .profile-edit-actions {
+    margin-right: -20px;
+    margin-left: -20px;
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}
+
+@media (max-width: 560px) {
+  .profile-modal-nav-label {
+    display: none;
+  }
 }

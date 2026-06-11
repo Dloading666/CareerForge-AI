@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from pathlib import Path
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status as http_status
@@ -279,19 +281,28 @@ async def get_active_runs(
 
 
 def _serialize_profile(student) -> dict:
+    age = student.age
+    if student.birth_date:
+        try:
+            born = date.fromisoformat(student.birth_date)
+            today = date.today()
+            age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        except ValueError:
+            pass
     return {
         "id": student.id,
         "account": student.account,
         "email": student.email,
         "name": student.name,
         "gender": student.gender,
-        "age": student.age,
+        "age": age,
         "birth_date": student.birth_date or "",
         "college": student.college,
         "major": student.major,
         "grade": student.grade,
         "phone": student.phone,
         "avatar_url": student.avatar_url,
+        "resume_avatar_url": student.resume_avatar_url,
         "banner_url": student.banner_url,
         "signature": student.signature,
         "personal_advantages": student.personal_advantages,
@@ -322,14 +333,29 @@ def update_student_profile(
         value = update_data["job_search_status"]
         if value is not None and value not in JOB_SEARCH_STATUS_VALUES:
             return error("job_search_status 取值不合法")
+    if "birth_date" in update_data:
+        birth_date = update_data["birth_date"] or ""
+        if birth_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", birth_date):
+            return error("birth_date 格式应为 YYYY-MM-DD")
+        if birth_date:
+            try:
+                date.fromisoformat(birth_date)
+            except ValueError:
+                return error("birth_date 不是有效日期")
     if not update_data:
         return ok(_serialize_profile(student), msg="no fields to update")
     for field, value in update_data.items():
-        if value is None:
-            continue
         if not hasattr(student, field):
             return error(f"不支持的字段：{field}")
         setattr(student, field, value)
+    if "birth_date" in update_data:
+        birth_date = update_data["birth_date"] or ""
+        if birth_date:
+            born = date.fromisoformat(birth_date)
+            today = date.today()
+            student.age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        else:
+            student.age = None
     db.commit()
     db.refresh(student)
     return ok(_serialize_profile(student))
@@ -357,6 +383,31 @@ async def upload_avatar(
     student.avatar_url = f"/static/avatars/{filename}"
     db.commit()
     return ok({"avatar_url": student.avatar_url})
+
+
+@router.post("/profile/resume-avatar")
+async def upload_resume_avatar(
+    file: UploadFile = File(...),
+    current=Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    _, student = current
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return error("unsupported file type")
+    content = await file.read()
+    if len(content) > MAX_AVATAR_SIZE:
+        return error("file too large, max 2MB")
+    if student.resume_avatar_url:
+        old = AVATAR_DIR / Path(student.resume_avatar_url).name
+        if old.exists():
+            old.unlink()
+    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"resume-{uuid.uuid4().hex}{ext}"
+    (AVATAR_DIR / filename).write_bytes(content)
+    student.resume_avatar_url = f"/static/avatars/{filename}"
+    db.commit()
+    return ok({"resume_avatar_url": student.resume_avatar_url})
 
 
 @router.post("/profile/banner")

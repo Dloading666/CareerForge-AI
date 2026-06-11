@@ -28,14 +28,12 @@ export async function listResumes() {
   return apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
 }
 
-export async function createResume(payload?: Partial<ResumeData>) {
+export async function createResume(payload?: Pick<ResumeData, 'templateId'>) {
   const detail = await apiRequest<ResumeDetailEnvelope>('/api/v1/student/resumes', {
     method: 'POST',
     body: JSON.stringify({
-      title: payload?.title,
       templateId: payload?.templateId,
-      visibility: payload?.visibility ?? false,
-      data: payload,
+      visibility: false,
     }),
   })
   return normalizeResume(detail)
