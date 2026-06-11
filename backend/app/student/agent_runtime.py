@@ -86,6 +86,7 @@ class SessionEvidencePool:
         self.source_resume_jsons: list[dict[str, Any]] = []  # [{resume_id, data_json}]
         self.jd_text: Optional[str] = None
         self.jd_keywords: list[str] = []
+        self.gap_keywords: list[str] = []  # JD 分析中标记为 GAP 的关键词
 
     def set_profile(self, profile: dict[str, Any]) -> None:
         self.profile_snapshot = profile
@@ -106,6 +107,8 @@ class SessionEvidencePool:
         self.jd_text = jd_text
         self.jd_keywords = keywords
 
+    def set_gap_keywords(self, gap_keywords: list[str]) -> None:
+        self.gap_keywords = gap_keywords
 
     def collect_evidence_sources(self) -> list[Any]:
         """收集当前证据池中所有可用于事实核验的数据源。"""
@@ -679,6 +682,49 @@ def _check_item_attribution(args: dict[str, Any], evidence_sources: list[Any]) -
                     )
 
     return violations[:20]
+
+
+def _check_gap_violations(args: dict[str, Any], gap_keywords: list[str]) -> list[str]:
+    """检查生成内容是否包含 JD GAP 关键词。
+
+    策略：
+    - 从 args 的 skills/details/description/self_evaluation 中提取关键词
+    - 与 GAP 关键词列表比对
+    - 若命中，返回 violation
+    """
+    if not gap_keywords:
+        return []
+
+    violations: list[str] = []
+
+    # 从生成内容中提取关键词
+    resume_text_parts: list[str] = []
+    for section in ("skills", "self_evaluation"):
+        val = args.get(section)
+        if val:
+            resume_text_parts.append(str(val))
+
+    for section in ("education", "experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("details", "description"):
+                val = item.get(key)
+                if val:
+                    resume_text_parts.append(str(val))
+
+    resume_text = " ".join(resume_text_parts).lower()
+
+    # 检查 GAP 关键词是否出现在简历中
+    for keyword in gap_keywords:
+        kw_lower = keyword.lower()
+        if kw_lower in resume_text:
+            violations.append(f"GAP 项「{keyword}」不应出现在简历中（档案中没有相关依据）")
+
+    return violations[:10]
 
 
 # ── JD Coverage Gate ──────────────────────────────────────────────────────────
@@ -1795,6 +1841,15 @@ def _analyze_jd_match_tool(
     # 写入 evidence_pool
     if evidence_pool:
         evidence_pool.set_jd(jd_text_stored, list(p1))
+        # 将 GAP 项存入 evidence_pool，供后续简历生成/优化时拦截
+        gap_items = [
+            item.get("requirement") or item.get("keyword") or item.get("name")
+            for item in matrix
+            if isinstance(item, dict) and item.get("status") == "GAP"
+        ]
+        gap_items = [g for g in gap_items if g]
+        if gap_items:
+            evidence_pool.set_gap_keywords(gap_items)
 
     # 统计匹配状态
     stats = {"SUPPORTED": 0, "PARTIAL": 0, "GAP": 0}
@@ -4795,6 +4850,12 @@ def _generate_resume_data_tool(
     if role_escalation_violations:
         return _fact_guard_failure("generate_resume_data", role_escalation_violations, fact_whitelist)
 
+    # JD GAP 铁律：GAP 项禁止进入简历
+    if evidence_pool and evidence_pool.gap_keywords:
+        gap_violations = _check_gap_violations(args, evidence_pool.gap_keywords)
+        if gap_violations:
+            return _fact_guard_failure("generate_resume_data", gap_violations, fact_whitelist)
+
     # 条目归属校验（shadow mode：只记录不拦截）
     attribution_violations = _check_item_attribution(args, evidence_sources)
     if attribution_violations:
@@ -4937,6 +4998,12 @@ def _optimize_resume_data_tool(
     role_escalation_violations = _check_role_escalation(args, evidence_sources)
     if role_escalation_violations:
         return _fact_guard_failure("optimize_resume_data", role_escalation_violations, fact_whitelist)
+
+    # JD GAP 铁律：GAP 项禁止进入简历
+    if evidence_pool and evidence_pool.gap_keywords:
+        gap_violations = _check_gap_violations(args, evidence_pool.gap_keywords)
+        if gap_violations:
+            return _fact_guard_failure("optimize_resume_data", gap_violations, fact_whitelist)
 
     # 条目归属校验（shadow mode：只记录不拦截）
     attribution_violations = _check_item_attribution(args, evidence_sources)
@@ -5094,6 +5161,12 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
     role_escalation_violations = _check_role_escalation(args, evidence_sources_for_validate)
     if role_escalation_violations:
         return _fact_guard_failure("update_resume_data", role_escalation_violations, fact_whitelist)
+
+    # JD GAP 铁律：GAP 项禁止进入简历
+    if evidence_pool and evidence_pool.gap_keywords:
+        gap_violations = _check_gap_violations(args, evidence_pool.gap_keywords)
+        if gap_violations:
+            return _fact_guard_failure("update_resume_data", gap_violations, fact_whitelist)
 
     # 条目归属校验（shadow mode：只记录不拦截）
     attribution_violations = _check_item_attribution(args, evidence_sources_for_validate)
