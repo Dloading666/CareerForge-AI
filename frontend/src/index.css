@@ -1981,6 +1981,22 @@ textarea {
   box-shadow: 0 16px 28px rgba(22, 93, 255, 0.09);
 }
 
+
+.resume-template-card.is-blank {
+  border-style: dashed;
+  border-color: #165DFF;
+  background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+}
+
+.resume-template-card.is-blank .resume-template-thumb {
+  background: #ffffff;
+}
+
+.resume-template-card.is-blank.active {
+  border-style: solid;
+  box-shadow: 0 0 0 4px rgba(22, 93, 255, 0.12);
+}
+
 .resume-template-thumb {
   height: 260px;
   border-radius: 18px;
