@@ -1,5 +1,7 @@
 import {
   Button,
+  Checkbox,
+  DatePicker,
   Form,
   Input,
   InputNumber,
@@ -43,6 +45,56 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
+
+// 日期字段统一精确到天（YYYY-MM-DD），所有相关输入都使用 DatePicker，
+// DatePicker 自身不允许键盘输入，只能通过面板选择，避免用户手填格式不规范的日期。
+const DAY_FORMAT = 'YYYY-MM-DD'
+const RANGE_SEPARATOR = ' ~ '
+
+function toDate(value: string | null | undefined): Date | undefined {
+  if (!value) return undefined
+  const s = value.trim()
+  if (!s || s === '至今' || s === 'present' || s === 'now') return undefined
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? undefined : d
+}
+
+function formatDay(date: unknown): string {
+  if (!date) return ''
+  let d: Date
+  if (date instanceof Date) {
+    d = date
+  } else if (typeof date === 'string' || typeof date === 'number') {
+    d = new Date(date)
+  } else if (typeof date === 'object' && date !== null && 'toDate' in date && typeof (date as { toDate?: () => Date }).toDate === 'function') {
+    d = (date as { toDate: () => Date }).toDate()
+  } else {
+    return ''
+  }
+  if (isNaN(d.getTime())) return ''
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+}
+
+function isPresentFlag(value: string | null | undefined): boolean {
+  if (!value) return false
+  const v = value.trim()
+  return v === '至今' || v === 'present' || v === 'now'
+}
+
+function joinDateRange(start: string, end: string): string {
+  if (start && end) return start + RANGE_SEPARATOR + end
+  return start || end
+}
+
+function splitDateRange(value: string | null | undefined): [string, string] {
+  if (!value) return ['', '']
+  const v = value.trim()
+  if (!v) return ['', '']
+  const sepIdx = v.indexOf(RANGE_SEPARATOR)
+  if (sepIdx === -1) return [v, '']
+  return [v.slice(0, sepIdx).trim(), v.slice(sepIdx + RANGE_SEPARATOR.length).trim()]
+}
 
 // ---------- Types ----------
 
@@ -1322,7 +1374,12 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                 </FieldRow>
                 <FieldRow label="出生日期">
                   <Form.Item field="birth_date" noStyle>
-                    <Input placeholder="如 2002-09" allowClear />
+                    <DatePicker
+                      format={DAY_FORMAT}
+                      placeholder="请选择出生日期"
+                      allowClear
+                      style={{ width: '100%' }}
+                    />
                   </Form.Item>
                 </FieldRow>
                 <FieldRow label="手机号">
@@ -1469,19 +1526,43 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                           placeholder="如：后端开发实习生"
                         />
                       </FieldRow>
-                      <FieldRow label="开始时间">
-                        <Input
-                          value={item.start_date}
-                          onChange={(v) => update({ ...item, start_date: v })}
-                          placeholder="如 2024-07"
+                      <FieldRow label="开始日期">
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          value={toDate(item.start_date)}
+                          onChange={(_dateString, date) =>
+                            update({ ...item, start_date: formatDay(date) })
+                          }
+                          placeholder="请选择开始日期"
+                          allowClear
+                          style={{ width: '100%' }}
                         />
                       </FieldRow>
-                      <FieldRow label="结束时间">
-                        <Input
-                          value={item.end_date}
-                          onChange={(v) => update({ ...item, end_date: v })}
-                          placeholder="如 2024-09；至今填 至今"
-                        />
+                      <FieldRow label="结束日期">
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <DatePicker
+                            format={DAY_FORMAT}
+                            value={toDate(item.end_date)}
+                            onChange={(_dateString, date) =>
+                              update({ ...item, end_date: formatDay(date) })
+                            }
+                            placeholder="请选择结束日期"
+                            allowClear
+                            disabled={isPresentFlag(item.end_date)}
+                            style={{ flex: 1 }}
+                          />
+                          <Checkbox
+                            checked={isPresentFlag(item.end_date)}
+                            onChange={(checked) =>
+                              update({
+                                ...item,
+                                end_date: checked ? '至今' : '',
+                              })
+                            }
+                          >
+                            至今
+                          </Checkbox>
+                        </div>
                       </FieldRow>
                       <FieldRow label="工作内容与成果" span={2}>
                         <Input.TextArea
@@ -1542,19 +1623,43 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                           placeholder="如：后端开发 / 项目负责人"
                         />
                       </FieldRow>
-                      <FieldRow label="开始时间">
-                        <Input
-                          value={item.start_date}
-                          onChange={(v) => update({ ...item, start_date: v })}
-                          placeholder="如 2024-03"
+                      <FieldRow label="开始日期">
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          value={toDate(item.start_date)}
+                          onChange={(_dateString, date) =>
+                            update({ ...item, start_date: formatDay(date) })
+                          }
+                          placeholder="请选择开始日期"
+                          allowClear
+                          style={{ width: '100%' }}
                         />
                       </FieldRow>
-                      <FieldRow label="结束时间">
-                        <Input
-                          value={item.end_date}
-                          onChange={(v) => update({ ...item, end_date: v })}
-                          placeholder="如 2024-08；至今填 至今"
-                        />
+                      <FieldRow label="结束日期">
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <DatePicker
+                            format={DAY_FORMAT}
+                            value={toDate(item.end_date)}
+                            onChange={(_dateString, date) =>
+                              update({ ...item, end_date: formatDay(date) })
+                            }
+                            placeholder="请选择结束日期"
+                            allowClear
+                            disabled={isPresentFlag(item.end_date)}
+                            style={{ flex: 1 }}
+                          />
+                          <Checkbox
+                            checked={isPresentFlag(item.end_date)}
+                            onChange={(checked) =>
+                              update({
+                                ...item,
+                                end_date: checked ? '至今' : '',
+                              })
+                            }
+                          >
+                            至今
+                          </Checkbox>
+                        </div>
                       </FieldRow>
                       <FieldRow label="项目亮点" span={2}>
                         <Input.TextArea
@@ -1623,12 +1728,51 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                           placeholder="如：本科 / 硕士"
                         />
                       </FieldRow>
-                      <FieldRow label="起止时间">
-                        <Input
-                          value={item.duration}
-                          onChange={(v) => update({ ...item, duration: v })}
-                          placeholder="如 2021-09 - 2025-06"
-                        />
+                      <FieldRow label="起止日期">
+                        {(() => {
+                          const [startStr, endStr] = splitDateRange(item.duration)
+                          const startDate = toDate(startStr)
+                          const endDate = toDate(endStr)
+                          const hasAny = Boolean(startDate) || Boolean(endDate)
+                          const disabled = isPresentFlag(endStr)
+                          return (
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <DatePicker.RangePicker
+                                format={DAY_FORMAT}
+                                value={
+                                  hasAny
+                                    ? ([startDate, endDate].filter(Boolean) as Date[])
+                                    : undefined
+                                }
+                                onChange={(_dateStrings, dates) => {
+                                  const arr = (Array.isArray(dates) ? dates : []) as unknown[]
+                                  const s = formatDay(arr[0])
+                                  const e = formatDay(arr[1])
+                                  update({ ...item, duration: joinDateRange(s, e) })
+                                }}
+                                placeholder={['开始日期', '结束日期']}
+                                allowClear
+                                disabled={disabled}
+                                style={{ flex: 1 }}
+                              />
+                              <Checkbox
+                                checked={isPresentFlag(endStr)}
+                                onChange={(checked) => {
+                                  if (checked) {
+                                    update({
+                                      ...item,
+                                      duration: joinDateRange(startStr, '至今'),
+                                    })
+                                  } else if (isPresentFlag(endStr)) {
+                                    update({ ...item, duration: startStr })
+                                  }
+                                }}
+                              >
+                                至今
+                              </Checkbox>
+                            </div>
+                          )
+                        })()}
                       </FieldRow>
                       <FieldRow label="GPA / 排名 / 亮点" span={2}>
                         <Input.TextArea
@@ -1687,11 +1831,16 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                           placeholder="如：国家级 / 校级 / ACM 区域赛"
                         />
                       </FieldRow>
-                      <FieldRow label="获奖时间">
-                        <Input
-                          value={item.award_date}
-                          onChange={(v) => update({ ...item, award_date: v })}
-                          placeholder="如 2024-10"
+                      <FieldRow label="获奖日期">
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          value={toDate(item.award_date)}
+                          onChange={(_dateString, date) =>
+                            update({ ...item, award_date: formatDay(date) })
+                          }
+                          placeholder="请选择获奖日期"
+                          allowClear
+                          style={{ width: '100%' }}
                         />
                       </FieldRow>
                       <FieldRow label="备注" span={2}>
@@ -1752,19 +1901,28 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
                           placeholder="如：工信部 / PMI"
                         />
                       </FieldRow>
-                      <FieldRow label="获得时间">
-                        <Input
-                          value={item.issue_date}
-                          onChange={(v) => update({ ...item, issue_date: v })}
-                          placeholder="如 2024-05"
+                      <FieldRow label="获得日期">
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          value={toDate(item.issue_date)}
+                          onChange={(_dateString, date) =>
+                            update({ ...item, issue_date: formatDay(date) })
+                          }
+                          placeholder="请选择获得日期"
+                          allowClear
+                          style={{ width: '100%' }}
                         />
                       </FieldRow>
                       <FieldRow label="有效期至">
-                        <Input
-                          value={item.expire_date}
-                          onChange={(v) => update({ ...item, expire_date: v })}
-                          placeholder="如 2027-05；长期有效可不填"
+                        <DatePicker
+                          format={DAY_FORMAT}
+                          value={toDate(item.expire_date)}
+                          onChange={(_dateString, date) =>
+                            update({ ...item, expire_date: formatDay(date) })
+                          }
+                          placeholder="请选择有效期至；长期有效可不填"
                           allowClear
+                          style={{ width: '100%' }}
                         />
                       </FieldRow>
                       <FieldRow label="备注" span={2}>
