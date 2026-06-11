@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     skill_max_content_bytes: int = Field(default=200_000, alias="SKILL_MAX_CONTENT_BYTES")
     agent_upload_storage_dir: str = Field(default="./data/agent_uploads", alias="AGENT_UPLOAD_STORAGE_DIR")
     agent_upload_max_bytes: int = Field(default=20_000_000, alias="AGENT_UPLOAD_MAX_BYTES")
+    interview_knowledge_base_dir: str = Field(
+        default=r"D:\Ai Agent\Knowledge Base",
+        alias="INTERVIEW_KNOWLEDGE_BASE_DIR",
+    )
 
     @property
     def is_development(self) -> bool:

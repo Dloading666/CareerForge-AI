@@ -38,6 +38,8 @@ from app.student.feedback_router import router as feedback_router
 from app.admin.feedback_router import router as admin_feedback_router
 from app.student.attachment_router import router as attachment_router
 from app.student.resume_router import router as resume_router
+from app.interview import models as interview_models  # noqa: F401
+from app.interview.router_student import router as interview_router
 
 AVATAR_DIR = Path("/app/data/avatars")
 BANNER_DIR = Path("/app/data/banners")
@@ -130,6 +132,7 @@ app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 app.include_router(student_profile_details_router, prefix=settings.api_v1_prefix)
 app.include_router(resume_router, prefix=settings.api_v1_prefix)
+app.include_router(interview_router, prefix=settings.api_v1_prefix)
 
 
 # ── Authenticated file download endpoint ──────────────────────────────────────

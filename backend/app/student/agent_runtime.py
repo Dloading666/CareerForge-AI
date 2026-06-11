@@ -25,6 +25,7 @@ from app.admin.models import ModelConfig
 from app.auth.models import StudentUser
 from app.auth.service import AuthIdentity
 from app.core.config import get_settings
+from app.core.llm_client import is_anthropic_model
 from app.skills.service import list_skills, serialize_skill
 from app.student.agent_models import (
     StudentAgentActivity,
@@ -2314,6 +2315,11 @@ async def _stream_llm_turn(
     max_tokens: Optional[int] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """Single streaming turn. Yields ("delta", text) / ("error", msg) / ("final", dict)."""
+    if is_anthropic_model(model):
+        async for item in _stream_anthropic_turn(model, messages, temperature, max_tokens):
+            yield item
+        return
+
     try:
         api_key = decrypt_api_key(model.api_key_cipher or "")
         payload: dict[str, Any] = {
@@ -2402,6 +2408,106 @@ async def _stream_llm_turn(
 
     ordered = [tool_calls_acc[key] for key in sorted(tool_calls_acc.keys())]
     yield "final", {"content": content_acc, "tool_calls": ordered, "finish_reason": finish, "usage": usage}
+
+
+def _anthropic_api_base(model: ModelConfig) -> str:
+    api_base = (model.base_url or "https://api.anthropic.com/v1").rstrip("/")
+    if api_base.endswith("/anthropic"):
+        api_base = f"{api_base}/v1"
+    elif not api_base.endswith("/v1"):
+        api_base = f"{api_base}/v1"
+    return api_base
+
+
+def _anthropic_payload_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, str]]]:
+    system_parts: list[str] = []
+    converted: list[dict[str, str]] = []
+    pending_user_parts: list[str] = []
+    for item in messages:
+        role = item.get("role")
+        content = str(item.get("content") or "")
+        if role == "system":
+            system_parts.append(content)
+        elif role == "assistant":
+            if pending_user_parts:
+                converted.append({"role": "user", "content": "\n".join(pending_user_parts)})
+                pending_user_parts = []
+            if content:
+                converted.append({"role": "assistant", "content": content})
+        elif role == "user":
+            pending_user_parts.append(content)
+        elif role == "tool":
+            pending_user_parts.append(f"Tool result:\n{content}")
+    if pending_user_parts:
+        converted.append({"role": "user", "content": "\n".join(pending_user_parts)})
+    if not converted:
+        converted.append({"role": "user", "content": "请继续。"})
+    return "\n\n".join(system_parts), converted
+
+
+async def _stream_anthropic_turn(
+    model: ModelConfig,
+    messages: list[dict[str, Any]],
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+) -> AsyncIterator[tuple[str, Any]]:
+    try:
+        api_key = decrypt_api_key(model.api_key_cipher or "")
+        system_prompt, payload_messages = _anthropic_payload_messages(messages)
+        payload: dict[str, Any] = {
+            "model": model.model_identifier,
+            "messages": payload_messages,
+            "temperature": temperature if temperature is not None else (
+                model.default_temp if model.default_temp is not None else 0.7
+            ),
+            "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
+            "stream": True,
+        }
+        if system_prompt:
+            payload["system"] = system_prompt
+        content_acc = ""
+        finish: Optional[str] = None
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10, read=model.timeout_sec or 120, write=30, pool=5)
+        ) as client:
+            async with client.stream(
+                "POST",
+                f"{_anthropic_api_base(model)}/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw or raw == "[DONE]":
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = obj.get("type")
+                    if event_type == "content_block_delta":
+                        delta = obj.get("delta") or {}
+                        piece = delta.get("text") or ""
+                        if piece:
+                            content_acc += piece
+                            yield "delta", piece
+                    elif event_type == "message_delta":
+                        delta = obj.get("delta") or {}
+                        finish = delta.get("stop_reason") or finish
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Anthropic stream call failed")
+        yield "error", str(exc)[:300]
+        return
+
+    yield "final", {"content": content_acc, "tool_calls": [], "finish_reason": finish}
 
 
 # ── Harness tool dispatch ───────────────────────────────────────────────────────

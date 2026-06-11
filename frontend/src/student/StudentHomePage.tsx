@@ -23,6 +23,7 @@ import { AgentChatView, type AgentChatSession, type AgentModelOption } from './A
 import { ProfilePage } from './ProfilePage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
 import { ResumeEditorPage } from '../resume/ResumeEditorPage'
+import { AIInterviewerPage } from './AIInterviewerPage'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -145,16 +146,11 @@ export function StudentHomePage() {
 
   // Active session ids (for sidebar highlight)
   const [resumeActiveId, setResumeActiveId] = useState<number | null>(null)
-  const [interviewerActiveId, setInterviewerActiveId] = useState<number | null>(null)
 
   // Triggers for AgentChatView children
   const [resumeLoadTrigger, setResumeLoadTrigger] = useState(0)
   const [resumeSessionToLoad, setResumeSessionToLoad] = useState<AgentChatSession | null>(null)
   const [resumeNewChatTrigger, setResumeNewChatTrigger] = useState(0)
-
-  const [interviewerLoadTrigger, setInterviewerLoadTrigger] = useState(0)
-  const [interviewerSessionToLoad, setInterviewerSessionToLoad] = useState<AgentChatSession | null>(null)
-  const [interviewerNewChatTrigger, setInterviewerNewChatTrigger] = useState(0)
 
   // Today's events / reminders (shared)
   const [todayEvents, setTodayEvents] = useState<{ id: number; title: string; event_time: string | null }[]>([])
@@ -182,13 +178,19 @@ export function StudentHomePage() {
       }
     }
     if (activeNav === 'interviewer') {
-      return { title: 'AI面试官', subtitle: '一对一模拟面试训练，针对性提升面试表现' }
+      return { title: 'AI面试官', subtitle: '开场可以俏皮，面试绝不放水。让每一次回答都经得起追问。' }
     }
     if (activeNav === 'profile') {
       return { title: '个人中心', subtitle: '管理个人资料与账号安全' }
     }
     return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
   }, [activeNav, location.pathname])
+
+  useEffect(() => {
+    if (activeNav === 'interviewer') {
+      setNavCollapsed(true)
+    }
+  }, [activeNav])
 
   const navigateToNav = (key: NavKey) => {
     if (key === 'resume-agent') navigate('/student')
@@ -257,15 +259,12 @@ export function StudentHomePage() {
       setResumeNewChatTrigger((v) => v + 1)
       navigate('/student')
     } else {
-      setInterviewerNewChatTrigger((v) => v + 1)
       navigate('/student/interviewer')
     }
   }
 
   const handleSelectSession = (s: AgentChatSession) => {
     if (s.agent_type === 'interviewer') {
-      setInterviewerSessionToLoad(s)
-      setInterviewerLoadTrigger((v) => v + 1)
       navigate('/student/interviewer')
     } else {
       setResumeSessionToLoad(s)
@@ -279,9 +278,6 @@ export function StudentHomePage() {
       await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
       if (target.agent_type === 'interviewer') {
         setInterviewerSessions((prev) => prev.filter((s) => s.id !== target.id))
-        if (interviewerActiveId === target.id) {
-          setInterviewerNewChatTrigger((v) => v + 1)
-        }
       } else {
         setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
         if (resumeActiveId === target.id) {
@@ -295,14 +291,6 @@ export function StudentHomePage() {
 
   const handleResumeSessionUpdated = useCallback((s: AgentChatSession) => {
     setResumeSessions((prev) => {
-      const existing = prev.find((x) => x.id === s.id)
-      const entry: AgentChatSession = { ...s, title: existing?.title || s.title }
-      return [entry, ...prev.filter((x) => x.id !== s.id)]
-    })
-  }, [])
-
-  const handleInterviewerSessionUpdated = useCallback((s: AgentChatSession) => {
-    setInterviewerSessions((prev) => {
       const existing = prev.find((x) => x.id === s.id)
       const entry: AgentChatSession = { ...s, title: existing?.title || s.title }
       return [entry, ...prev.filter((x) => x.id !== s.id)]
@@ -330,6 +318,7 @@ export function StudentHomePage() {
               className="side-nav-item"
               type={activeNav === key ? 'primary' : 'text'}
               icon={icon}
+              title={label}
               onClick={() => navigateToNav(key)}
             >
               {label}
@@ -374,7 +363,7 @@ export function StudentHomePage() {
             </div>
             <SessionHistoryPanel
               sessions={interviewerSessions}
-              currentSessionId={activeNav === 'interviewer' ? interviewerActiveId : null}
+              currentSessionId={null}
               onSelect={handleSelectSession}
               onDelete={handleDeleteSession}
             />
@@ -481,20 +470,7 @@ export function StudentHomePage() {
           />
           <Route
             path="interviewer"
-            element={
-              <AgentChatView
-                agentType="interviewer"
-                modelOptions={modelOptions}
-                loadTrigger={interviewerLoadTrigger}
-                sessionToLoad={interviewerSessionToLoad}
-                newChatTrigger={interviewerNewChatTrigger}
-                onSessionUpdated={handleInterviewerSessionUpdated}
-                onActiveSessionChange={setInterviewerActiveId}
-                todayEvents={todayEvents}
-                remindersDismissed={remindersDismissed}
-                onDismissReminders={() => setRemindersDismissed(true)}
-              />
-            }
+            element={<AIInterviewerPage />}
           />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
