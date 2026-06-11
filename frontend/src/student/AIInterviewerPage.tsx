@@ -1,4 +1,4 @@
-import { Button, Input, InputNumber, Message, Spin, Tag } from '@arco-design/web-react'
+import { Button, Input, InputNumber, Message, Select, Spin, Tag } from '@arco-design/web-react'
 import {
   IconBulb,
   IconCheckCircle,
@@ -17,7 +17,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
-import { NativeMultiSelect, NativeSelect } from '../shared/NativeSelect'
 
 type KnowledgeStatus = {
   root: string
@@ -539,13 +538,17 @@ export function AIInterviewerPage() {
 
         <label className="interview-field">
           <span>大模型</span>
-          <NativeSelect
-            value={selectedModelId ? String(selectedModelId) : ''}
+          <Select
+            value={selectedModelId ? String(selectedModelId) : undefined}
             onChange={(val) => setSelectedModelId(Number(val) || undefined)}
-            options={modelOptions.map((m) => ({ value: String(m.id), label: `${m.display_name} · ${m.model_identifier}` }))}
             placeholder="选择面试官大脑"
             disabled={session?.status === 'active'}
-          />
+            style={{ width: '100%' }}
+          >
+            {modelOptions.map((m) => (
+              <Select.Option key={m.id} value={String(m.id)}>{`${m.display_name} · ${m.model_identifier}`}</Select.Option>
+            ))}
+          </Select>
         </label>
 
         <label className="interview-field">
@@ -624,7 +627,9 @@ export function AIInterviewerPage() {
         <div className="interview-field-row">
           <label className="interview-field">
             <span>面试类型</span>
-            <NativeSelect value={interviewType} onChange={setInterviewType} options={INTERVIEW_TYPE_OPTIONS} disabled={session?.status === 'active'} />
+            <Select value={interviewType} onChange={setInterviewType} disabled={session?.status === 'active'} style={{ width: '100%' }}>
+              {INTERVIEW_TYPE_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
+            </Select>
           </label>
           <label className="interview-field">
             <span>轮次</span>
@@ -643,23 +648,20 @@ export function AIInterviewerPage() {
 
         <label className="interview-field">
           <span>面试风格</span>
-          <NativeSelect
-            value={interviewStyle}
-            onChange={setInterviewStyle}
-            options={[
-              { value: 'strict', label: '严格追问' },
-              { value: 'stress', label: '压力面试' },
-              { value: 'friendly', label: '温和训练' },
-              { value: 'coach', label: '教练式引导' },
-              { value: 'executive', label: '高管式审视' },
-            ]}
-            disabled={session?.status === 'active'}
-          />
+          <Select value={interviewStyle} onChange={setInterviewStyle} disabled={session?.status === 'active'} style={{ width: '100%' }}>
+            <Select.Option value="strict">严格追问</Select.Option>
+            <Select.Option value="stress">压力面试</Select.Option>
+            <Select.Option value="friendly">温和训练</Select.Option>
+            <Select.Option value="coach">教练式引导</Select.Option>
+            <Select.Option value="executive">高管式审视</Select.Option>
+          </Select>
         </label>
 
         <label className="interview-field">
           <span>面试重点（可多选）</span>
-          <NativeMultiSelect value={focusTags} onChange={setFocusTags} options={FOCUS_OPTIONS} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" />
+          <Select mode="multiple" value={focusTags} onChange={setFocusTags} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" style={{ width: '100%' }}>
+            {FOCUS_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
+          </Select>
         </label>
 
         <label className="interview-field">
