@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
+from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.admin.models import ModelConfig
-from app.auth.models import StudentUser
 from app.auth.service import AuthIdentity
 from app.core.llm_client import chat_completion
 from app.interview.knowledge import get_knowledge_index
@@ -21,17 +23,10 @@ from app.interview.prompts import (
     INTERVIEW_SYSTEM_PROMPT,
     INTERVIEW_TYPE_CONFIG,
     REPORT_USER_PROMPT,
+    SCORING_RUBRIC,
     START_USER_PROMPT,
 )
 from app.interview.schemas import InterviewStartRequest
-from app.student.profile_details_models import (
-    StudentCertification,
-    StudentEducation,
-    StudentHonor,
-    StudentProject,
-    StudentSkill,
-    StudentWorkExperience,
-)
 from app.student.resume_models import StudentResume
 
 
@@ -43,6 +38,15 @@ SCORE_KEYS = [
     "job_fit",
     "pressure_handling",
 ]
+
+SCORE_WEIGHTS = {
+    "technical_accuracy": 0.25,
+    "project_evidence": 0.20,
+    "problem_solving": 0.20,
+    "communication": 0.15,
+    "job_fit": 0.15,
+    "pressure_handling": 0.05,
+}
 
 
 def _json_loads(raw: str | None, default):
@@ -60,17 +64,43 @@ def _json_dumps(data: Any) -> str:
 
 def _extract_json(text: str) -> dict[str, Any] | None:
     text = text.strip()
+    # 1. 直接解析
     try:
         return json.loads(text)
     except Exception:
         pass
+    # 2. 剥离 markdown 代码块 ```json ... ``` 或 ``` ... ```
+    fence = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
+    if fence:
+        inner = fence.group(1).strip()
+        try:
+            return json.loads(inner)
+        except Exception:
+            pass
+    # 3. 正则提取最外层 JSON 对象（贪婪）
     match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            pass
+    # 4. 尝试修复截断的 JSON：逐层补全缺失的 } ]
+    for stripped in [text, fence.group(1).strip() if fence else ""]:
+        if not stripped or not stripped.startswith("{"):
+            continue
+        depth = 0
+        for ch in stripped:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+        if depth > 0:
+            candidate = stripped + "}" * depth
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+    return None
 
 
 def _render_template(template: str, values: dict[str, Any]) -> str:
@@ -130,56 +160,85 @@ def knowledge_status() -> dict:
 
 
 def _latest_resume_snapshot(db: Session, identity: AuthIdentity) -> str:
+    # 优先读取「智能体可读取」（visibility=True）的简历
     resume = db.scalar(
         select(StudentResume)
-        .where(StudentResume.student_id == identity.user_id, StudentResume.tenant_id == identity.tenant_id)
-        .order_by(StudentResume.updated_at.desc())
+        .where(
+            StudentResume.student_id == identity.user_id,
+            StudentResume.tenant_id == identity.tenant_id,
+            StudentResume.visibility.is_(True),
+        )
         .limit(1)
     )
+    # 若没有开启可读取，则回退到最新保存的简历
     if not resume:
-        return "学生暂未创建在线简历。面试时需要优先询问项目、技能和求职方向。"
+        resume = db.scalar(
+            select(StudentResume)
+            .where(StudentResume.student_id == identity.user_id, StudentResume.tenant_id == identity.tenant_id)
+            .order_by(StudentResume.updated_at.desc())
+            .limit(1)
+        )
+    if not resume:
+        return "学生暂未在「简历制作」中保存在线简历。面试时需要优先询问项目、技能和求职方向，并降低对简历证据的确信度。"
     return resume.data_json[:8000]
 
 
-def _student_profile_snapshot(db: Session, identity: AuthIdentity) -> str:
-    student = db.get(StudentUser, identity.user_id)
-    if not student:
-        return "未读取到学生基础档案。"
-    fields = [
-        ("姓名", student.name),
-        ("邮箱", student.email),
-        ("学院", student.college),
-        ("专业", student.major),
-        ("年级", student.grade),
-        ("求职状态", student.job_search_status),
-        ("期望岗位", student.expected_position),
-        ("期望城市", student.expected_location),
-        ("个人优势", student.personal_advantages),
-    ]
-    lines = [f"{label}: {value}" for label, value in fields if value]
+def _resume_source_label(source: str) -> str:
+    if source == "upload":
+        return "本次上传简历"
+    return "智能体可读取的在线简历"
 
-    def add_rows(title: str, rows: list[Any], render) -> None:
-        if not rows:
-            return
-        lines.append(f"\n{title}:")
-        for row in rows[:5]:
-            item = render(row)
-            if item:
-                lines.append(f"- {item}")
 
-    common_filter = (
-        lambda model: select(model)
-        .where(model.student_id == identity.user_id, model.tenant_id == identity.tenant_id)
-        .order_by(model.sort_order.asc(), model.id.desc())
-        .limit(5)
-    )
-    add_rows("教育经历", list(db.scalars(common_filter(StudentEducation)).all()), lambda r: " / ".join(x for x in [r.school, r.major, r.degree, r.duration, r.description] if x))
-    add_rows("项目经历", list(db.scalars(common_filter(StudentProject)).all()), lambda r: " / ".join(x for x in [r.name, r.role, r.start_date, r.end_date, r.description] if x))
-    add_rows("实习/工作经历", list(db.scalars(common_filter(StudentWorkExperience)).all()), lambda r: " / ".join(x for x in [r.company, r.position, r.start_date, r.end_date, r.description] if x))
-    add_rows("技能", list(db.scalars(common_filter(StudentSkill)).all()), lambda r: " / ".join(x for x in [r.name, f"{r.level}级" if r.level else None, r.description] if x))
-    add_rows("荣誉", list(db.scalars(common_filter(StudentHonor)).all()), lambda r: " / ".join(x for x in [r.title, r.level, r.award_date, r.description] if x))
-    add_rows("证书", list(db.scalars(common_filter(StudentCertification)).all()), lambda r: " / ".join(x for x in [r.name, r.issuer, r.issue_date, r.description] if x))
-    return "\n".join(lines)[:8000] or "学生档案为空。"
+async def extract_uploaded_resume(upload: UploadFile) -> dict[str, Any]:
+    original_name = upload.filename or "resume"
+    ext = Path(original_name).suffix.lower()
+    if ext not in {".pdf", ".docx", ".txt", ".md"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 PDF、DOCX、TXT、Markdown 简历")
+    content = await upload.read()
+    if len(content) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="简历文件不能超过 8MB")
+    text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(tmp_path))
+            chunks = []
+            for index, page in enumerate(reader.pages[:12], start=1):
+                page_text = (page.extract_text() or "").strip()
+                if page_text:
+                    chunks.append(f"[PDF 第 {index} 页]\n{page_text}")
+            text = "\n\n".join(chunks)
+        elif ext == ".docx":
+            from docx import Document
+
+            doc = Document(str(tmp_path))
+            chunks = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables[:6]:
+                for row in table.rows[:24]:
+                    values = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                    if any(values):
+                        chunks.append(" | ".join(values))
+            text = "\n".join(chunks)
+        else:
+            text = tmp_path.read_text(encoding="utf-8", errors="ignore")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    text = text.strip()[:12000]
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未能从简历中提取到可读文本")
+    return {
+        "filename": original_name,
+        "chars": len(text),
+        "estimated_tokens": max(1, round(len(text) / 1.5)),
+        "extracted_text": text,
+    }
 
 
 def _candidate_chat_models(db: Session, preferred_model_id: int | None = None) -> list[ModelConfig]:
@@ -205,6 +264,7 @@ def _llm_json(
     *,
     temperature: float = 0.35,
     preferred_model_id: int | None = None,
+    max_tokens: int = 2500,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     models = _candidate_chat_models(db, preferred_model_id)
     if not models:
@@ -219,7 +279,7 @@ def _llm_json(
                 memory=[],
                 user_message=user_prompt,
                 temperature=temperature,
-                max_tokens=2500,
+                max_tokens=max_tokens,
             )
             parsed = _extract_json(result["reply"])
             if not parsed:
@@ -248,6 +308,30 @@ def _score_to_100(scores: dict[str, Any]) -> dict[str, float]:
         except Exception:
             val = 3
         normalized[key] = round(max(1, min(5, val)) * 20, 1)
+    return normalized
+
+
+def _weighted_overall(dim_scores: dict[str, Any]) -> float:
+    total = 0.0
+    for key, weight in SCORE_WEIGHTS.items():
+        try:
+            value = float(dim_scores.get(key, 0))
+        except Exception:
+            value = 0
+        total += max(0, min(100, value)) * weight
+    return round(total, 1)
+
+
+def _normalize_report_dimensions(raw: Any, fallback: dict[str, float]) -> dict[str, float]:
+    if not isinstance(raw, dict):
+        return fallback
+    normalized: dict[str, float] = {}
+    for key in SCORE_KEYS:
+        try:
+            value = float(raw.get(key))
+        except Exception:
+            value = fallback.get(key, 60.0)
+        normalized[key] = round(max(0, min(100, value)), 1)
     return normalized
 
 
@@ -285,8 +369,12 @@ def _fallback_followup(answer: str, retrieved: list[dict]) -> dict[str, Any]:
 
 
 def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStartRequest) -> dict:
-    resume_snapshot = _latest_resume_snapshot(db, identity)
-    profile_snapshot = _student_profile_snapshot(db, identity)
+    if payload.resume_source == "upload":
+        resume_snapshot = (payload.uploaded_resume_text or "").strip()[:12000]
+        if not resume_snapshot:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择并上传一份可读取的简历")
+    else:
+        resume_snapshot = _latest_resume_snapshot(db, identity)
     index = get_knowledge_index()
     retrieved = index.search(
         f"{payload.target_role} {payload.job_description or ''} 面试 项目 技术基础",
@@ -295,12 +383,13 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     )
     type_cfg = INTERVIEW_TYPE_CONFIG.get(payload.interview_type, INTERVIEW_TYPE_CONFIG["technical"])
     style_cfg = INTERVIEW_STYLE_CONFIG.get(payload.interview_style, INTERVIEW_STYLE_CONFIG["strict"])
+    resume_source_label = _resume_source_label(payload.resume_source)
     fallback_start = {
-        "resume_brief": "已读取学生档案和最新在线简历，将围绕岗位匹配度、项目证据和技术细节进行验证。",
+        "resume_brief": f"已读取{resume_source_label}，将围绕岗位匹配度、项目证据和关键能力进行验证。",
         "focus_points": ["项目真实性与个人职责", "目标岗位核心技术匹配", "量化结果和复盘能力"],
         "first_question": (
             f"{type_cfg['opening']} 当前风格是「{style_cfg['label']}」。"
-            f"我已经先读取了你的学生档案和最新在线简历。请选一个最能证明你适合「{payload.target_role}」的项目，"
+            f"我已经先读取了{resume_source_label}。请选一个最能证明你适合「{payload.target_role}」的项目，"
             "按背景、你的职责、关键方案、量化结果说清楚。"
         ),
         "knowledge_points": [item["topic"] for item in retrieved[:3]] or ["项目证据", "岗位匹配"],
@@ -314,7 +403,8 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
             "interview_type_rule": type_cfg["focus"],
             "interview_style": style_cfg["label"],
             "interview_style_rule": style_cfg["rule"],
-            "student_profile": profile_snapshot,
+            "focus_tags": "、".join(payload.focus_tags[:8]) or "未指定，按简历和 JD 自适应",
+            "custom_instruction": payload.custom_instruction or "无",
             "resume_summary": resume_snapshot,
             "retrieved_context": json.dumps(retrieved, ensure_ascii=False),
         },
@@ -332,7 +422,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         difficulty=payload.difficulty,
         round_limit=payload.round_limit,
         model_config_id=payload.model_id,
-        resume_snapshot=f"【学生基础档案】\n{profile_snapshot}\n\n【最新在线简历】\n{resume_snapshot}",
+        resume_snapshot=f"【简历来源】{resume_source_label}\n【面试类型】{type_cfg['label']}：{type_cfg['focus']}\n【面试风格】{style_cfg['label']}：{style_cfg['rule']}\n【面试重点】{'、'.join(payload.focus_tags[:8]) or '默认'}\n【用户自定义要求】{payload.custom_instruction or '无'}\n\n【简历内容】\n{resume_snapshot}",
     )
     db.add(session)
     db.flush()
@@ -406,6 +496,8 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
             "interview_type_rule": INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG["technical"])["focus"],
             "interview_style": INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG["strict"])["label"],
             "interview_style_rule": INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG["strict"])["rule"],
+            "focus_tags": "见会话简历上下文",
+            "custom_instruction": "见会话简历上下文",
             "resume_summary": session.resume_snapshot or "未提供",
             "conversation_history": _conversation_history(turns),
             "last_question": current.question,
@@ -478,15 +570,7 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         }
     else:
         dim_scores = {key: 60.0 for key in SCORE_KEYS}
-    overall = round(
-        dim_scores["technical_accuracy"] * 0.25
-        + dim_scores["project_evidence"] * 0.20
-        + dim_scores["problem_solving"] * 0.20
-        + dim_scores["communication"] * 0.15
-        + dim_scores["job_fit"] * 0.15
-        + dim_scores["pressure_handling"] * 0.05,
-        1,
-    )
+    overall = _weighted_overall(dim_scores)
     fallback = {
         "overall_score": overall,
         "dimension_scores": dim_scores,
@@ -499,22 +583,47 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
     prompt = _render_template(
         REPORT_USER_PROMPT,
         {
+            "scoring_rubric": SCORING_RUBRIC,
             "target_role": session.target_role,
             "job_description": session.job_description or "未提供",
+            "resume_snapshot": (session.resume_snapshot or "未提供")[:12000],
             "conversation_history": _conversation_history(turns),
             "turn_scores": json.dumps(scores, ensure_ascii=False),
         },
     )
-    parsed, llm_meta = _llm_json(db, prompt, fallback, temperature=0.25, preferred_model_id=session.model_config_id)
-    comparison = _build_report_comparison(db, identity, session, overall, dim_scores)
+    parsed, llm_meta = _llm_json(
+        db,
+        prompt,
+        fallback,
+        temperature=0.2,
+        preferred_model_id=session.model_config_id,
+        max_tokens=4200,
+    )
+    final_dim_scores = _normalize_report_dimensions(parsed.get("dimension_scores"), dim_scores)
+    try:
+        model_overall = float(parsed.get("overall_score"))
+    except Exception:
+        model_overall = _weighted_overall(final_dim_scores)
+    final_overall = round(max(0, min(100, model_overall)), 1)
+    weighted_overall = _weighted_overall(final_dim_scores)
+    if abs(final_overall - weighted_overall) > 8:
+        final_overall = weighted_overall
+    comparison = _build_report_comparison(db, identity, session, final_overall, final_dim_scores)
+    if comparison is not None:
+        comparison["scoring"] = {
+            "mode": "llm_rubric" if llm_meta.get("used") else "local_fallback",
+            "model": llm_meta.get("model"),
+            "usage": llm_meta.get("usage"),
+            "rubric": "CareerForge technical/behavioral interview rubric",
+        }
     report_text = str(parsed.get("report_text") or fallback["report_text"])
     if not llm_meta.get("used"):
-        report_text += f"\n\n[系统提示] 本次报告使用本地降级评分，因为大模型调用未成功：{llm_meta.get('error')}"
+        report_text += "\n\n本次模型评分服务暂时不可用，系统已按同一套评分 Rubric 做本地兜底；建议模型服务恢复后重新生成报告。"
     report = InterviewReport(
         session_id=session.id,
         student_id=identity.user_id,
-        overall_score=float(parsed.get("overall_score") or overall),
-        dimension_scores_json=_json_dumps(parsed.get("dimension_scores") or dim_scores),
+        overall_score=final_overall,
+        dimension_scores_json=_json_dumps(final_dim_scores),
         strengths_json=_json_dumps(parsed.get("strengths") or fallback["strengths"]),
         weaknesses_json=_json_dumps(parsed.get("weaknesses") or fallback["weaknesses"]),
         suggestions_json=_json_dumps(parsed.get("suggestions") or fallback["suggestions"]),

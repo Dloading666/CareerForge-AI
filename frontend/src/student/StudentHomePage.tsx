@@ -340,7 +340,7 @@ export function StudentHomePage() {
               title={label}
               onClick={() => navigateToNav(key)}
             >
-              {label}
+              {!navCollapsed && label}
             </Button>
           ))}
         </div>

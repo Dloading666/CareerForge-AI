@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.auth.service import require_role
@@ -16,6 +16,7 @@ from app.interview.service import (
     serialize_report,
     start_interview,
     submit_turn,
+    extract_uploaded_resume,
 )
 
 router = APIRouter(prefix="/student/interviews", tags=["student-interviews"])
@@ -29,6 +30,14 @@ def get_knowledge_status(current=Depends(require_role("student"))):
 @router.post("/knowledge/reload")
 def reload_knowledge(current=Depends(require_role("student"))):
     return ok(reload_knowledge_index())
+
+
+@router.post("/resume/extract")
+async def extract_resume(
+    file: UploadFile = File(...),
+    current=Depends(require_role("student")),
+):
+    return ok(await extract_uploaded_resume(file))
 
 
 @router.post("")

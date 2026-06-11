@@ -6,13 +6,18 @@ from pydantic import BaseModel, Field
 
 
 class InterviewStartRequest(BaseModel):
-    target_role: str = Field(default="Java 后端开发工程师", max_length=128)
+    target_role: str = Field(default="", max_length=128)
     job_description: Optional[str] = None
-    interview_type: str = Field(default="technical", max_length=32)
+    interview_type: str = Field(default="technical", max_length=64)
     interview_style: str = Field(default="strict", max_length=32)
     difficulty: str = Field(default="normal", max_length=32)
     round_limit: int = Field(default=8, ge=3, le=20)
     model_id: Optional[int] = None
+    resume_source: str = Field(default="online", max_length=16)
+    uploaded_resume_text: Optional[str] = None
+    focus_tags: list[str] = Field(default_factory=list)
+    interview_pace: str = Field(default="balanced", max_length=24)
+    custom_instruction: Optional[str] = Field(default=None, max_length=800)
 
 
 class InterviewTurnRequest(BaseModel):

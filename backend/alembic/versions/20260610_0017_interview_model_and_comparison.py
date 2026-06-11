@@ -1,11 +1,16 @@
-"""interview model selection and report comparison"""
+"""interview model selection and report comparison
+
+Revision ID: 20260610_0017_interview
+Revises: 20260610_0017
+Create Date: 2026-06-10
+"""
 from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "20260610_0017"
-down_revision = "20260610_0016"
+revision = "20260610_0017_interview"
+down_revision = "20260610_0017"
 branch_labels = None
 depends_on = None
 

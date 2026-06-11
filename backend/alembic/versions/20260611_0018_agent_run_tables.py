@@ -1,14 +1,14 @@
 """add student_agent_run and student_agent_run_event tables
 
 Revision ID: 20260611_0018
-Revises: 20260610_0017
+Revises: 20260610_0017_interview
 Create Date: 2026-06-11
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "20260611_0018"
-down_revision = "20260610_0017"
+down_revision = "20260610_0017_interview"
 branch_labels = None
 depends_on = None
 
