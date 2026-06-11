@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 import anyio
+import difflib
 import httpx
 from fastapi import HTTPException, UploadFile, status
 import re as _re
@@ -249,9 +250,11 @@ def _extract_candidate_facts(args: dict[str, Any]) -> FactWhitelist:
     time_ranges: set[str] = set()
 
     # ── 从结构化字段提取专名（精确匹配，无需 NLP）──
+    # name 字段在 _extract_sections_from_markdown 返回的条目中用作标题 key，
+    # 必须在所有板块中检查，否则 Markdown 路径的"### 清华大学"会逃逸。
     _NOUN_FIELDS_BY_SECTION = {
-        "experience": ("company", "position"),
-        "education": ("school", "major", "degree"),
+        "experience": ("company", "position", "name"),
+        "education": ("school", "major", "degree", "name"),
         "projects": ("name", "role"),
     }
     for section, fields in _NOUN_FIELDS_BY_SECTION.items():
@@ -420,8 +423,8 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
             issues.append({"severity": "warning", "section": "self_evaluation", "issue": f"自我评价 {len(eval_sentences)} 句（建议 2-4 句）"})
 
     # 3. 时间格式一致性
-    # birth_date 不参与：schema 要求它用 YYYY-MM，而经历时间段示例是 YYYY.MM，
-    # 两者格式天然不同，纳入会导致按 schema 输出也报混用
+    # birth_date 仍不参与校验：它是单点日期，格式与经历区间本身不同（主检查范围是 education/experience/projects）。
+    # 经历区间统一以 YYYY-MM-DD 为准（个人信息中完成日期精度改造，2026-06）。
     all_dates: list[str] = []
     for section in ("education", "experience", "projects"):
         items = args.get(section) or []
@@ -444,7 +447,7 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
             for m in _re.finditer(r"\d{4}([.\-/。．])\d{1,2}(?!\d)", d):
                 separators.add(m.group(1))
         if len(separators) > 1:
-            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM 或全角句号），请统一为 YYYY.MM"})
+            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM-DD 或全角句号），请统一为 YYYY-MM-DD"})
 
     # 判定
     errors = [i for i in issues if i["severity"] == "error"]
@@ -672,18 +675,19 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="export_resume_pdf",
         description=(
             "把优化后的简历内容生成一份可下载的 PDF 文件，并返回下载链接。"
-            "仅在你已经基于学生的真实简历（通过 read_resume 读取）完成改写后调用；"
-            "禁止凭空捏造经历来生成简历。"
+            "推荐传入 resume_id（从已保存的在线简历生成），服务端会从已通过校验的数据渲染 PDF，"
+            "无需手动拼 Markdown。也可传入 markdown 兜底（但仍受事实校验约束）。"
         ),
         source="builtin",
         priority=965,
         input_schema={
             "type": "object",
             "properties": {
-                "markdown": {"type": "string", "description": "完整的简历正文，Markdown 格式（标题用 #，要点用 -）。"},
+                "resume_id": {"type": "integer", "description": "在线简历 ID（推荐，从已保存的简历生成 PDF）"},
+                "markdown": {"type": "string", "description": "完整的简历正文，Markdown 格式（仅在无 resume_id 时使用）。"},
                 "filename": {"type": "string", "description": "文件名，可选，例如『张三-后端简历』。"},
             },
-            "required": ["markdown"],
+            "required": [],
         },
         metadata={"kind": "resume", "risk": "low"},
     ),
@@ -741,7 +745,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "email": {"type": "string"},
                         "phone": {"type": "string"},
                         "location": {"type": "string"},
-                        "birth_date": {"type": "string", "description": "格式 YYYY-MM"},
+                        "birth_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2002-09-15）"},
                     },
                 },
                 "education": {
@@ -753,8 +757,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                             "school": {"type": "string"},
                             "major": {"type": "string"},
                             "degree": {"type": "string"},
-                            "start_date": {"type": "string"},
-                            "end_date": {"type": "string"},
+                            "start_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2021-09-01）"},
+                            "end_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2025-06-30），尚未毕业请填“至今”"},
                             "gpa": {"type": "string"},
                             "description": {"type": "string", "description": "每行一个亮点，换行分隔"},
                         },
@@ -768,7 +772,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "company": {"type": "string"},
                             "position": {"type": "string"},
-                            "date": {"type": "string", "description": "时间段，例如 2022.06 - 2024.12"},
+                            "date": {"type": "string", "description": "时间段，例如 2022-06-01 - 2024-12-15，尚未结束请填“至今”"},
                             "details": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -781,7 +785,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "name": {"type": "string"},
                             "role": {"type": "string"},
-                            "date": {"type": "string"},
+                            "date": {"type": "string", "description": "时间段，例如 2024-03-01 - 2024-08-15，尚未结束请填“至今”"},
                             "description": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -1328,6 +1332,52 @@ async def stream_master_reply(
     if not full_content.strip():
         full_content = _configured_fallback_answer(config, content)
         yield dumps_event("message.delta", {"message_id": assistant_message.id, "delta": full_content})
+
+    # ── 防复读护栏：与上一条 assistant 消息比对 ──
+    if full_content.strip():
+        prev_assistant = db.scalars(
+            select(StudentAgentMessage)
+            .where(
+                StudentAgentMessage.session_id == session.id,
+                StudentAgentMessage.role == "assistant",
+                StudentAgentMessage.id < assistant_message.id,
+            )
+            .order_by(StudentAgentMessage.id.desc())
+            .limit(1)
+        ).first()
+        if prev_assistant and prev_assistant.content:
+            ratio = difflib.SequenceMatcher(
+                None, full_content.strip(), prev_assistant.content.strip()
+            ).ratio()
+            if ratio > 0.85:
+                logger.warning(
+                    "防复读护栏触发 session=%s ratio=%.2f，注入纠偏消息重试",
+                    session.id, ratio,
+                )
+                # 注入纠偏 system 消息，要求模型推进
+                correction = (
+                    "你的回复与上一条高度相似（相似度 {:.0%}），用户已提供新信息。"
+                    "请不要重复之前的回复，直接推进下一步操作。"
+                    "若用户已提供 JD，请直接进入简历生成/优化流程；"
+                    "若用户提供了新内容，请基于新内容回应。"
+                ).format(ratio)
+                messages.append({"role": "system", "content": correction})
+                # 清空已输出内容，重新流式生成
+                full_content = ""
+                async for retry_event, retry_data in run_agent_loop(
+                    db, identity, session, user_message, assistant_message,
+                    model, messages, openai_tools, registry, attachments, reasoning_effort,
+                    1,  # 只重试一次
+                    permission_mode, config.temperature, config.max_tokens,
+                ):
+                    if retry_event == "message.delta":
+                        full_content += str(retry_data.get("delta", ""))
+                    elif retry_event == "runtime.completed":
+                        run_metrics = retry_data
+                    yield dumps_event(retry_event, retry_data)
+                if not full_content.strip():
+                    full_content = _configured_fallback_answer(config, content)
+                    yield dumps_event("message.delta", {"message_id": assistant_message.id, "delta": full_content})
 
     assistant_message.content = full_content
     assistant_message.model_name = str(run_metrics.get("model_name") or model.display_name or model.model_identifier)[:128]
@@ -2183,14 +2233,17 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "- 简历相关：给出简历修改建议、或对已有简历进行优化/导出时，必须先调用 read_resume 读取学生的真实简历；"
         "若 read_resume 返回无简历，告知学生并引导其在『简历助手』中新建，绝不虚构内容。\n"
         "- AI 简历制作流程（全新生成，无需 read_resume）：\n"
-        "  1. 立即调用 query_student_profile 读取学生信息；\n"
-        "  2. 回复『已读取您的个人信息，请提供目标岗位的 JD（职位描述）』；\n"
-        "  3. 用户粘贴 JD 后，调用 generate_resume_data 生成结构化简历；\n"
-        "  4. 工具返回 editor_url 时，回复：简历已生成，用 Markdown 链接 [点击查看并编辑简历](editor_url) 呈现。\n"
+        "  ▸ 条件判断——先检查本轮及历史消息中是否已有 JD（含岗位职责/任职要求/招聘内容等）：\n"
+        "    · 若已提供 JD：直接调用 query_student_profile + generate_resume_data 生成简历，\n"
+        "      禁止再次索要 JD，禁止重复输出与历史回复相同的内容。\n"
+        "    · 若未提供 JD：调用 query_student_profile 后回复：『已读取您的个人信息，请提供目标岗位的 JD（职位描述）』。\n"
+        "  ▸ 工具返回 editor_url 时，回复：简历已生成，用 Markdown 链接 [点击查看并编辑简历](editor_url) 呈现。\n"
         "- 简历优化流程：\n"
+        "  ▸ 条件判断——先检查本轮及历史消息中是否已有 JD：\n"
+        "    · 若已提供 JD 且有简历素材（附件/read_resume）：直接进入优化，禁止再次索要 JD。\n"
+        "    · 若未提供 JD：索要 JD 后再继续。\n"
         "  ▸ 若本轮消息已有文档附件（PDF / Word 等），附件内容已在上方「本轮附件」区域展示，\n"
-        "    直接以此为简历素材，无需再调用 read_resume 或 analyze_uploaded_file；\n"
-        "    若学生尚未提供目标岗位 JD，回复：『已读取您上传的简历，请提供目标岗位的 JD（可直接粘贴文本，或发来招聘链接）』。\n"
+        "    直接以此为简历素材，无需再调用 read_resume 或 analyze_uploaded_file。\n"
         "  ▸ 若本轮无附件，调用 read_resume 读取学生的在线简历；若无在线简历，\n"
         "    引导学生『上传简历 PDF 并重新发送，或前往简历制作新建一份在线简历』。\n"
         "  ▸ 获得简历和 JD 后，先调用 analyze_jd_match 提交结构化 JD 分析，再在回复中输出匹配摘要（SUPPORTED/PARTIAL/GAP 各几条），\n"
@@ -2204,7 +2257,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  · ATS 优化：experience/projects 的 details/description 字段和 skills 字段须自然地覆盖 JD 中出现的核心技术关键词；\n"
         "  · 自我评价控制在 2-3 句，重点突出与 JD 最匹配的核心能力，不写泛泛的「认真负责」「吃苦耐劳」；\n"
         "  · 没有具体数字时，用规模描述（「百万级 DAU」「10+ 人跨部门」）替代空洞形容词；\n"
-        "  · 同一份简历中时间格式统一（YYYY.MM 或 YYYY-MM），勿混用。\n"
+        "  · 同一份简历中时间格式统一为 YYYY-MM-DD（如 2022-06-01），勿混用。\n"
         "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），工具返回 editor_url 后用链接呈现。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF。注意 export_resume_pdf 也受事实核验约束，禁止用 export 绕过 optimize 的校验。"
@@ -3396,6 +3449,102 @@ def _date_range(start: Any, end: Any) -> str:
     return start_text or end_text
 
 
+
+def _build_resume_markdown(data: dict[str, Any], student: Optional[Any], title: str) -> str:
+    """从已保存的结构化简历 data_json 渲染 Markdown 文本（用于 export_resume_pdf 的 resume_id 路径）。"""
+    import re as _re_md
+
+    def _strip_html(text: Any) -> str:
+        s = str(text or "")
+        s = _re_md.sub(r"<[^>]+>", "", s)
+        s = s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        return s.strip()
+
+    def _lines_from_rich(text: Any) -> list[str]:
+        stripped = _strip_html(text)
+        return [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+
+    basic = data.get("basic") or {}
+    parts: list[str] = []
+    parts.append("# " + title)
+
+    name = basic.get("name") or ""
+    if name:
+        parts.append("")
+        parts.append("## " + name)
+    for label, key in [("目标职位", "title"), ("邮箱", "email"), ("电话", "phone"), ("地址", "location")]:
+        val = str(basic.get(key) or "").strip()
+        if val:
+            parts.append("- **" + label + "**：" + val)
+
+    skill_lines = _lines_from_rich(data.get("skillContent") or "")
+    if skill_lines:
+        parts.append("")
+        parts.append("## 专业技能")
+        for ln in skill_lines:
+            parts.append("- " + ln)
+
+    for edu in (data.get("education") or []):
+        if edu.get("visible") is False:
+            continue
+        school = edu.get("school") or ""
+        if not school:
+            continue
+        parts.append("")
+        parts.append("## 教育经历")
+        parts.append("### " + school)
+        meta_parts = [v for v in [edu.get("major"), edu.get("degree"), _edu_date_range(edu)] if v]
+        if meta_parts:
+            parts.append(" | ".join(meta_parts))
+        for ln in _lines_from_rich(edu.get("description")):
+            parts.append("- " + ln)
+
+    for exp in (data.get("experience") or []):
+        if exp.get("visible") is False:
+            continue
+        company = exp.get("company") or ""
+        position = exp.get("position") or ""
+        if not company and not position:
+            continue
+        header = " — ".join(v for v in [company, position] if v)
+        date = exp.get("date") or ""
+        parts.append("")
+        parts.append("## 工作经历")
+        parts.append("### " + header)
+        if date:
+            parts.append(date)
+        for ln in _lines_from_rich(exp.get("details")):
+            parts.append("- " + ln)
+
+    for proj in (data.get("projects") or []):
+        if proj.get("visible") is False:
+            continue
+        name_p = proj.get("name") or ""
+        if not name_p:
+            continue
+        role = proj.get("role") or ""
+        parts.append("")
+        parts.append("## 项目经历")
+        parts.append("### " + name_p)
+        if role:
+            parts.append("**角色**：" + role)
+        date = proj.get("date") or ""
+        if date:
+            parts.append(date)
+        for ln in _lines_from_rich(proj.get("description")):
+            parts.append("- " + ln)
+
+    return "\n".join(parts)
+
+
+def _edu_date_range(edu: dict[str, Any]) -> str:
+    start = str(edu.get("startDate") or edu.get("start_date") or "").strip()
+    end = str(edu.get("endDate") or edu.get("end_date") or "").strip()
+    if start and end:
+        return start + " - " + end
+    return start or end
+
+
 def _profile_backed_resume_args(
     db: Session,
     identity: AuthIdentity,
@@ -3591,10 +3740,19 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
     whitelist = _extract_fact_whitelist(evidence_sources)
     candidate = _extract_candidate_facts(args)
 
-    # ── 用户直接提供的基本信息豁免 ──
-    # basic 中的 name/email/phone/location/birth_date 是学生自己告诉 AI 的
-    # 一手信息（对话中说"我叫张三"、"出生日期2001-03"），本身就是合法证据，
-    # 不应要求在档案或历史简历中找到依据。这些字段不属于"编造经历"。
+    # ── 用户直接提供的基本信息豁免（改进：须在证据文本中真实出现）──
+    # basic 中的 name/email/phone/location/birth_date 只有在对话或附件中实际出现过
+    # 才加入白名单，避免模型编造后无条件信任。
+    # 时间字段（birth_date/birthDate）直接匹配时间格式即可，无需子串匹配。
+    _evidence_text_blob = " ".join(
+        str(s) for s in evidence_sources
+        if isinstance(s, str)
+    )
+    # 也把证据 dict 里的文本值拼进去
+    for _src in evidence_sources:
+        if isinstance(_src, dict):
+            _evidence_text_blob += " " + " ".join(str(v) for v in _collect_evidence_values(_src))
+
     basic = args.get("basic") or {}
     if isinstance(basic, dict):
         _BASIC_EXEMPT_KEYS = {"name", "email", "phone", "location", "birth_date", "birthDate"}
@@ -3602,13 +3760,17 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
             val = str(basic.get(key) or "").strip()
             if not val:
                 continue
-            # 将 basic 字段值加入白名单，避免被校验拦截
-            whitelist.proper_nouns.add(val)
-            # 同时匹配时间格式（如 birth_date = "2001-03"）
-            for m in _TIME_RANGE_RE.finditer(val):
-                whitelist.time_ranges.add(m.group().strip())
-            for m in _SINGLE_DATE_RE.findall(val):
-                whitelist.time_ranges.add(m)
+            # 时间字段：匹配时间格式即可（birth_date = "2001-03"）
+            if key in ("birth_date", "birthDate"):
+                for m in _TIME_RANGE_RE.finditer(val):
+                    whitelist.time_ranges.add(m.group().strip())
+                for m in _SINGLE_DATE_RE.findall(val):
+                    whitelist.time_ranges.add(m)
+                continue
+            # 身份字段：须在证据文本（对话内容/附件/档案）中真实出现
+            if val in _evidence_text_blob:
+                whitelist.proper_nouns.add(val)
+            # 否则不加入白名单——模型编造的名字/邮箱/电话将被校验拦截
 
     # 归一化白名单用于比对
     norm_nouns = {_norm_token(n) for n in whitelist.proper_nouns}
@@ -3648,6 +3810,22 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
             continue
         violations.append(f"无来源时间段「{tr}」")
 
+    # ── description 自由文本专名 warning（不拦截，回灌提醒模型自查）──
+    _desc_suspicious: list[str] = []
+    for path, raw_value in _fact_values_from_args(args):
+        if ".description" not in path and ".details" not in path:
+            continue
+        # 从 description/details 中提取疑似专名（≥3字中文连续片段，不在白名单中）
+        for m in _re.finditer(r"[一-鿿]{3,8}", raw_value):
+            word = m.group()
+            if _norm_token(word) not in norm_nouns and len(word) >= 4:
+                # 只报常见的疑似学校/公司名模式
+                if any(word.endswith(s) for s in ("大学", "学院", "公司", "集团", "科技", "有限")):
+                    _desc_suspicious.append(word)
+    if _desc_suspicious:
+        # 去重后作为 warning 附加到白名单中（不计入 violations）
+        whitelist._desc_suspicious = list(set(_desc_suspicious))[:10]  # type: ignore[attr-defined]
+
     return violations[:20], whitelist  # 最多报 20 条
 
 
@@ -3685,6 +3863,13 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
             whitelist_hint += f"\n可用时间段：{'、'.join(avail_times)}等 {len(whitelist.time_ranges)} 段。"
         if whitelist_hint:
             whitelist_hint += "\n请确保输出中的专名和时间段在以上白名单内。"
+        # description 中的疑似专名 warning
+        desc_sus = getattr(whitelist, "_desc_suspicious", None)
+        if desc_sus:
+            whitelist_hint += (
+                f"\n⚠️ 以下词出现在经历描述中但不在白名单，请核实是否属实：{'、'.join(desc_sus[:6])}。"
+                f"若属实请补充到档案中，若不属实请删除。"
+            )
 
     return {
         "status": "failed",
@@ -3693,7 +3878,7 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
             f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
             "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
             "禁止换一种说法绕过校验。允许改写表达和措辞，但不允许新增无来源的经历、项目、技术栈或指标。"
-            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY.MM 格式。"
+            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM-DD 格式，不要照抄档案中的全角句号等笔误。"
             + whitelist_hint
         ),
         "display_summary": f"🛡️ 事实核对：发现 {n} 处缺少依据的数据{suffix}，已退回 AI 重写",
@@ -3925,7 +4110,15 @@ def _optimize_resume_data_tool(
             template_id = src_row.template_id or "classic"
         else:
             template_id = "classic"
-    doc = _build_resume_doc(args, student, title, template_id)
+    # 身份字段服务端强制覆盖（与 generate 对齐）：姓名/邮箱/电话以 profile 为准
+    profile = profile_result.get("profile") or {}
+    safe_args = dict(args)
+    basic_in = safe_args.get("basic") or {}
+    for key in ("name", "email", "phone"):
+        if profile.get(key):
+            basic_in[key] = profile[key]
+    safe_args["basic"] = basic_in
+    doc = _build_resume_doc(safe_args, student, title, template_id)
     row = StudentResume(
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
@@ -4021,7 +4214,14 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
     if args.get("basic"):
         basic_in = args["basic"]
         existing_basic = existing.get("basic") or {}
+        # 身份字段服务端强制覆盖：profile 有值时一律用 profile，不信任模型
+        profile_result = _query_student_profile(db, identity)
+        profile = profile_result.get("profile") or {}
         for key, ai_key in [("name", "name"), ("title", "target_position"), ("email", "email"), ("phone", "phone"), ("location", "location"), ("birthDate", "birth_date")]:
+            # 身份字段以 profile 为准
+            if ai_key in ("name", "email", "phone") and profile.get(ai_key):
+                existing_basic[key] = profile[ai_key]
+                continue
             val = basic_in.get(ai_key) or basic_in.get(key)
             if val:
                 existing_basic[key] = val
@@ -4144,13 +4344,33 @@ async def _export_resume_pdf_tool_async(
     attachments: Optional[list[StudentAgentAttachment]] = None,
     evidence_pool: Optional[SessionEvidencePool] = None,
 ) -> dict[str, Any]:
-    """导出简历 PDF（异步版本）：先做事实快速校验，再渲染 PDF。"""
-    markdown = str(args.get("markdown") or args.get("content") or "").strip()
+    """导出简历 PDF（异步版本）：优先从 resume_id 读取已保存的结构化简历渲染 PDF。"""
+    # 优先路径：从已保存的在线简历（已通过结构化校验）渲染
+    resume_id = args.get("resume_id")
+    if resume_id:
+        row = db.scalar(
+            select(StudentResume).where(
+                StudentResume.id == int(resume_id),
+                StudentResume.student_id == identity.user_id,
+                StudentResume.tenant_id == identity.tenant_id,
+            )
+        )
+        if not row:
+            return {"status": "failed", "tool": "export_resume_pdf", "summary": f"简历 ID {resume_id} 不存在或无权限。"}
+        try:
+            resume_data = json.loads(row.data_json or "{}")
+        except Exception:
+            resume_data = {}
+        student = db.get(StudentUser, identity.user_id)
+        markdown = _build_resume_markdown(resume_data, student, row.title)
+    else:
+        markdown = str(args.get("markdown") or args.get("content") or "").strip()
     if not markdown:
-        return {"status": "failed", "tool": "export_resume_pdf", "summary": "导出失败：未提供简历正文（markdown）。"}
+        return {"status": "failed", "tool": "export_resume_pdf", "summary": "导出失败：未提供简历正文（markdown）且未指定 resume_id。"}
 
     # ── 事实快速校验：从 markdown 中提取 hard facts，与证据池比对 ──
-    if evidence_pool:
+    # resume_id 路径跳过校验（保存时已通过结构化校验）
+    if not resume_id and evidence_pool:
         evidence_sources = evidence_pool.collect_evidence_sources()
         if evidence_sources:
             violations, fact_whitelist = _validate_resume_facts(

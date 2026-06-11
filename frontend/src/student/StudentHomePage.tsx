@@ -1,17 +1,20 @@
-import { Button, Checkbox, Dropdown, Menu, Modal, Popconfirm, Divider } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Modal, Popconfirm } from '@arco-design/web-react'
 import {
   IconBook,
+  IconBug,
+  IconCalendar,
   IconClose,
   IconDelete,
   IconFile,
   IconHistory,
+  IconInfoCircle,
   IconLoading,
   IconMenuFold,
   IconMenuUnfold,
   IconPlus,
-  IconMore,
   IconPoweroff,
   IconRobot,
+  IconSafe,
   IconUser,
 } from '@arco-design/web-react/icon'
 import type { ReactNode } from 'react'
@@ -24,9 +27,9 @@ import { AnnouncementBellDropdown } from './StudentAnnouncementBar'
 import { chatRuntimeStore } from './chatRuntimeStore'
 import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
 import { ProfilePage } from './ProfilePage'
+import { AIInterviewerPage } from './AIInterviewerPage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
 import { ResumeEditorPage } from '../resume/ResumeEditorPage'
-import { AIInterviewerPage } from './AIInterviewerPage'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -106,11 +109,14 @@ export function StudentHomePage() {
 
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
   const [dontShowAgain, setDontShowAgain] = useState(false)
-  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
+  const [profileModalVisible, setProfileModalVisible] = useState(false)
+  const [profileTab, setProfileTab] = useState('profile')
   const [notice, setNotice] = useState<string | null>(null)
 
-  // Resizable sidebar
-  const [sideNavWidth, setSideNavWidth] = useState(() =>
+  // Resizable module panel (简历助手对话历史栏)
+  const [panelWidth, setPanelWidth] = useState(() =>
     Number(localStorage.getItem('sideNavWidth') || 248),
   )
   const isDraggingRef = useRef(false)
@@ -121,7 +127,7 @@ export function StudentHomePage() {
     e.preventDefault()
     isDraggingRef.current = true
     dragStartXRef.current = e.clientX
-    dragStartWidthRef.current = sideNavWidth
+    dragStartWidthRef.current = panelWidth
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
   }
@@ -136,14 +142,14 @@ export function StudentHomePage() {
       if (!isDraggingRef.current) return
       const delta = e.clientX - dragStartXRef.current
       const next = Math.min(480, Math.max(180, dragStartWidthRef.current + delta))
-      setSideNavWidth(next)
+      setPanelWidth(next)
     }
     const onMouseUp = () => {
       if (!isDraggingRef.current) return
       isDraggingRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      setSideNavWidth((w) => {
+      setPanelWidth((w) => {
         localStorage.setItem('sideNavWidth', String(w))
         return w
       })
@@ -159,11 +165,8 @@ export function StudentHomePage() {
   // Models (shared between both agents)
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([])
 
-  // Session lists (split by agent_type)
+  // 简历助手会话列表（面试官历史由其模块内部管理，不在首页展示）
   const [resumeSessions, setResumeSessions] = useState<AgentChatSession[]>([])
-  const [interviewerSessions, setInterviewerSessions] = useState<AgentChatSession[]>([])
-
-  // Active session ids (for sidebar highlight)
   const [resumeActiveId, setResumeActiveId] = useState<number | null>(null)
 
   // Triggers for AgentChatView children
@@ -177,16 +180,14 @@ export function StudentHomePage() {
 
   const activeNav = useMemo<NavKey>(() => {
     if (location.pathname.startsWith('/student/resumes')) return 'resume'
-    if (location.pathname.startsWith('/student/profile')) return 'profile'
     if (location.pathname.startsWith('/student/interviewer')) return 'interviewer'
     return 'resume-agent'
   }, [location.pathname])
 
-  const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
-    { key: 'resume-agent', icon: <IconRobot />, label: 'AI简历助手' },
-    { key: 'interviewer', icon: <IconBook />, label: 'AI面试官' },
+  const railItems: { key: NavKey; icon: ReactNode; label: string }[] = [
+    { key: 'resume-agent', icon: <IconRobot />, label: '简历助手' },
+    { key: 'interviewer', icon: <IconBook />, label: '面试官' },
     { key: 'resume', icon: <IconFile />, label: '简历制作' },
-    { key: 'profile', icon: <IconUser />, label: '个人中心' },
   ]
 
   const topbarMeta = useMemo(() => {
@@ -197,25 +198,16 @@ export function StudentHomePage() {
       }
     }
     if (activeNav === 'interviewer') {
-      return { title: 'AI面试官', subtitle: '开场可以俏皮，面试绝不放水。让每一次回答都经得起追问。' }
+      return { title: 'AI面试官', subtitle: '一对一模拟面试训练，针对性提升面试表现' }
     }
-    if (activeNav === 'profile') {
-      return { title: '个人中心', subtitle: '管理个人资料与账号安全' }
-    }
-    return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
+return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
   }, [activeNav, location.pathname])
-
-  useEffect(() => {
-    if (activeNav === 'interviewer') {
-      setNavCollapsed(true)
-    }
-  }, [activeNav])
 
   const navigateToNav = (key: NavKey) => {
     if (key === 'resume-agent') navigate('/student')
     else if (key === 'interviewer') navigate('/student/interviewer')
     else if (key === 'resume') navigate('/student/resumes')
-    else navigate('/student/profile')
+    else { setProfileModalVisible(true) }
   }
 
   // Load today's events
@@ -253,7 +245,6 @@ export function StudentHomePage() {
     const timer = window.setTimeout(async () => {
       setNotice(null)
       setResumeSessions([])
-      setInterviewerSessions([])
       try {
         const [list, sessions] = await Promise.all([
           apiRequest<AgentModelOption[]>('/api/v1/student/master/models'),
@@ -263,7 +254,6 @@ export function StudentHomePage() {
         setModelOptions(list)
         if (list.length === 0) setNotice('当前没有可用模型，请管理员先在模型广场开启「对学生开放」。')
         setResumeSessions(sessions.filter((s) => !s.agent_type || s.agent_type === 'resume'))
-        setInterviewerSessions(sessions.filter((s) => s.agent_type === 'interviewer'))
       } catch (error) {
         if (alive) setNotice(error instanceof ApiError ? error.message : '初始化失败')
       }
@@ -273,35 +263,23 @@ export function StudentHomePage() {
 
   // ── Session management callbacks ──
 
-  const handleNewChat = (type: 'resume' | 'interviewer') => {
-    if (type === 'resume') {
-      setResumeNewChatTrigger((v) => v + 1)
-      navigate('/student')
-    } else {
-      navigate('/student/interviewer')
-    }
+  const handleNewResumeChat = () => {
+    setResumeNewChatTrigger((v) => v + 1)
+    navigate('/student')
   }
 
   const handleSelectSession = (s: AgentChatSession) => {
-    if (s.agent_type === 'interviewer') {
-      navigate('/student/interviewer')
-    } else {
-      setResumeSessionToLoad(s)
-      setResumeLoadTrigger((v) => v + 1)
-      navigate('/student')
-    }
+    setResumeSessionToLoad(s)
+    setResumeLoadTrigger((v) => v + 1)
+    navigate('/student')
   }
 
   const handleDeleteSession = async (target: AgentChatSession) => {
     try {
       await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
-      if (target.agent_type === 'interviewer') {
-        setInterviewerSessions((prev) => prev.filter((s) => s.id !== target.id))
-      } else {
-        setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
-        if (resumeActiveId === target.id) {
-          setResumeNewChatTrigger((v) => v + 1)
-        }
+      setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
+      if (resumeActiveId === target.id) {
+        setResumeNewChatTrigger((v) => v + 1)
       }
     } catch {
       setNotice('删除对话失败')
@@ -316,128 +294,124 @@ export function StudentHomePage() {
     })
   }, [])
 
+  const userMenu = (
+    <div className="user-card-menu">
+      <div className="user-card-menu-header">
+        <IconUser className="user-card-menu-avatar-icon" />
+        <span className="user-card-menu-email">{studentEmail}</span>
+      </div>
+      <div className="user-card-menu-divider" />
+      <button type="button" className="user-card-menu-item" onClick={() => setProfileModalVisible(true)}>
+        <IconUser />
+        <span>个人资料</span>
+      </button>
+      <div className="user-card-menu-divider" />
+      <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout} position="tl">
+        <button type="button" className="user-card-menu-item user-card-menu-item--danger">
+          <IconPoweroff />
+          <span>退出登录</span>
+        </button>
+      </Popconfirm>
+    </div>
+  )
+
   return (
     <div className="app-shell student-shell">
-      <aside
-        className={`side-nav${navCollapsed ? ' side-nav--collapsed' : ''}`}
-        style={navCollapsed ? undefined : { width: sideNavWidth }}
-      >
-        <div className="brand-mark">
-          <img className="brand-logo" src="/baidi.png" alt="CareerForge" />
-          <div>
-            <h1>CareerForge</h1>
-            <p>学生端</p>
-          </div>
-        </div>
-
-        <div className="side-nav-menu">
-          {navItems.map(({ key, icon, label }) => (
-            <Button
-              key={key}
-              className="side-nav-item"
-              type={activeNav === key ? 'primary' : 'text'}
-              icon={icon}
-              title={label}
-              onClick={() => navigateToNav(key)}
-            >
-              {!navCollapsed && label}
-            </Button>
-          ))}
-        </div>
-
-        <div className="side-nav-history">
-          {/* AI简历助手 history group */}
-          <div className="side-nav-history-group">
-            <div className="side-nav-history-group-header">
-              <span><IconRobot style={{ fontSize: 12, marginRight: 4 }} />AI简历助手</span>
-              <button
-                type="button"
-                className="side-nav-history-group-new"
-                title="新建简历助手对话"
-                onClick={() => handleNewChat('resume')}
-              >
-                <IconPlus />
-              </button>
+      {/* 第一栏：全局侧边栏导航 */}
+      <nav className={`global-rail${railCollapsed ? ' global-rail--collapsed' : ''}`}>
+        <div className="global-rail-brand">
+          <img
+            className="global-rail-logo"
+            src="/baidi.png"
+            alt="CareerForge"
+            role="button"
+            title={railCollapsed ? '展开侧栏' : '收起侧栏'}
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              const next = !railCollapsed
+              setRailCollapsed(next)
+              localStorage.setItem('railCollapsed', String(next))
+            }}
+          />
+          {!railCollapsed && (
+            <div className="global-rail-brand-text">
+              <span className="global-rail-brand-name">CareerForge</span>
+              <span className="global-rail-brand-sub">学生端</span>
             </div>
+          )}
+        </div>
+
+        <div className="global-rail-menu">
+          {railItems.map(({ key, icon, label }) => (
+            <button
+              key={key}
+              type="button"
+              className={`global-rail-item${activeNav === key ? ' active' : ''}`}
+              onClick={() => navigateToNav(key)}
+              title={label}
+            >
+              <span className="global-rail-item-icon">{icon}</span>
+              {!railCollapsed && <span className="global-rail-item-label">{label}</span>}
+            </button>
+          ))}
+
+        </div>
+
+        <Dropdown trigger="click" position="tl" droplist={userMenu}>
+          <div className="global-rail-user" title={studentName}>
+            <UserAvatar src={studentAvatar} name={studentName} size={railCollapsed ? 32 : 36} />
+            {!railCollapsed && (
+              <div className="global-rail-user-info">
+                <span className="global-rail-user-name">{studentName}</span>
+                <span className="global-rail-user-email">{studentEmail}</span>
+              </div>
+            )}
+          </div>
+        </Dropdown>
+      </nav>
+
+      {/* 第二栏：简历助手的模块面板（新对话 + 历史）。面试官的二栏由其模块自行实现 */}
+      {activeNav === 'resume-agent' && (
+        <aside
+          className={`module-panel${panelCollapsed ? ' module-panel--collapsed' : ''}`}
+          style={panelCollapsed ? undefined : { width: panelWidth }}
+        >
+          <Button
+            type="primary"
+            long
+            icon={<IconPlus />}
+            className="module-panel-new"
+            onClick={handleNewResumeChat}
+          >
+            新对话
+          </Button>
+          <div className="side-nav-history-label">对话历史</div>
+          <div className="module-panel-list">
             <SessionHistoryPanel
               sessions={resumeSessions}
-              currentSessionId={activeNav === 'resume-agent' ? resumeActiveId : null}
+              currentSessionId={resumeActiveId}
               onSelect={handleSelectSession}
               onDelete={handleDeleteSession}
             />
           </div>
-
-          {/* AI面试官 history group */}
-          <div className="side-nav-history-group">
-            <div className="side-nav-history-group-header">
-              <span><IconBook style={{ fontSize: 12, marginRight: 4 }} />AI面试官</span>
-              <button
-                type="button"
-                className="side-nav-history-group-new"
-                title="新建面试对话"
-                onClick={() => handleNewChat('interviewer')}
-              >
-                <IconPlus />
-              </button>
-            </div>
-            <SessionHistoryPanel
-              sessions={interviewerSessions}
-              currentSessionId={null}
-              onSelect={handleSelectSession}
-              onDelete={handleDeleteSession}
-            />
-          </div>
-        </div>
-
-        <div className="side-nav-footer">
-          <Dropdown
-            trigger="click"
-            position="br"
-            droplist={
-              <Menu>
-                <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
-                  <IconUser style={{ marginRight: 8 }} />
-                  个人中心
-                </Menu.Item>
-                <Divider style={{ margin: '6px 0' }} />
-                <Menu.Item key="logout" className="logout-menu-item">
-                  <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <IconPoweroff />
-                      退出登录
-                    </span>
-                  </Popconfirm>
-                </Menu.Item>
-              </Menu>
-            }
-          >
-            <div className="side-nav-user-card">
-              <UserAvatar src={studentAvatar} name={studentName} size={32} />
-              <div className="side-nav-user-info">
-                <div className="side-nav-user-name">{studentName}</div>
-                <div className="side-nav-user-email">{studentEmail}</div>
-              </div>
-              <IconMore style={{ marginLeft: 'auto', flexShrink: 0, color: '#86909C' }} />
-            </div>
-          </Dropdown>
-        </div>
-
-        {/* Drag-to-resize handle */}
-        {!navCollapsed && (
-          <div className="side-nav-resize-handle" onMouseDown={handleResizeMouseDown} />
-        )}
-      </aside>
+          {!panelCollapsed && (
+            <div className="side-nav-resize-handle" onMouseDown={handleResizeMouseDown} />
+          )}
+        </aside>
+      )}
 
       <section className="content-panel">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              className="side-nav-toggle-btn"
-              onClick={() => setNavCollapsed((v) => !v)}
-              title={navCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            >
-              {navCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
-            </button>
+            {activeNav === 'resume-agent' && (
+              <button
+                className="side-nav-toggle-btn"
+                onClick={() => setPanelCollapsed((v) => !v)}
+                title={panelCollapsed ? '展开对话历史' : '收起对话历史'}
+              >
+                {panelCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+              </button>
+            )}
             <div className="topbar-title">
               <h2>{topbarMeta.title}</h2>
               <p>{topbarMeta.subtitle}</p>
@@ -457,29 +431,6 @@ export function StudentHomePage() {
               </span>
             )}
             <AnnouncementBellDropdown />
-            <Dropdown
-              trigger="click"
-              position="br"
-              droplist={
-                <Menu>
-                  <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
-                    <IconUser style={{ marginRight: 8 }} />
-                    个人中心
-                  </Menu.Item>
-                  <Divider style={{ margin: '6px 0' }} />
-                  <Menu.Item key="logout" className="logout-menu-item">
-                    <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <IconPoweroff />
-                        退出登录
-                      </span>
-                    </Popconfirm>
-                  </Menu.Item>
-                </Menu>
-              }
-            >
-              <UserAvatar src={studentAvatar} name={studentName} />
-            </Dropdown>
           </div>
         </header>
 
@@ -505,7 +456,7 @@ export function StudentHomePage() {
             path="interviewer"
             element={<AIInterviewerPage />}
           />
-          <Route path="profile" element={<ProfilePage />} />
+
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
           <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
           <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
@@ -554,6 +505,44 @@ export function StudentHomePage() {
           >
             关闭
           </Button>
+        </div>
+      </Modal>
+
+      {/* 个人中心 Modal */}
+      <Modal
+        visible={profileModalVisible}
+        onCancel={() => setProfileModalVisible(false)}
+        footer={null}
+        closable
+        maskClosable
+        className="profile-modal"
+        style={{ top: '5vh', width: 960, height: '90vh', maxWidth: 'calc(100vw - 60px)' }}
+        unmountOnExit
+      >
+        <div className="profile-modal-layout">
+          <div className="profile-modal-nav">
+            <div className="profile-modal-nav-header">设置</div>
+            {[
+              { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
+              { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
+              { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
+              { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '反馈Bug', color: '#ffece8' },
+              { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`profile-modal-nav-item${profileTab === item.key ? ' active' : ''}`}
+                onClick={() => setProfileTab(item.key)}
+              >
+                <span className="profile-modal-nav-icon" style={{ background: item.color, width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="profile-modal-content">
+            <ProfilePage activeTab={profileTab} onTabChange={setProfileTab} />
+          </div>
         </div>
       </Modal>
     </div>
