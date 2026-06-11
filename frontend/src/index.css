@@ -6,16 +6,6 @@
   font-display: swap;
 }
 
-.global-rail-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  object-fit: contain;
-  background: #fff;
-  padding: 4px;
-  box-shadow: 0 10px 30px rgba(22, 93, 255, 0.2);
-}
-
 @font-face {
   font-family: 'Alibaba PuHuiTi';
   src: url('/fonts/AlibabaPuHuiTi-3-85-Bold.ttf') format('truetype');
