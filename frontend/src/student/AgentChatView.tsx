@@ -697,6 +697,19 @@ function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   )
 }
 
+
+/** 缓存的会话状态，用于并行对话切换时保留各会话的 UI 状态 */
+type SavedSessionState = {
+  messages: AgentMessage[]
+  activities: AgentActivity[]
+  generatedFiles: Record<number, GeneratedFile[]>
+  runtimeStatuses: Record<number, RuntimeStatus>
+  runtimeInfo: Record<number, RuntimeInfo>
+  userMessageAttachments: Record<number, AgentAttachment[]>
+  storeSegments: TimelineSegment[]
+  heartbeats: Record<number, { output_chars: number; phase: string }>
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function AgentChatView({
@@ -739,6 +752,7 @@ export function AgentChatView({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  const sessionCache = useRef<Map<number, SavedSessionState>>(new Map())  // 并行对话：缓存各 session 的 UI 状态
   const pendingResumeNavRef = useRef<number | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -784,11 +798,62 @@ export function AgentChatView({
     onActiveSessionChange(agentSession?.id ?? null)
   }, [agentSession?.id, onActiveSessionChange])
 
-  // Load session when loadTrigger increments
+  // ── 并行对话：计算当前 session 是否正在运行 ─────────────────────────────
+  const currentSessionId = agentSession?.id ?? null
+  const isCurrentStreaming = currentSessionId != null ? chatRuntimeStore.isRunning(currentSessionId) : false
+
+  // Load session when loadTrigger increments — 并行对话：切换会话时保留状态、不中断运行
   useEffect(() => {
     if (loadTrigger === 0 || !sessionToLoad) return
-    if (streaming) { abortRef.current?.abort(); chatRuntimeStore.abort() }
+
+    // 1. 保存当前 session 的 UI 状态到缓存（不 abort 正在运行的任务）
+    if (agentSession?.id) {
+      sessionCache.current.set(agentSession.id, {
+        messages,
+        activities,
+        generatedFiles,
+        runtimeStatuses,
+        runtimeInfo,
+        userMessageAttachments,
+        storeSegments,
+        heartbeats,
+      })
+      // 限制缓存大小：最多保留 5 个 session
+      if (sessionCache.current.size > 5) {
+        const oldest = sessionCache.current.keys().next().value
+        if (oldest != null) sessionCache.current.delete(oldest)
+      }
+    }
+
+    // 如果目标就是当前 session，不重复加载
+    if (sessionToLoad.id === agentSession?.id) return
+
     setNotice(null)
+    setPendingAttachments([])
+
+    // 2. 优先从缓存恢复
+    const cached = sessionCache.current.get(sessionToLoad.id)
+    if (cached) {
+      setHistoryLoading(false)
+      // 需要从 API 获取 session 元数据（title 等可能更新了）
+      apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages?limit=0`)
+        .then((history) => { setAgentSession(history.session) })
+        .catch(() => {
+          // 兜底：构造一个最小 session 对象
+          setAgentSession({ id: sessionToLoad.id, title: sessionToLoad.title, status: 'active', agent_type: agentType, created_at: '', updated_at: '' })
+        })
+      setMessages(cached.messages)
+      setActivities(cached.activities)
+      setGeneratedFiles(cached.generatedFiles)
+      setRuntimeStatuses(cached.runtimeStatuses)
+      setRuntimeInfo(cached.runtimeInfo)
+      setUserMessageAttachments(cached.userMessageAttachments)
+      setStoreSegments(cached.storeSegments)
+      setHeartbeats(cached.heartbeats)
+      return
+    }
+
+    // 3. 无缓存 → 正常 API 加载
     setHistoryLoading(true)
     setMessages([])
     setActivities([])
@@ -844,13 +909,20 @@ export function AgentChatView({
   // Reset to new chat when newChatTrigger increments
   useEffect(() => {
     if (newChatTrigger === 0) return
-    if (streaming) { abortRef.current?.abort(); chatRuntimeStore.abort() }
+    // 并行对话：新建对话前保存当前 session 状态（不 abort 正在运行的任务）
+    if (agentSession?.id) {
+      sessionCache.current.set(agentSession.id, {
+        messages, activities, generatedFiles, runtimeStatuses,
+        runtimeInfo, userMessageAttachments, storeSegments, heartbeats,
+      })
+    }
     setAgentSession(null)
     setMessages([])
     setActivities([])
     setRuntimeStatuses({})
     setRuntimeInfo({})
     setHeartbeats({})
+    setStoreSegments([])
     streamStartRef.current = null
     if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setPendingAttachments([])
@@ -907,7 +979,7 @@ export function AgentChatView({
   const submitMessage = async (preset?: string) => {
     const text = (preset ?? inputValue).trim()
     const hasAttachments = pendingAttachments.length > 0
-    if ((!text && !hasAttachments) || streaming) return
+    if ((!text && !hasAttachments) || isCurrentStreaming) return
     const content = text || '请帮我分析上传的附件。'
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
@@ -1121,8 +1193,8 @@ export function AgentChatView({
     const storeState = chatRuntimeStore.getState(sid)
     if (!storeState) return
 
-    // Update streaming flag from store
-    setStreaming(storeState.streaming)
+    // Update streaming flag from store（并行对话：仅跟踪当前 session 的状态）
+    setStreaming(storeState.streaming || false)
 
     // Sync stream start ref
     if (storeState.streamStartMs != null) {

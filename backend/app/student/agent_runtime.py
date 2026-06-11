@@ -82,6 +82,8 @@ class SessionEvidencePool:
         self.read_resume_texts: list[dict[str, str]] = []  # [{source, name, excerpt}]
         self.attachment_texts: list[dict[str, str]] = []   # [{name, text}]
         self.source_resume_jsons: list[dict[str, Any]] = []  # [{resume_id, data_json}]
+        self.jd_text: Optional[str] = None
+        self.jd_keywords: list[str] = []
 
     def set_profile(self, profile: dict[str, Any]) -> None:
         self.profile_snapshot = profile
@@ -97,6 +99,10 @@ class SessionEvidencePool:
 
     def add_source_resume_json(self, resume_id: int, data_json: dict[str, Any]) -> None:
         self.source_resume_jsons.append({"resume_id": resume_id, "data_json": data_json})
+
+    def set_jd(self, jd_text: str, keywords: list[str]) -> None:
+        self.jd_text = jd_text
+        self.jd_keywords = keywords
 
 
     def collect_evidence_sources(self) -> list[Any]:
@@ -453,6 +459,95 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
 
 
 
+
+# ── JD Coverage Gate ──────────────────────────────────────────────────────────
+
+# JD 特征关键词（用于自动识别 JD 文本）
+_JD_HINT_CJK = frozenset({
+    "岗位职责", "任职要求", "职位描述", "学历要求", "工作经验",
+    "技能要求", "岗位要求", "工作职责", "任职资格", "岗位说明",
+})
+
+
+def _extract_keywords_from_text(text: str) -> set[str]:
+    """从文本中提取关键词集合：英文技术词（≥3字符）+ 中文词（≥2字）。"""
+    keywords: set[str] = set()
+    # 英文技术词（≥3 字符，过滤 "hi""we""it" 等短词）
+    for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{2,}", text):
+        word = m.group()
+        keywords.add(word.lower())
+    # 中文词（≥2字的连续中文片段，取高频）
+    for m in _re.finditer(r"[一-鿿]{2,6}", text):
+        keywords.add(m.group())
+    return keywords
+
+
+def _check_jd_coverage(args: dict[str, Any], jd_text: str) -> dict[str, Any]:
+    """确定性 JD 关键词覆盖率检查（纯代码，不依赖 LLM）。
+
+    从 JD 提取技术词和高频中文词，从简历 skills/details/description/self_evaluation
+    中提取同口径关键词，计算覆盖率。
+    """
+    jd_keywords = _extract_keywords_from_text(jd_text)
+    # 过滤掉 JD 中的通用指令词
+    jd_keywords -= _JD_HINT_CJK
+    # 去掉太短的中文词（≤2字且非英文的去掉，减少噪音）
+    jd_keywords = {k for k in jd_keywords if len(k) >= 3 or (len(k) >= 2 and _re.search(r"[A-Za-z]", k))}
+    # 限制数量，取高权重词
+    if len(jd_keywords) > 30:
+        # 保留英文技术词 + 长中文词（优先级更高）
+        en_words = {k for k in jd_keywords if _re.search(r"[A-Za-z]", k)}
+        cn_words = {k for k in jd_keywords if not _re.search(r"[A-Za-z]", k)}
+        # 取全部英文词 + 中文词按长度降序取 top
+        cn_sorted = sorted(cn_words, key=len, reverse=True)
+        jd_keywords = en_words | set(cn_sorted[: max(0, 30 - len(en_words))])
+
+    if not jd_keywords:
+        return {"passed": True, "coverage_ratio": 1.0, "matched": [], "missing": [], "note": "JD 中未提取到有效关键词"}
+
+    # 从简历中提取关键词
+    resume_text_parts: list[str] = []
+    resume_text_parts.append(str(args.get("skills") or ""))
+    resume_text_parts.append(str(args.get("self_evaluation") or ""))
+    for section in ("experience", "projects", "education"):
+        items = args.get(section) or []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    for key in ("details", "description", "position", "company", "school", "name"):
+                        val = item.get(key)
+                        if val:
+                            resume_text_parts.append(str(val))
+
+    resume_text = " ".join(resume_text_parts)
+    resume_keywords = _extract_keywords_from_text(resume_text)
+
+    matched = jd_keywords & resume_keywords
+    missing = jd_keywords - resume_keywords
+    coverage_ratio = len(matched) / len(jd_keywords) if jd_keywords else 1.0
+
+    result: dict[str, Any] = {
+        "passed": coverage_ratio >= 0.15,
+        "coverage_ratio": round(coverage_ratio, 3),
+        "matched": sorted(matched)[:15],
+        "missing": sorted(missing)[:15],
+        "total_jd_keywords": len(jd_keywords),
+        "total_matched": len(matched),
+    }
+
+    if coverage_ratio < 0.15:
+        result["severity"] = "error"
+        result["note"] = f"JD 关键词覆盖率 {coverage_ratio:.0%} 过低，简历未能覆盖岗位核心要求。"
+    elif coverage_ratio < 0.3:
+        result["severity"] = "warning"
+        result["note"] = f"JD 关键词覆盖率 {coverage_ratio:.0%} 偏低，建议补充更多岗位相关关键词。"
+    else:
+        result["severity"] = "ok"
+
+    return result
+
+
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 # Capabilities that can serve OpenAI-compatible chat completions for the master
@@ -720,10 +815,55 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                 "projects": {"type": "array", "items": {"type": "object"}},
                 "skills": {"type": "string"},
                 "self_evaluation": {"type": "string"},
+                "jd_text": {"type": "string", "description": "目标岗位 JD 原文（可选，用于覆盖率校验）"},
             },
             "required": ["title", "basic"],
         },
         metadata={"kind": "resume"},
+    ),
+    ToolDefinition(
+        name="analyze_jd_match",
+        description=(
+            "分析目标岗位 JD 与学生真实档案的匹配度。订制简历前必须先调用。"
+            "提交结构化分析结果：P0/P1 需求分级、证据匹配矩阵（SUPPORTED/PARTIAL/GAP）、"
+            "核心 ATS 关键词。Harness 校验非空且合理后存入会话，供后续 optimize_resume_data 覆盖率检查使用。"
+        ),
+        source="builtin",
+        priority=975,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "jd_text": {
+                    "type": "string",
+                    "description": "原始 JD 文本（完整粘贴，不可摘要）",
+                },
+                "p0_requirements": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "P0 硬性门槛（学历、必须技能等），每条一句话",
+                },
+                "p1_keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "P1 核心 ATS 关键词（技术栈、业务场景、高频词）",
+                },
+                "matrix": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "requirement": {"type": "string"},
+                            "status": {"type": "string", "enum": ["SUPPORTED", "PARTIAL", "GAP"]},
+                            "evidence": {"type": "string"},
+                        },
+                        "required": ["requirement", "status"],
+                    },
+                    "description": "证据匹配矩阵",
+                },
+            },
+            "required": ["jd_text", "p0_requirements", "p1_keywords", "matrix"],
+        },
+        metadata={"kind": "jd_analysis"},
     ),
     ToolDefinition(
         name="update_resume_data",
@@ -1275,6 +1415,106 @@ def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
 
 
 
+
+_JD_FEATURE_WORDS = frozenset({
+    "岗位职责", "任职要求", "职位描述", "学历要求", "工作经验",
+    "技能要求", "岗位要求", "工作职责", "任职资格", "岗位说明",
+    "job description", "requirements", "qualifications", "responsibilities",
+})
+
+
+def _looks_like_jd(text: str) -> bool:
+    """启发式判断用户消息是否包含 JD（≥200 字 + 2+ 个 JD 特征词）。"""
+    if len(text) < 150:
+        return False
+    text_lower = text.lower()
+    hits = sum(1 for w in _JD_FEATURE_WORDS if w in text_lower)
+    return hits >= 2
+
+
+def _analyze_jd_match_tool(
+    db: Session,
+    session: StudentAgentSession,
+    args: dict[str, Any],
+    evidence_pool: Optional[SessionEvidencePool] = None,
+) -> dict[str, Any]:
+    """analyze_jd_match 工具执行器：校验结构化 JD 分析产物，写入 session 和 evidence_pool。"""
+    jd_text = str(args.get("jd_text") or "").strip()
+    p0 = args.get("p0_requirements") or []
+    p1 = args.get("p1_keywords") or []
+    matrix = args.get("matrix") or []
+
+    # 校验
+    if len(jd_text) < 50:
+        return {
+            "status": "failed",
+            "tool": "analyze_jd_match",
+            "summary": "jd_text 过短（不足 50 字），请提交完整的岗位描述原文。",
+        }
+    if not isinstance(p0, list) or len(p0) == 0:
+        return {
+            "status": "failed",
+            "tool": "analyze_jd_match",
+            "summary": "p0_requirements 不能为空，请至少列出 1 条硬性门槛。",
+        }
+    if not isinstance(p1, list) or len(p1) < 2:
+        return {
+            "status": "failed",
+            "tool": "analyze_jd_match",
+            "summary": "p1_keywords 至少需要 2 个核心关键词。",
+        }
+    if not isinstance(matrix, list) or len(matrix) == 0:
+        return {
+            "status": "failed",
+            "tool": "analyze_jd_match",
+            "summary": "证据匹配矩阵不能为空，请逐项分析 JD 要求与学生档案的匹配状态。",
+        }
+    has_supported = any(
+        isinstance(item, dict) and item.get("status") == "SUPPORTED"
+        for item in matrix
+    )
+    if not has_supported:
+        return {
+            "status": "failed",
+            "tool": "analyze_jd_match",
+            "summary": "证据匹配矩阵中至少需要 1 条 SUPPORTED 状态（学生档案中应有匹配项）。请核实学生档案。",
+        }
+
+    # 写入 session 持久字段
+    jd_text_stored = jd_text[:8000]
+    session.jd_text = jd_text_stored  # type: ignore[attr-defined]
+    session.jd_analyzed_at = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+    db.commit()
+
+    # 写入 evidence_pool
+    if evidence_pool:
+        evidence_pool.set_jd(jd_text_stored, list(p1))
+
+    # 统计匹配状态
+    stats = {"SUPPORTED": 0, "PARTIAL": 0, "GAP": 0}
+    for item in matrix:
+        if isinstance(item, dict):
+            s = item.get("status", "")
+            if s in stats:
+                stats[s] += 1
+
+    return {
+        "status": "completed",
+        "tool": "analyze_jd_match",
+        "summary": (
+            f"JD 分析已完成：P0 硬性门槛 {len(p0)} 条，P1 关键词 {len(p1)} 个，"
+            f"匹配矩阵 {len(matrix)} 项（SUPPORTED {stats['SUPPORTED']} / "
+            f"PARTIAL {stats['PARTIAL']} / GAP {stats['GAP']}）。"
+            f"可继续调用 optimize_resume_data 生成优化版简历。"
+        ),
+        "match_stats": stats,
+        "p0_count": len(p0),
+        "p1_count": len(p1),
+    }
+
+
+
+
 def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
     skill_name = str(tool.metadata.get("name") or tool.name)
     return {
@@ -1787,6 +2027,7 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "generate_resume_data",
     "optimize_resume_data",
     "update_resume_data",
+    "analyze_jd_match",
 )
 
 _BUILTIN_RESUME_SKILL_PATH = (
@@ -1839,20 +2080,35 @@ def _builtin_resume_tailor_skill() -> ToolDefinition:
     )
 
 
-def _resume_skill_prerequisite_failure(name: str, completed_tools: set[str]) -> Optional[dict[str, Any]]:
+def _resume_skill_prerequisite_failure(
+    name: str,
+    completed_tools: set[str],
+    session: Optional[StudentAgentSession] = None,
+) -> Optional[dict[str, Any]]:
     if name not in {"generate_resume_data", "optimize_resume_data", "export_resume_pdf"}:
         return None
-    if _BUILTIN_RESUME_SKILL_NAME in completed_tools:
-        return None
-    return {
-        "status": "failed",
-        "tool": name,
-        "error_code": "resume_tailor_skill_required",
-        "summary": (
-            "Harness 已阻止写入：订制或优化简历前必须先调用「证据约束订制简历」Skill，"
-            "完成事实清单、JD 优先级和证据匹配矩阵后再保存。"
-        ),
-    }
+    if _BUILTIN_RESUME_SKILL_NAME not in completed_tools:
+        return {
+            "status": "failed",
+            "tool": name,
+            "error_code": "resume_tailor_skill_required",
+            "summary": (
+                "Harness 已阻止写入：订制或优化简历前必须先调用「证据约束订制简历」Skill，"
+                "完成事实清单、JD 优先级和证据匹配矩阵后再保存。"
+            ),
+        }
+    # optimize 场景额外要求：必须已提交 JD 分析
+    if name == "optimize_resume_data" and session and not getattr(session, "jd_text", None):
+        return {
+            "status": "failed",
+            "tool": name,
+            "error_code": "jd_analysis_required",
+            "summary": (
+                "Harness 已阻止保存：请先调用 analyze_jd_match 提交目标岗位 JD 的结构化分析"
+                "（P0/P1 需求、证据匹配矩阵），再调用 optimize_resume_data 生成优化版简历。"
+            ),
+        }
+    return None
 
 
 def assemble_active_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
@@ -1922,6 +2178,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "optimize_resume_data、update_resume_data 和 export_resume_pdf 共享同一套事实核验契约——关键实体（公司名、学校名、职位、项目名、时间段、技术栈、数字指标）必须在证据中有据，但允许改写表达、动词、STAR 结构和措辞优化。校验失败后不得换一种说法绕过校验。\n"
         "- 订制 Skill：只要用户提供 JD 或要求『订制/针对岗位/ATS 优化/岗位匹配后改简历』，"
         "必须先调用 skill__evidence_backed_resume_tailor，再按其事实清单、JD 优先级、证据矩阵和保存前自检流程执行；"
+        "然后调用 analyze_jd_match 提交结构化 JD 分析（P0/P1 需求、证据矩阵）；"
         "不得直接跳到 generate_resume_data、optimize_resume_data 或 export_resume_pdf。\n"
         "- 简历相关：给出简历修改建议、或对已有简历进行优化/导出时，必须先调用 read_resume 读取学生的真实简历；"
         "若 read_resume 返回无简历，告知学生并引导其在『简历助手』中新建，绝不虚构内容。\n"
@@ -1936,7 +2193,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "    若学生尚未提供目标岗位 JD，回复：『已读取您上传的简历，请提供目标岗位的 JD（可直接粘贴文本，或发来招聘链接）』。\n"
         "  ▸ 若本轮无附件，调用 read_resume 读取学生的在线简历；若无在线简历，\n"
         "    引导学生『上传简历 PDF 并重新发送，或前往简历制作新建一份在线简历』。\n"
-        "  ▸ 获得简历和 JD 后，先在回复中输出针对 JD 的逐项优化说明（哪些关键词已覆盖/需补充、哪些成就需量化），\n"
+        "  ▸ 获得简历和 JD 后，先调用 analyze_jd_match 提交结构化 JD 分析，再在回复中输出匹配摘要（SUPPORTED/PARTIAL/GAP 各几条），\n"
         "    再调用 optimize_resume_data（title/basic 必填）将优化版本保存到学生的「简历制作」模块；\n"
         "    工具返回 editor_url 后，在回复末尾附上 Markdown 链接：[点击查看并编辑优化后的简历](editor_url)。\n"
         "- 简历写作标准（generate/optimize/update/export 均适用，四者共享同一套事实来源契约）：\n"
@@ -1979,6 +2236,16 @@ def _build_initial_messages(
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _harness_system_prompt(config, reasoning_effort, agent_type)}
     ]
+
+    # JD 持久化注入：绕过历史截断，确保 JD 全文始终在上下文中
+    if getattr(session, "jd_text", None):
+        messages.append({
+            "role": "system",
+            "content": (
+                f"## 学生已提供的目标岗位 JD\n{session.jd_text}\n\n"
+                f"以上是学生提供的完整岗位描述，请据此进行简历优化。"
+            ),
+        })
 
     # 取最近 24 条（desc 后反转为 asc），最后一条即本轮 user 消息，丢弃避免重复。
     history_rows = list(
@@ -2057,6 +2324,14 @@ async def run_agent_loop(
     # Phase 2.3: 将用户消息自动写入证据池（对话内容天然是合法事实来源）
     if user_message.content:
         evidence_pool.add_attachment_text("对话内容", user_message.content)
+    # 恢复 session 持久化的 JD 到 evidence_pool（跨轮复用）
+    if getattr(session, "jd_text", None):
+        evidence_pool.set_jd(session.jd_text, [])
+    # JD 兜底识别：用户消息看起来像 JD 且 session 尚未记录，自动持久化
+    if not getattr(session, "jd_text", None) and user_message.content and _looks_like_jd(user_message.content):
+        session.jd_text = user_message.content[:8000]  # type: ignore[attr-defined]
+        db.commit()
+        logger.info("自动识别 JD 并写入 session=%s（%d 字）", session.id, len(session.jd_text))
     # 工具结果字符预算跟踪（本轮所有工具结果总和）
     tool_result_budget_used = 0
     for iteration in range(max_iterations):
@@ -2215,7 +2490,7 @@ async def run_agent_loop(
                     "error_code": "invalid_tool_arguments",
                 }
             elif decision == "allow":
-                prerequisite_failure = _resume_skill_prerequisite_failure(name, completed_tools)
+                prerequisite_failure = _resume_skill_prerequisite_failure(name, completed_tools, session=session)
                 if prerequisite_failure:
                     result = prerequisite_failure
                 else:
@@ -2590,6 +2865,8 @@ async def _dispatch_tool(
         return _optimize_resume_data_tool(db, identity, args, attachments, evidence_pool)
     if name == "update_resume_data":
         return _update_resume_data_tool(db, identity, args, evidence_pool)
+    if name == "analyze_jd_match":
+        return _analyze_jd_match_tool(db, session, args, evidence_pool)
     return {"status": "failed", "tool": name, "summary": f"工具 {name} 暂未接入执行器。"}
 
 
@@ -2821,31 +3098,10 @@ def _read_resume_tool(
 
     # 2. 本轮上传附件
     for att in attachments:
-        seen_att.add(att.id)
         text = _ensure_attachment_text(db, att)
         if text:
             resumes.append({"source": "本轮上传", "name": att.original_name, "excerpt": text[:12000]})
-
-    # 3. 个人中心 PDF 附件（仅 session_id=0 的简历制作保存附件，排除本轮 export 产出）
-    pdf_rows = list(
-        db.scalars(
-            select(StudentAgentAttachment)
-            .where(
-                StudentAgentAttachment.tenant_id == identity.tenant_id,
-                StudentAgentAttachment.student_id == identity.user_id,
-                StudentAgentAttachment.file_ext == "pdf",
-                StudentAgentAttachment.session_id == 0,  # 仅「简历制作」保存的附件
-            )
-            .order_by(StudentAgentAttachment.created_at.desc())
-            .limit(3)
-        ).all()
-    )
-    for row in pdf_rows:
-        if row.id in seen_att:
-            continue
-        text = _ensure_attachment_text(db, row)
-        if text:
-            resumes.append({"source": "个人中心", "name": row.original_name, "excerpt": text[:8000]})
+    # 注：不再读取历史 PDF 附件（个人中心），简历来源统一为 visibility 控制的在线简历
 
     if not resumes:
         return {
@@ -2854,8 +3110,11 @@ def _read_resume_tool(
             "summary": "未找到简历：学生还没有上传简历，也没有开启『智能体可读取』的在线简历。",
             "resumes": [],
         }
+    # 构建摘要时只显示简历名称，不暴露 resume_id
     names = "、".join(item["name"] for item in resumes[:4])
-    return {"status": "completed", "tool": "read_resume", "summary": f"已读取简历：{names}", "resumes": resumes[:4]}
+    # 清理返回数据：不向模型暴露 resume_id
+    clean_resumes = [{k: v for k, v in r.items() if k != "resume_id"} for r in resumes[:4]]
+    return {"status": "completed", "tool": "read_resume", "summary": f"已读取简历：{names}", "resumes": clean_resumes}
 
 
 _MAX_RESUMES = 6
@@ -3321,7 +3580,7 @@ def _norm_token(s: str) -> str:
     return s.casefold().replace(" ", "").replace("\u3000", "")
 
 
-def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) -> list[str]:
+def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) -> tuple[list[str], FactWhitelist]:
     """事实/表达分离的实体级核验（Phase 1 重构）。
 
     校验策略：
@@ -3389,7 +3648,7 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
             continue
         violations.append(f"无来源时间段「{tr}」")
 
-    return violations[:20]  # 最多报 20 条
+    return violations[:20], whitelist  # 最多报 20 条
 
 
 # Shadow mode 开关：开启时违规只写日志不拦截，用于收集真实误报率。
@@ -3397,7 +3656,7 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
 FACT_GUARD_SHADOW_MODE = False
 
 
-def _fact_guard_failure(tool: str, violations: list[str]) -> dict[str, Any]:
+def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[FactWhitelist] = None) -> dict[str, Any]:
     preview = "；".join(violations[:6])
     if FACT_GUARD_SHADOW_MODE:
         logger.warning("fact_guard shadow_mode violation tool=%s violations=%s", tool, violations[:10])
@@ -3415,6 +3674,18 @@ def _fact_guard_failure(tool: str, violations: list[str]) -> dict[str, Any]:
             examples.append(v[v.index("「")+1:v.index("」")])
     example_text = "、".join(f"「{e}」" for e in examples) if examples else ""
     suffix = f"（如{example_text}等 {n} 处）" if example_text else f"（共 {n} 处）"
+    # 白名单反馈：告诉模型哪些专名和时间段是可用的
+    whitelist_hint = ""
+    if whitelist:
+        avail_nouns = sorted(whitelist.proper_nouns)[:10]
+        avail_times = sorted(whitelist.time_ranges)[:6]
+        if avail_nouns:
+            whitelist_hint += f"\n可用专名：{'、'.join(avail_nouns)}等 {len(whitelist.proper_nouns)} 个。"
+        if avail_times:
+            whitelist_hint += f"\n可用时间段：{'、'.join(avail_times)}等 {len(whitelist.time_ranges)} 段。"
+        if whitelist_hint:
+            whitelist_hint += "\n请确保输出中的专名和时间段在以上白名单内。"
+
     return {
         "status": "failed",
         "tool": tool,
@@ -3422,7 +3693,8 @@ def _fact_guard_failure(tool: str, violations: list[str]) -> dict[str, Any]:
             f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
             "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
             "禁止换一种说法绕过校验。允许改写表达和措辞，但不允许新增无来源的经历、项目、技术栈或指标。"
-            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY.MM 格式，不要照抄档案中的全角句号等笔误。"
+            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY.MM 格式。"
+            + whitelist_hint
         ),
         "display_summary": f"🛡️ 事实核对：发现 {n} 处缺少依据的数据{suffix}，已退回 AI 重写",
         "fact_validation": {"passed": False, "violations": violations[:20]},
@@ -3462,9 +3734,9 @@ def _generate_resume_data_tool(
             evidence_sources.append(source)
 
     # 事实层校验：只检查数字/技术词/专名/时间段是否在证据中
-    violations = _validate_resume_facts(args, evidence_sources)
+    violations, fact_whitelist = _validate_resume_facts(args, evidence_sources)
     if violations:
-        return _fact_guard_failure("generate_resume_data", violations)
+        return _fact_guard_failure("generate_resume_data", violations, fact_whitelist)
 
     # 质量闸门：仅当证据中有经历/项目时才要求章节非空
     _evidence_has_items = any(
@@ -3592,9 +3864,9 @@ def _optimize_resume_data_tool(
     # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
     args = _normalize_literal_escapes(args)
 
-    violations = _validate_resume_facts(args, evidence_sources)
+    violations, fact_whitelist = _validate_resume_facts(args, evidence_sources)
     if violations:
-        return _fact_guard_failure("optimize_resume_data", violations)
+        return _fact_guard_failure("optimize_resume_data", violations, fact_whitelist)
 
     # 质量闸门（与 generate 共享同一套检查）
     _evidence_has_items = any(
@@ -3620,6 +3892,30 @@ def _optimize_resume_data_tool(
         quality_hint = "质量提示：" + "；".join(
             f"{w['section']}: {w['issue']}" for w in quality["warnings"][:3]
         )
+
+    # ── JD 覆盖率闸门 ──
+    jd_text_for_coverage = args.get("jd_text") or (evidence_pool.jd_text if evidence_pool else None)
+    if jd_text_for_coverage:
+        coverage = _check_jd_coverage(args, jd_text_for_coverage)
+        if coverage.get("severity") == "error":
+            missing_preview = "、".join(coverage.get("missing", [])[:8])
+            return {
+                "status": "failed",
+                "tool": "optimize_resume_data",
+                "summary": (
+                    f"JD 关键词覆盖率 {coverage['coverage_ratio']:.0%} 过低（阈值 15%）。"
+                    f"未覆盖关键词：{missing_preview}。"
+                    f"请调整 skills 和经历描述以覆盖岗位核心要求，或在差距分析中明确说明缺口。"
+                ),
+                "display_summary": f"📊 JD 匹配度不足（{coverage['coverage_ratio']:.0%}），AI 正在补充岗位关键词",
+                "jd_coverage": coverage,
+            }
+        if coverage.get("severity") == "warning":
+            missing_preview = "、".join(coverage.get("missing", [])[:5])
+            quality_hint += (
+                f"\nJD 覆盖率提示：关键词覆盖率 {coverage['coverage_ratio']:.0%}（建议 ≥ 30%），"
+                f"未覆盖词：{missing_preview}"
+            )
 
     title = str(args.get("title") or "优化版简历").strip()[:128] or "优化版简历"
     template_id = str(args.get("template_id") or "classic").strip()
@@ -3685,9 +3981,9 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
     # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
     args = _normalize_literal_escapes(args)
 
-    violations = _validate_resume_facts(args, evidence_sources_for_validate)
+    violations, fact_whitelist = _validate_resume_facts(args, evidence_sources_for_validate)
     if violations:
-        return _fact_guard_failure("update_resume_data", violations)
+        return _fact_guard_failure("update_resume_data", violations, fact_whitelist)
 
     # 质量闸门：update 是部分合并工具，args 里缺少的章节会保留原有内容，
     # 不可能出现「清空所有章节」的情况，因此不需要空章节检查。
@@ -3857,14 +4153,14 @@ async def _export_resume_pdf_tool_async(
     if evidence_pool:
         evidence_sources = evidence_pool.collect_evidence_sources()
         if evidence_sources:
-            violations = _validate_resume_facts(
+            violations, fact_whitelist = _validate_resume_facts(
                 {"education": _extract_sections_from_markdown(markdown, "教育"),
                  "experience": _extract_sections_from_markdown(markdown, "经历"),
                  "projects": _extract_sections_from_markdown(markdown, "项目")},
                 evidence_sources,
             )
             if violations:
-                return _fact_guard_failure("export_resume_pdf", violations)
+                return _fact_guard_failure("export_resume_pdf", violations, fact_whitelist)
 
     filename = _safe_pdf_filename(str(args.get("filename") or "优化简历"))
     settings = get_settings()

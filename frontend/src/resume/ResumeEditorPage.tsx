@@ -1,4 +1,4 @@
-import { Button, Modal, Result, Spin, Switch } from '@arco-design/web-react'
+import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
 import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -250,7 +250,9 @@ function ResumeEditorInner() {
 
         <div className="wb-header-right">
           <label className="wb-visibility-row">
-            <span>智能体可读取</span>
+            <Tooltip content="同一时间只能勾选一份简历供 AI 读取，勾选后其他简历将自动取消">
+              <span>智能体可读取</span>
+            </Tooltip>
             <Switch checked={resume.visibility} onChange={setVisibility} size="small" />
           </label>
           <span className="wb-header-divider" />

@@ -35,6 +35,7 @@ class AgentSessionResponse(BaseModel):
     title: str
     status: str
     agent_type: str = "resume"
+    jd_text: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
