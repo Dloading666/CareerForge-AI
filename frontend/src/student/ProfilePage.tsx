@@ -521,7 +521,7 @@ function ListSection<T>({
 
 // ---------- Page ----------
 
-export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string) => void }) {
+export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange }: { onAvatarChange?: (url: string) => void; activeTab?: string; onTabChange?: (tab: string) => void }) {
   const { session } = useAuth()
   const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -551,6 +551,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
   const [basicForm] = Form.useForm()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const bannerInputRef = useRef<HTMLInputElement>(null)
+  const inModal = !!activeTab
 
   // Edit modal state
   const [advantageText, setAdvantageText] = useState('')
@@ -704,7 +705,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       setSkillText('')
     }
     setEditTab('basic')
-    setEditVisible(true)
+    if (!inModal) setEditVisible(true)
   }
 
   const handleSave = async () => {
@@ -803,7 +804,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
     setPwdConfirm('')
     setPwdCountdown(0)
     setPwdCaptcha('')
-    setSecurityVisible(true)
+    if (!inModal) setSecurityVisible(true)
     void loadPwdCaptcha()
   }
 
@@ -955,6 +956,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
       </div>
     )
   }
+
   if (calendarView) return <CalendarPage onBack={() => setCalendarView(false)} />
 
   const avatarUrl = profile?.avatar_url || ''
@@ -970,6 +972,8 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
 
   return (
     <div className="profile-scroll" style={{ width: '100%', position: 'relative' }}>
+      {!inModal && (
+      <>
       <div
         style={{
           position: 'absolute',
@@ -989,7 +993,10 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           zIndex: 1,
         }}
       />
-      <div style={{ position: 'relative', zIndex: 2, padding: '0 28px 40px' }}>
+      </>
+      )}
+      <div style={{ position: 'relative', zIndex: 2, padding: inModal ? '24px 28px 40px' : '0 28px 40px' }}>
+        {!inModal && (
         <div
           style={{
             margin: '20px -28px 24px',
@@ -1182,7 +1189,9 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
             </div>
           </div>
         </div>
+        )}
 
+        {!inModal && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <MenuCard
             icon={<IconUser style={{ fontSize: 26, color: '#165dff' }} />}
@@ -1226,7 +1235,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
             label="反馈Bug"
             desc="提交问题截图和描述，帮助我们改进"
             accentColor="#f53f3f"
-            onClick={() => setFeedbackVisible(true)}
+            onClick={() => { if (!inModal) setFeedbackVisible(true) }}
           />
           <MenuCard
             icon={<IconInfoCircle style={{ fontSize: 26, color: '#ff7d00' }} />}
@@ -1235,12 +1244,179 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
             accentColor="#ff7d00"
           />
         </div>
-      </div>
+        )}
 
-      {/* 账号安全 · 修改登录密码 */}
+        {inModal && activeTab === 'profile' && (
+          <div className="profile-edit-inline">
+            <Tabs activeTab={editTab} onChange={setEditTab} type="rounded" size="small">
+              <Tabs.TabPane key="basic" title={<span><IconUser /> 基本信息</span>}>
+                <Form form={basicForm} layout="vertical" style={{ marginTop: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                    <FieldRow label="姓名" required>
+                      <Form.Item field="name" noStyle><Input placeholder="请输入姓名" allowClear /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="性别">
+                      <Form.Item field="gender" noStyle>
+                        <Radio.Group>
+                          <Radio value="male">男</Radio><Radio value="female">女</Radio><Radio value="other">其他</Radio>
+                        </Radio.Group>
+                      </Form.Item>
+                    </FieldRow>
+                    <FieldRow label="年龄">
+                      <Form.Item field="age" noStyle><InputNumber placeholder="请输入年龄" min={10} max={100} style={{ width: '100%' }} /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="出生日期">
+                      <Form.Item field="birth_date" noStyle><Input placeholder="YYYY-MM-DD" allowClear /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="手机号">
+                      <Form.Item field="phone" noStyle><Input placeholder="请输入手机号" allowClear prefix="📞" /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="学校">
+                      <Form.Item field="college" noStyle><Input placeholder="请输入学校" allowClear prefix="🏫" /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="专业">
+                      <Form.Item field="major" noStyle><Input placeholder="请输入专业" allowClear prefix="📖" /></Form.Item>
+                    </FieldRow>
+                    <FieldRow label="年级">
+                      <Form.Item field="grade" noStyle><Input placeholder="如：2023级" allowClear /></Form.Item>
+                    </FieldRow>
+                  </div>
+                  <Form.Item field="signature" label="个性签名" style={{ marginTop: 8 }}>
+                    <Input.TextArea placeholder="写一句话介绍自己..." maxLength={200} showWordLimit rows={3} />
+                  </Form.Item>
+                </Form>
+              </Tabs.TabPane>
+              <Tabs.TabPane key="advantage" title={<span><IconCommon /> 个人优势与求职期望</span>}>
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#4e5969', marginBottom: 6 }}>个人优势</div>
+                    <Input.TextArea value={advantageText} onChange={setAdvantageText} placeholder="描述你的核心优势和特长..." rows={4} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    <FieldRow label="求职状态">
+                      <Select value={jobStatus} onChange={setJobStatus} placeholder="选择状态" allowClear>
+                        <Select.Option value="looking">正在找工作</Select.Option>
+                        <Select.Option value="open">考虑新机会</Select.Option>
+                        <Select.Option value="not_looking">暂不考虑</Select.Option>
+                      </Select>
+                    </FieldRow>
+                    <FieldRow label="期望岗位"><Input value={expectedPosition} onChange={setExpectedPosition} placeholder="如：前端开发工程师" /></FieldRow>
+                    <FieldRow label="期望薪资"><Input value={expectedSalary} onChange={setExpectedSalary} placeholder="如：15-20K" /></FieldRow>
+                    <FieldRow label="期望城市"><Input value={expectedLocation} onChange={setExpectedLocation} placeholder="如：北京" /></FieldRow>
+                  </div>
+                </div>
+              </Tabs.TabPane>
+            </Tabs>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 0', borderTop: '1px solid #f0f0f0', marginTop: 12 }}>
+              <Button type="primary" loading={saving} onClick={handleSave} style={{ minWidth: 100 }}>
+                {lastSavedAt ? '保存修改' : '保存'}
+              </Button>
+              {lastSavedAt && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#00b42a', marginLeft: 12 }}>
+                  <IconCheck /> 已保存
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {inModal && activeTab === 'calendar' && (
+          <CalendarPage onBack={() => onTabChange?.('profile')} />
+        )}
+
+        {inModal && activeTab === 'security' && (
+          <div style={{ padding: '32px 36px' }}>
+            <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 600, color: '#1d2129' }}>修改登录密码</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 480 }}>
+              <Typography.Text type="secondary">
+                通过绑定邮箱接收验证码，验证后即可设置新的登录密码。
+              </Typography.Text>
+              <Input size="large" value={profile?.email || ''} disabled prefix={<IconSafe />} />
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <Input
+                  size="large"
+                  placeholder="输入图形验证码"
+                  value={pwdCaptcha}
+                  onChange={setPwdCaptcha}
+                  style={{ flex: 1 }}
+                />
+                <img
+                  src={pwdCaptchaImage || undefined}
+                  alt="图形验证码"
+                  title="点击刷新"
+                  onClick={() => void loadPwdCaptcha()}
+                  style={{ height: 40, width: 112, borderRadius: 8, cursor: 'pointer', border: '1px solid #e5e6eb', objectFit: 'cover', flexShrink: 0, background: '#f5f7fc' }}
+                />
+              </div>
+              <Input
+                size="large"
+                placeholder="输入邮箱验证码"
+                value={pwdCode}
+                onChange={setPwdCode}
+                addAfter={
+                  <Button type="text" size="small" loading={sendingPwdCode} disabled={pwdCountdown > 0} onClick={handleSendPwdCode}>
+                    {pwdCountdown > 0 ? `${pwdCountdown}s` : '发送验证码'}
+                  </Button>
+                }
+              />
+              <Input.Password size="large" placeholder="输入新密码" value={pwdNew} onChange={setPwdNew} />
+              <Input.Password size="large" placeholder="再次输入新密码" value={pwdConfirm} onChange={setPwdConfirm} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                密码至少 8 位，且需包含大写字母、小写字母和数字。
+              </Typography.Text>
+              <Button type="primary" size="large" loading={resettingPwd} onClick={handleResetPwd} style={{ width: 160, marginTop: 8 }}>
+                确认修改
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {inModal && activeTab === 'feedback' && (
+          <div style={{ padding: '32px 36px' }}>
+            <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 600, color: '#1d2129' }}>反馈 Bug</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 520 }}>
+              <Select value={feedbackCategory} onChange={setFeedbackCategory} size="large" placeholder="选择分类">
+                <Select.Option value="bug">🐛 Bug 反馈</Select.Option>
+                <Select.Option value="feature">💡 功能建议</Select.Option>
+                <Select.Option value="other">📝 其他</Select.Option>
+              </Select>
+              <Input.TextArea
+                value={feedbackDesc}
+                onChange={setFeedbackDesc}
+                placeholder="请描述你遇到的问题或建议..."
+                rows={5}
+                style={{ fontSize: 14, padding: '10px 14px' }}
+              />
+              <div>
+                <Button size="default" onClick={() => document.querySelector<HTMLInputElement>('.feedback-file-input')?.click()}>
+                  📎 上传截图
+                </Button>
+                <input className="feedback-file-input" type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={(e) => setFeedbackFile(e.target.files?.[0] || null)} />
+                {feedbackFile && <span style={{ marginLeft: 8, fontSize: 13, color: '#86909c' }}>{feedbackFile.name}</span>}
+              </div>
+              <Button type="primary" size="large" loading={submittingFeedback} onClick={submitFeedback} style={{ width: 120 }}>
+                提交
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {inModal && activeTab === 'about' && (
+          <div style={{ padding: '40px 36px', textAlign: 'center' }}>
+            <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" style={{ width: 64, height: 64, margin: '0 auto 16px' }} />
+            <h3 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#1d2129' }}>CareerForge AI</h3>
+            <p style={{ margin: '0 0 24px', fontSize: 14, color: '#86909c' }}>智能辅助简历制作、优化表达与岗位匹配</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', color: '#4e5969', fontSize: 14 }}>
+              <span>注册于 {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('zh-CN') : '-'}</span>
+              <span style={{ color: '#86909c', fontSize: 12 }}>版本 1.0.0</span>
+            </div>
+          </div>
+        )}
+      </div>
       <Modal
         title="账号安全 · 修改登录密码"
-        visible={securityVisible}
+        visible={!inModal && securityVisible}
         onCancel={() => setSecurityVisible(false)}
         onOk={handleResetPwd}
         confirmLoading={resettingPwd}
@@ -1307,8 +1483,6 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           </Typography.Text>
         </div>
       </Modal>
-
-      {/* 编辑个人中心 (8 标签) */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1333,7 +1507,7 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
             )}
           </div>
         }
-        visible={editVisible}
+        visible={!inModal && editVisible}
         onCancel={() => setEditVisible(false)}
         onOk={handleSave}
         confirmLoading={saving}
@@ -1984,8 +2158,6 @@ export function ProfilePage({ onAvatarChange }: { onAvatarChange?: (url: string)
           </Tabs.TabPane>
         </Tabs>
       </Modal>
-
-      {/* 反馈 Bug */}
       <Modal
         title="反馈Bug"
         visible={feedbackVisible}

@@ -1,16 +1,20 @@
-import { Button, Checkbox, Divider, Dropdown, Menu, Modal, Popconfirm } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Modal, Popconfirm } from '@arco-design/web-react'
 import {
   IconBook,
+  IconBug,
+  IconCalendar,
   IconClose,
   IconDelete,
   IconFile,
   IconHistory,
+  IconInfoCircle,
   IconLoading,
   IconMenuFold,
   IconMenuUnfold,
   IconPlus,
   IconPoweroff,
   IconRobot,
+  IconSafe,
   IconUser,
 } from '@arco-design/web-react/icon'
 import type { ReactNode } from 'react'
@@ -105,6 +109,9 @@ export function StudentHomePage() {
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
+  const [profileModalVisible, setProfileModalVisible] = useState(false)
+  const [profileTab, setProfileTab] = useState('profile')
   const [notice, setNotice] = useState<string | null>(null)
 
   // Resizable module panel (简历助手对话历史栏)
@@ -172,7 +179,6 @@ export function StudentHomePage() {
 
   const activeNav = useMemo<NavKey>(() => {
     if (location.pathname.startsWith('/student/resumes')) return 'resume'
-    if (location.pathname.startsWith('/student/profile')) return 'profile'
     if (location.pathname.startsWith('/student/interviewer')) return 'interviewer'
     return 'resume-agent'
   }, [location.pathname])
@@ -193,17 +199,14 @@ export function StudentHomePage() {
     if (activeNav === 'interviewer') {
       return { title: 'AI面试官', subtitle: '一对一模拟面试训练，针对性提升面试表现' }
     }
-    if (activeNav === 'profile') {
-      return { title: '个人中心', subtitle: '管理个人资料与账号安全' }
-    }
-    return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
+return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
   }, [activeNav, location.pathname])
 
   const navigateToNav = (key: NavKey) => {
     if (key === 'resume-agent') navigate('/student')
     else if (key === 'interviewer') navigate('/student/interviewer')
     else if (key === 'resume') navigate('/student/resumes')
-    else navigate('/student/profile')
+    else { setProfileModalVisible(true) }
   }
 
   // Load today's events
@@ -295,35 +298,52 @@ export function StudentHomePage() {
   const noopActiveSessionChange = useCallback(() => {}, [])
 
   const userMenu = (
-    <Menu>
-      <Menu.Item key="who" disabled>
-        <div style={{ lineHeight: 1.5, padding: '2px 0' }}>
-          <div style={{ fontWeight: 600, color: '#1d2129' }}>{studentName}</div>
-          <div style={{ fontSize: 12, color: '#86909c' }}>{studentEmail}</div>
-        </div>
-      </Menu.Item>
-      <Divider style={{ margin: '6px 0' }} />
-      <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
-        <IconUser style={{ marginRight: 8 }} />
-        个人中心
-      </Menu.Item>
-      <Divider style={{ margin: '6px 0' }} />
-      <Menu.Item key="logout" className="logout-menu-item">
-        <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <IconPoweroff />
-            退出登录
-          </span>
-        </Popconfirm>
-      </Menu.Item>
-    </Menu>
+    <div className="user-card-menu">
+      <div className="user-card-menu-header">
+        <IconUser className="user-card-menu-avatar-icon" />
+        <span className="user-card-menu-email">{studentEmail}</span>
+      </div>
+      <div className="user-card-menu-divider" />
+      <button type="button" className="user-card-menu-item" onClick={() => setProfileModalVisible(true)}>
+        <IconUser />
+        <span>个人资料</span>
+      </button>
+      <div className="user-card-menu-divider" />
+      <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout} position="tl">
+        <button type="button" className="user-card-menu-item user-card-menu-item--danger">
+          <IconPoweroff />
+          <span>退出登录</span>
+        </button>
+      </Popconfirm>
+    </div>
   )
 
   return (
     <div className="app-shell student-shell">
-      {/* 第一栏：全局窄图标导航 */}
-      <nav className="global-rail">
-        <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" title="CareerForge 学生端" />
+      {/* 第一栏：全局侧边栏导航 */}
+      <nav className={`global-rail${railCollapsed ? ' global-rail--collapsed' : ''}`}>
+        <div className="global-rail-brand">
+          <img
+            className="global-rail-logo"
+            src="/baidi.png"
+            alt="CareerForge"
+            role="button"
+            title={railCollapsed ? '展开侧栏' : '收起侧栏'}
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              const next = !railCollapsed
+              setRailCollapsed(next)
+              localStorage.setItem('railCollapsed', String(next))
+            }}
+          />
+          {!railCollapsed && (
+            <div className="global-rail-brand-text">
+              <span className="global-rail-brand-name">CareerForge</span>
+              <span className="global-rail-brand-sub">学生端</span>
+            </div>
+          )}
+        </div>
+
         <div className="global-rail-menu">
           {railItems.map(({ key, icon, label }) => (
             <button
@@ -334,18 +354,22 @@ export function StudentHomePage() {
               title={label}
             >
               <span className="global-rail-item-icon">{icon}</span>
-              <span className="global-rail-item-label">{label}</span>
+              {!railCollapsed && <span className="global-rail-item-label">{label}</span>}
             </button>
           ))}
+
         </div>
-        <Dropdown trigger="click" position="br" droplist={userMenu}>
-          <button
-            type="button"
-            className={`global-rail-avatar${activeNav === 'profile' ? ' active' : ''}`}
-            title={studentName}
-          >
-            <UserAvatar src={studentAvatar} name={studentName} size={34} />
-          </button>
+
+        <Dropdown trigger="click" position="tl" droplist={userMenu}>
+          <div className="global-rail-user" title={studentName}>
+            <UserAvatar src={studentAvatar} name={studentName} size={railCollapsed ? 32 : 36} />
+            {!railCollapsed && (
+              <div className="global-rail-user-info">
+                <span className="global-rail-user-name">{studentName}</span>
+                <span className="global-rail-user-email">{studentEmail}</span>
+              </div>
+            )}
+          </div>
         </Dropdown>
       </nav>
 
@@ -448,7 +472,7 @@ export function StudentHomePage() {
               />
             }
           />
-          <Route path="profile" element={<ProfilePage />} />
+
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
           <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
           <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
@@ -497,6 +521,44 @@ export function StudentHomePage() {
           >
             关闭
           </Button>
+        </div>
+      </Modal>
+
+      {/* 个人中心 Modal */}
+      <Modal
+        visible={profileModalVisible}
+        onCancel={() => setProfileModalVisible(false)}
+        footer={null}
+        closable
+        maskClosable
+        className="profile-modal"
+        style={{ top: '5vh', width: 960, height: '90vh', maxWidth: 'calc(100vw - 60px)' }}
+        unmountOnExit
+      >
+        <div className="profile-modal-layout">
+          <div className="profile-modal-nav">
+            <div className="profile-modal-nav-header">设置</div>
+            {[
+              { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
+              { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
+              { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
+              { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '反馈Bug', color: '#ffece8' },
+              { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`profile-modal-nav-item${profileTab === item.key ? ' active' : ''}`}
+                onClick={() => setProfileTab(item.key)}
+              >
+                <span className="profile-modal-nav-icon" style={{ background: item.color, width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="profile-modal-content">
+            <ProfilePage activeTab={profileTab} onTabChange={setProfileTab} />
+          </div>
         </div>
       </Modal>
     </div>
