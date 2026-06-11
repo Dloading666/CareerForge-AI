@@ -48,11 +48,13 @@ class RunHandle:
 # ---------------------------------------------------------------------------
 
 
+MAX_CONCURRENT_RUNS_PER_USER = 4  # 同用户最大并发 run 数（支持多会话并行）
+
 class RunManager:
     """进程内单例：管理后台运行的 agent loop。
 
     每个 session 同时只允许 1 个 running run（并发护栏），
-    每用户最多 2 个并发 run。
+    每用户最多 MAX_CONCURRENT_RUNS_PER_USER 个并发 run（支持同类型多会话并行）。
     """
 
     def __init__(self) -> None:
@@ -78,10 +80,10 @@ class RunManager:
         if session_id in self._session_locks:
             raise HTTPException(status_code=409, detail="当前会话已有运行中的任务")
 
-        # 每用户最多 2 个并发 run
+        # 每用户最多 MAX_CONCURRENT_RUNS_PER_USER 个并发 run
         user_count = self._user_run_counts.get(identity.user_id, 0)
-        if user_count >= 2:
-            raise HTTPException(status_code=409, detail="您已有太多运行中的任务，请等待完成后再试")
+        if user_count >= MAX_CONCURRENT_RUNS_PER_USER:
+            raise HTTPException(status_code=409, detail="您已有太多运行中的任务，请等待部分完成后再试")
 
         # 创建 run 记录
         run = StudentAgentRun(

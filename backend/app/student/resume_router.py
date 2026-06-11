@@ -15,7 +15,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.graphics.shapes import Drawing, Rect, String, Line
 from reportlab.graphics import renderPM
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.auth.models import StudentUser
@@ -178,6 +178,24 @@ def _ensure_resume_limit(db: Session, student_id: int, tenant_id: int) -> None:
         )
 
 
+
+
+def _ensure_single_visibility(db: Session, student_id: int, tenant_id: int, *, exclude_id: int | None = None) -> None:
+    """当一份简历设为 visibility=True 时，自动取消该学生其他所有简历的 visibility。
+    这样同一时间只有一份简历对 AI 可读（单选语义）。
+    """
+    stmt = (
+        update(StudentResume)
+        .where(
+            StudentResume.student_id == student_id,
+            StudentResume.tenant_id == tenant_id,
+            StudentResume.visibility.is_(True),
+        )
+        .values(visibility=False)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(StudentResume.id != exclude_id)
+    db.execute(stmt)
 def _clean_resume_document(data: dict[str, Any], *, title: str, template_id: str, visibility: bool) -> dict[str, Any]:
     document = dict(data)
     document["title"] = title
@@ -376,6 +394,9 @@ def create_resume(
     document = payload.data if payload and payload.data is not None else _default_resume_data(student, title, template_id, visibility)
     document = _clean_resume_document(document, title=title, template_id=template_id, visibility=visibility)
 
+    if visibility:
+        _ensure_single_visibility(db, identity.user_id, identity.tenant_id)
+
     row = StudentResume(
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
@@ -402,6 +423,9 @@ def import_resume(
     title = _normalize_title(payload.title or payload.data.get("title"))
     template_id = _normalize_template_id(payload.templateId or payload.data.get("templateId"))
     document = _clean_resume_document(payload.data, title=title, template_id=template_id, visibility=payload.visibility)
+
+    if payload.visibility:
+        _ensure_single_visibility(db, identity.user_id, identity.tenant_id)
 
     row = StudentResume(
         tenant_id=identity.tenant_id,
@@ -446,6 +470,8 @@ def update_resume(
         _clean_resume_document(payload.data, title=title, template_id=template_id, visibility=payload.visibility),
         ensure_ascii=False,
     )
+    if payload.visibility:
+        _ensure_single_visibility(db, identity.user_id, identity.tenant_id, exclude_id=resume_id)
     db.commit()
     db.refresh(row)
     return ok(_serialize_detail(row).model_dump(mode="json"))

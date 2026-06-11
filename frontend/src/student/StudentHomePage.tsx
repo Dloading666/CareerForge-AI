@@ -1,13 +1,15 @@
-import { Button, Checkbox, Dropdown, Menu, Modal, Popconfirm } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Menu, Modal, Popconfirm, Divider } from '@arco-design/web-react'
 import {
   IconBook,
   IconClose,
   IconDelete,
   IconFile,
   IconHistory,
+  IconLoading,
   IconMenuFold,
   IconMenuUnfold,
   IconPlus,
+  IconMore,
   IconPoweroff,
   IconRobot,
   IconUser,
@@ -17,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest } from '../shared/api'
 import { useAuth } from '../shared/auth'
+import { UserAvatar } from '../shared/UserAvatar'
 import { AnnouncementBellDropdown } from './StudentAnnouncementBar'
 import { chatRuntimeStore } from './chatRuntimeStore'
 import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
@@ -41,34 +44,51 @@ function SessionHistoryPanel({
   onSelect: (session: AgentChatSession) => void
   onDelete: (session: AgentChatSession) => void
 }) {
+  // 并行对话：订阅 store 获取运行状态
+  const [, forceUpdate] = useState(0)
+  useEffect(() => {
+    return chatRuntimeStore.subscribe(() => forceUpdate((v) => v + 1))
+  }, [])
+
   if (sessions.length === 0) {
     return <div className="side-nav-history-empty">暂无历史</div>
   }
   return (
     <div className="side-nav-history-list">
-      {sessions.map((s) => (
-        <div
-          key={s.id}
-          role="button"
-          tabIndex={0}
-          className={`side-nav-history-item${s.id === currentSessionId ? ' active' : ''}`}
-          onClick={() => onSelect(s)}
-          title={s.title}
-        >
-          <IconHistory className="side-nav-history-item-icon" />
-          <span className="side-nav-history-item-title">{s.title}</span>
-          <Popconfirm
-            title="删除这条对话记录？"
-            okText="删除"
-            cancelText="取消"
-            onOk={() => onDelete(s)}
+      {sessions.map((s) => {
+        const isRunning = chatRuntimeStore.isRunning(s.id)
+        const isActive = s.id === currentSessionId
+        return (
+          <div
+            key={s.id}
+            role="button"
+            tabIndex={0}
+            className={`side-nav-history-item${isActive ? ' active' : ''}${isRunning && !isActive ? ' side-nav-history-item--running' : ''}`}
+            onClick={() => onSelect(s)}
+            title={s.title}
           >
-            <span className="side-nav-history-del" title="删除" onClick={(e) => e.stopPropagation()}>
-              <IconDelete />
+            {isRunning ? (
+              <IconLoading className="side-nav-history-item-icon side-nav-history-item-icon--spin" />
+            ) : (
+              <IconHistory className="side-nav-history-item-icon" />
+            )}
+            <span className="side-nav-history-item-title">
+              {s.title}
+              {isRunning && !isActive && <span className="side-nav-running-badge">运行中</span>}
             </span>
-          </Popconfirm>
-        </div>
-      ))}
+            <Popconfirm
+              title="删除这条对话记录？"
+              okText="删除"
+              cancelText="取消"
+              onOk={() => onDelete(s)}
+            >
+              <span className="side-nav-history-del" title="删除" onClick={(e) => e.stopPropagation()}>
+                <IconDelete />
+              </span>
+            </Popconfirm>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -81,7 +101,6 @@ export function StudentHomePage() {
   const navigate = useNavigate()
   const studentName = (session?.profile.name as string) || '同学'
   const studentAvatar = (session?.profile.avatar_url as string) || ''
-  const [studentAvatarKey] = useState(0)
   const studentEmail = (session?.profile.email as string) || ''
 
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
@@ -382,13 +401,36 @@ export function StudentHomePage() {
         </div>
 
         <div className="side-nav-footer">
-          <div style={{ fontWeight: 600 }}>{studentName}</div>
-          <div className="muted-text" style={{ fontSize: 12, marginBottom: 10 }}>{studentEmail}</div>
-          <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-            <Button type="text" size="small" icon={<IconPoweroff />} style={{ paddingLeft: 0, color: '#f53f3f' }}>
-              退出登录
-            </Button>
-          </Popconfirm>
+          <Dropdown
+            trigger="click"
+            position="br"
+            droplist={
+              <Menu>
+                <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
+                  <IconUser style={{ marginRight: 8 }} />
+                  个人中心
+                </Menu.Item>
+                <Divider style={{ margin: '6px 0' }} />
+                <Menu.Item key="logout" className="logout-menu-item">
+                  <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <IconPoweroff />
+                      退出登录
+                    </span>
+                  </Popconfirm>
+                </Menu.Item>
+              </Menu>
+            }
+          >
+            <div className="side-nav-user-card">
+              <UserAvatar src={studentAvatar} name={studentName} size={32} />
+              <div className="side-nav-user-info">
+                <div className="side-nav-user-name">{studentName}</div>
+                <div className="side-nav-user-email">{studentEmail}</div>
+              </div>
+              <IconMore style={{ marginLeft: 'auto', flexShrink: 0, color: '#86909C' }} />
+            </div>
+          </Dropdown>
         </div>
 
         {/* Drag-to-resize handle */}
@@ -427,36 +469,27 @@ export function StudentHomePage() {
             )}
             <AnnouncementBellDropdown />
             <Dropdown
+              trigger="click"
+              position="br"
               droplist={
                 <Menu>
-                  <Menu.Item key="name" disabled>
-                    <span style={{ fontWeight: 600 }}>{studentName}</span>
+                  <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
+                    <IconUser style={{ marginRight: 8 }} />
+                    个人中心
                   </Menu.Item>
-                  <Menu.Item key="email" disabled>
-                    <span style={{ color: '#86909C', fontSize: 12 }}>{studentEmail}</span>
-                  </Menu.Item>
-                  <Menu.Item key="logout" onClick={logout}>
-                    <IconPoweroff style={{ marginRight: 8 }} />
-                    退出登录
+                  <Divider style={{ margin: '6px 0' }} />
+                  <Menu.Item key="logout" className="logout-menu-item">
+                    <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <IconPoweroff />
+                        退出登录
+                      </span>
+                    </Popconfirm>
                   </Menu.Item>
                 </Menu>
               }
-              trigger="click"
-              position="br"
             >
-              <div style={{ cursor: 'pointer', width: 36, height: 36, borderRadius: '50%', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#edf2ff', color: '#0b45d9' }}>
-                {studentAvatar ? (
-                  <img
-                    key={studentAvatarKey}
-                    src={studentAvatar}
-                    alt="avatar"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                  />
-                ) : (
-                  <IconUser />
-                )}
-              </div>
+              <UserAvatar src={studentAvatar} name={studentName} />
             </Dropdown>
           </div>
         </header>
