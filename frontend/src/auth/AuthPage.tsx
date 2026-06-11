@@ -259,7 +259,7 @@ export function AuthPage() {
       <section className="auth-brand">
         <div className="auth-brand-content">
           <img className="auth-brand-logo" src="/baidi.png" alt="CareerForge" />
-          <h1 className="auth-brand-title">CareerForge</h1>
+          <h1 className="auth-brand-title">CareerForge AI</h1>
         </div>
       </section>
 
