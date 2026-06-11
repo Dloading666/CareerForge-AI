@@ -12,6 +12,17 @@ import { richTextToLines } from '../utils/content'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
+    id: 'blank',
+    name: '空白模板',
+    description: '不使用任何样式，从零开始编辑。',
+    accentColor: '#000000',
+    secondaryColor: '#6b7280',
+    background: '#ffffff',
+    textColor: '#000000',
+    thumbnailSrc: '/resume-template-thumbs/blank.png',
+    layout: 'single',
+  },
+  {
     id: 'classic',
     name: '经典模板',
     description: '传统简约的简历布局，适合大多数求职场景。',
@@ -775,6 +786,76 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
   }
 
   // ── modern: two-column with dark sidebar ──────────────────────────────
+  // ── blank: no template chrome, plain section headers stacked ───────────────────────────────
+  if (resume.templateId === 'blank') {
+    const blankSectionTitle = (id: string, fallback: string) => {
+      const sec = sections.find((s) => s.id === id)
+      return sec?.title || fallback
+    }
+    const base = basePageStyle(resume, template)
+    const sectionTitleStyle: CSSProperties = {
+      fontSize: 15,
+      fontWeight: 600,
+      color: '#111827',
+      margin: '18px 0 8px',
+      paddingBottom: 4,
+      borderBottom: '1px solid #e5e7eb',
+    }
+    const renderLines = (lines: string[]) =>
+      lines.length === 0
+        ? null
+        : lines.map((line, i) => (
+            <div key={i} style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 2 }}>
+              {line}
+            </div>
+          ))
+    const renderItem = (it: typeof model.experience[number]) => (
+      <div key={it.itemId} style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
+          {it.title}
+          {it.meta ? <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 8 }}>{it.meta}</span> : null}
+        </div>
+        {it.subtitle ? <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>{it.subtitle}</div> : null}
+        {renderLines(it.lines)}
+      </div>
+    )
+    return (
+      <div data-resume-print-root className="resume-document" style={base}>
+        <div data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
+            {model.header.name || '未命名简历'}
+          </div>
+          {model.header.title ? (
+            <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 6 }}>{model.header.title}</div>
+          ) : null}
+          {model.header.contacts.length > 0 ? (
+            <div style={{ fontSize: 12, color: '#6b7280' }}>{model.header.contacts.join('  ·  ')}</div>
+          ) : null}
+        </div>
+        <div data-drag-id="section:skills" style={sectionWrapStyle('skills')}>
+          <div style={sectionTitleStyle}>{blankSectionTitle('skills', '专业技能')}</div>
+          {renderLines(model.skills)}
+        </div>
+        <div data-drag-id="section:experience" style={sectionWrapStyle('experience')}>
+          <div style={sectionTitleStyle}>{blankSectionTitle('experience', '工作经历')}</div>
+          {model.experience.map(renderItem)}
+        </div>
+        <div data-drag-id="section:projects" style={sectionWrapStyle('projects')}>
+          <div style={sectionTitleStyle}>{blankSectionTitle('projects', '项目经历')}</div>
+          {model.projects.map(renderItem)}
+        </div>
+        <div data-drag-id="section:education" style={sectionWrapStyle('education')}>
+          <div style={sectionTitleStyle}>{blankSectionTitle('education', '教育经历')}</div>
+          {model.education.map(renderItem)}
+        </div>
+        <div data-drag-id="section:selfEvaluation" style={sectionWrapStyle('selfEvaluation')}>
+          <div style={sectionTitleStyle}>{blankSectionTitle('selfEvaluation', '自我评价')}</div>
+          {renderLines(model.selfEvaluation)}
+        </div>
+      </div>
+    )
+  }
+
   if (resume.templateId === 'modern') {
     const rightSections = sections.filter((s) => s.id !== 'basic' && s.id !== 'education')
     return (

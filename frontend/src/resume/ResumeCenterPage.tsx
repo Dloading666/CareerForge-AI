@@ -259,13 +259,16 @@ export function ResumeCenterPage() {
         cancelText="取消"
         onOk={() => {
           setNewResumeModalVisible(false)
-          navigate(`/student/resumes/new?template=${selectedTemplateId}`)
+          const url = selectedTemplateId === 'blank'
+            ? '/student/resumes/new'
+            : `/student/resumes/new?template=${selectedTemplateId}`
+          navigate(url)
         }}
         onCancel={() => setNewResumeModalVisible(false)}
         style={{ width: 900 }}
       >
         <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: 14 }}>
-          选择一套模板后，编辑器将预填充示例内容，方便你快速修改成自己的简历。
+          选择一个模板开始创作，包括从空白开始。
         </p>
         <div className="new-resume-template-grid">
           {TEMPLATE_REGISTRY.map((template) => (

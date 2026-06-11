@@ -39,11 +39,12 @@ export function TemplatePicker({
       <div className="resume-template-grid workbench">
         {TEMPLATE_REGISTRY.map((template) => {
           const active = template.id === value
+          const isBlank = template.id === 'blank'
           return (
             <motion.button
               key={template.id}
               type="button"
-              className={`resume-template-card${active ? ' active' : ''}`}
+              className={`resume-template-card${active ? ' active' : ''}${isBlank ? ' is-blank' : ''}`}
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.26 }}
