@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, Menu, Modal, Popconfirm, Divider } from '@arco-design/web-react'
+import { Button, Checkbox, Divider, Dropdown, Menu, Modal, Popconfirm } from '@arco-design/web-react'
 import {
   IconBook,
   IconClose,
@@ -9,7 +9,6 @@ import {
   IconMenuFold,
   IconMenuUnfold,
   IconPlus,
-  IconMore,
   IconPoweroff,
   IconRobot,
   IconUser,
@@ -105,11 +104,11 @@ export function StudentHomePage() {
 
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
   const [dontShowAgain, setDontShowAgain] = useState(false)
-  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
-  // Resizable sidebar
-  const [sideNavWidth, setSideNavWidth] = useState(() =>
+  // Resizable module panel (简历助手对话历史栏)
+  const [panelWidth, setPanelWidth] = useState(() =>
     Number(localStorage.getItem('sideNavWidth') || 248),
   )
   const isDraggingRef = useRef(false)
@@ -120,7 +119,7 @@ export function StudentHomePage() {
     e.preventDefault()
     isDraggingRef.current = true
     dragStartXRef.current = e.clientX
-    dragStartWidthRef.current = sideNavWidth
+    dragStartWidthRef.current = panelWidth
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
   }
@@ -135,14 +134,14 @@ export function StudentHomePage() {
       if (!isDraggingRef.current) return
       const delta = e.clientX - dragStartXRef.current
       const next = Math.min(480, Math.max(180, dragStartWidthRef.current + delta))
-      setSideNavWidth(next)
+      setPanelWidth(next)
     }
     const onMouseUp = () => {
       if (!isDraggingRef.current) return
       isDraggingRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      setSideNavWidth((w) => {
+      setPanelWidth((w) => {
         localStorage.setItem('sideNavWidth', String(w))
         return w
       })
@@ -158,22 +157,14 @@ export function StudentHomePage() {
   // Models (shared between both agents)
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([])
 
-  // Session lists (split by agent_type)
+  // 简历助手会话列表（面试官历史由其模块内部管理，不在首页展示）
   const [resumeSessions, setResumeSessions] = useState<AgentChatSession[]>([])
-  const [interviewerSessions, setInterviewerSessions] = useState<AgentChatSession[]>([])
-
-  // Active session ids (for sidebar highlight)
   const [resumeActiveId, setResumeActiveId] = useState<number | null>(null)
-  const [interviewerActiveId, setInterviewerActiveId] = useState<number | null>(null)
 
   // Triggers for AgentChatView children
   const [resumeLoadTrigger, setResumeLoadTrigger] = useState(0)
   const [resumeSessionToLoad, setResumeSessionToLoad] = useState<AgentChatSession | null>(null)
   const [resumeNewChatTrigger, setResumeNewChatTrigger] = useState(0)
-
-  const [interviewerLoadTrigger, setInterviewerLoadTrigger] = useState(0)
-  const [interviewerSessionToLoad, setInterviewerSessionToLoad] = useState<AgentChatSession | null>(null)
-  const [interviewerNewChatTrigger, setInterviewerNewChatTrigger] = useState(0)
 
   // Today's events / reminders (shared)
   const [todayEvents, setTodayEvents] = useState<{ id: number; title: string; event_time: string | null }[]>([])
@@ -186,11 +177,10 @@ export function StudentHomePage() {
     return 'resume-agent'
   }, [location.pathname])
 
-  const navItems: { key: NavKey; icon: ReactNode; label: string }[] = [
-    { key: 'resume-agent', icon: <IconRobot />, label: 'AI简历助手' },
-    { key: 'interviewer', icon: <IconBook />, label: 'AI面试官' },
+  const railItems: { key: NavKey; icon: ReactNode; label: string }[] = [
+    { key: 'resume-agent', icon: <IconRobot />, label: '简历助手' },
+    { key: 'interviewer', icon: <IconBook />, label: '面试官' },
     { key: 'resume', icon: <IconFile />, label: '简历制作' },
-    { key: 'profile', icon: <IconUser />, label: '个人中心' },
   ]
 
   const topbarMeta = useMemo(() => {
@@ -251,7 +241,6 @@ export function StudentHomePage() {
     const timer = window.setTimeout(async () => {
       setNotice(null)
       setResumeSessions([])
-      setInterviewerSessions([])
       try {
         const [list, sessions] = await Promise.all([
           apiRequest<AgentModelOption[]>('/api/v1/student/master/models'),
@@ -261,7 +250,6 @@ export function StudentHomePage() {
         setModelOptions(list)
         if (list.length === 0) setNotice('当前没有可用模型，请管理员先在模型广场开启「对学生开放」。')
         setResumeSessions(sessions.filter((s) => !s.agent_type || s.agent_type === 'resume'))
-        setInterviewerSessions(sessions.filter((s) => s.agent_type === 'interviewer'))
       } catch (error) {
         if (alive) setNotice(error instanceof ApiError ? error.message : '初始化失败')
       }
@@ -271,41 +259,23 @@ export function StudentHomePage() {
 
   // ── Session management callbacks ──
 
-  const handleNewChat = (type: 'resume' | 'interviewer') => {
-    if (type === 'resume') {
-      setResumeNewChatTrigger((v) => v + 1)
-      navigate('/student')
-    } else {
-      setInterviewerNewChatTrigger((v) => v + 1)
-      navigate('/student/interviewer')
-    }
+  const handleNewResumeChat = () => {
+    setResumeNewChatTrigger((v) => v + 1)
+    navigate('/student')
   }
 
   const handleSelectSession = (s: AgentChatSession) => {
-    if (s.agent_type === 'interviewer') {
-      setInterviewerSessionToLoad(s)
-      setInterviewerLoadTrigger((v) => v + 1)
-      navigate('/student/interviewer')
-    } else {
-      setResumeSessionToLoad(s)
-      setResumeLoadTrigger((v) => v + 1)
-      navigate('/student')
-    }
+    setResumeSessionToLoad(s)
+    setResumeLoadTrigger((v) => v + 1)
+    navigate('/student')
   }
 
   const handleDeleteSession = async (target: AgentChatSession) => {
     try {
       await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
-      if (target.agent_type === 'interviewer') {
-        setInterviewerSessions((prev) => prev.filter((s) => s.id !== target.id))
-        if (interviewerActiveId === target.id) {
-          setInterviewerNewChatTrigger((v) => v + 1)
-        }
-      } else {
-        setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
-        if (resumeActiveId === target.id) {
-          setResumeNewChatTrigger((v) => v + 1)
-        }
+      setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
+      if (resumeActiveId === target.id) {
+        setResumeNewChatTrigger((v) => v + 1)
       }
     } catch {
       setNotice('删除对话失败')
@@ -320,135 +290,107 @@ export function StudentHomePage() {
     })
   }, [])
 
-  const handleInterviewerSessionUpdated = useCallback((s: AgentChatSession) => {
-    setInterviewerSessions((prev) => {
-      const existing = prev.find((x) => x.id === s.id)
-      const entry: AgentChatSession = { ...s, title: existing?.title || s.title }
-      return [entry, ...prev.filter((x) => x.id !== s.id)]
-    })
-  }, [])
+  // 面试官历史由其模块内部管理（团队成员开发中），首页侧栏不再跟踪
+  const noopSessionUpdated = useCallback(() => {}, [])
+  const noopActiveSessionChange = useCallback(() => {}, [])
+
+  const userMenu = (
+    <Menu>
+      <Menu.Item key="who" disabled>
+        <div style={{ lineHeight: 1.5, padding: '2px 0' }}>
+          <div style={{ fontWeight: 600, color: '#1d2129' }}>{studentName}</div>
+          <div style={{ fontSize: 12, color: '#86909c' }}>{studentEmail}</div>
+        </div>
+      </Menu.Item>
+      <Divider style={{ margin: '6px 0' }} />
+      <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
+        <IconUser style={{ marginRight: 8 }} />
+        个人中心
+      </Menu.Item>
+      <Divider style={{ margin: '6px 0' }} />
+      <Menu.Item key="logout" className="logout-menu-item">
+        <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <IconPoweroff />
+            退出登录
+          </span>
+        </Popconfirm>
+      </Menu.Item>
+    </Menu>
+  )
 
   return (
     <div className="app-shell student-shell">
-      <aside
-        className={`side-nav${navCollapsed ? ' side-nav--collapsed' : ''}`}
-        style={navCollapsed ? undefined : { width: sideNavWidth }}
-      >
-        <div className="brand-mark">
-          <img className="brand-logo" src="/baidi.png" alt="CareerForge" />
-          <div>
-            <h1>CareerForge</h1>
-            <p>学生端</p>
-          </div>
-        </div>
-
-        <div className="side-nav-menu">
-          {navItems.map(({ key, icon, label }) => (
-            <Button
+      {/* 第一栏：全局窄图标导航 */}
+      <nav className="global-rail">
+        <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" title="CareerForge 学生端" />
+        <div className="global-rail-menu">
+          {railItems.map(({ key, icon, label }) => (
+            <button
               key={key}
-              className="side-nav-item"
-              type={activeNav === key ? 'primary' : 'text'}
-              icon={icon}
+              type="button"
+              className={`global-rail-item${activeNav === key ? ' active' : ''}`}
               onClick={() => navigateToNav(key)}
+              title={label}
             >
-              {label}
-            </Button>
+              <span className="global-rail-item-icon">{icon}</span>
+              <span className="global-rail-item-label">{label}</span>
+            </button>
           ))}
         </div>
+        <Dropdown trigger="click" position="br" droplist={userMenu}>
+          <button
+            type="button"
+            className={`global-rail-avatar${activeNav === 'profile' ? ' active' : ''}`}
+            title={studentName}
+          >
+            <UserAvatar src={studentAvatar} name={studentName} size={34} />
+          </button>
+        </Dropdown>
+      </nav>
 
-        <div className="side-nav-history">
-          {/* AI简历助手 history group */}
-          <div className="side-nav-history-group">
-            <div className="side-nav-history-group-header">
-              <span><IconRobot style={{ fontSize: 12, marginRight: 4 }} />AI简历助手</span>
-              <button
-                type="button"
-                className="side-nav-history-group-new"
-                title="新建简历助手对话"
-                onClick={() => handleNewChat('resume')}
-              >
-                <IconPlus />
-              </button>
-            </div>
+      {/* 第二栏：简历助手的模块面板（新对话 + 历史）。面试官的二栏由其模块自行实现 */}
+      {activeNav === 'resume-agent' && (
+        <aside
+          className={`module-panel${panelCollapsed ? ' module-panel--collapsed' : ''}`}
+          style={panelCollapsed ? undefined : { width: panelWidth }}
+        >
+          <Button
+            type="primary"
+            long
+            icon={<IconPlus />}
+            className="module-panel-new"
+            onClick={handleNewResumeChat}
+          >
+            新对话
+          </Button>
+          <div className="side-nav-history-label">对话历史</div>
+          <div className="module-panel-list">
             <SessionHistoryPanel
               sessions={resumeSessions}
-              currentSessionId={activeNav === 'resume-agent' ? resumeActiveId : null}
+              currentSessionId={resumeActiveId}
               onSelect={handleSelectSession}
               onDelete={handleDeleteSession}
             />
           </div>
-
-          {/* AI面试官 history group */}
-          <div className="side-nav-history-group">
-            <div className="side-nav-history-group-header">
-              <span><IconBook style={{ fontSize: 12, marginRight: 4 }} />AI面试官</span>
-              <button
-                type="button"
-                className="side-nav-history-group-new"
-                title="新建面试对话"
-                onClick={() => handleNewChat('interviewer')}
-              >
-                <IconPlus />
-              </button>
-            </div>
-            <SessionHistoryPanel
-              sessions={interviewerSessions}
-              currentSessionId={activeNav === 'interviewer' ? interviewerActiveId : null}
-              onSelect={handleSelectSession}
-              onDelete={handleDeleteSession}
-            />
-          </div>
-        </div>
-
-        <div className="side-nav-footer">
-          <Dropdown
-            trigger="click"
-            position="br"
-            droplist={
-              <Menu>
-                <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
-                  <IconUser style={{ marginRight: 8 }} />
-                  个人中心
-                </Menu.Item>
-                <Divider style={{ margin: '6px 0' }} />
-                <Menu.Item key="logout" className="logout-menu-item">
-                  <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <IconPoweroff />
-                      退出登录
-                    </span>
-                  </Popconfirm>
-                </Menu.Item>
-              </Menu>
-            }
-          >
-            <div className="side-nav-user-card">
-              <UserAvatar src={studentAvatar} name={studentName} size={32} />
-              <div className="side-nav-user-info">
-                <div className="side-nav-user-name">{studentName}</div>
-                <div className="side-nav-user-email">{studentEmail}</div>
-              </div>
-              <IconMore style={{ marginLeft: 'auto', flexShrink: 0, color: '#86909C' }} />
-            </div>
-          </Dropdown>
-        </div>
-
-        {/* Drag-to-resize handle */}
-        {!navCollapsed && (
-          <div className="side-nav-resize-handle" onMouseDown={handleResizeMouseDown} />
-        )}
-      </aside>
+          {!panelCollapsed && (
+            <div className="side-nav-resize-handle" onMouseDown={handleResizeMouseDown} />
+          )}
+        </aside>
+      )}
 
       <section className="content-panel">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              className="side-nav-toggle-btn"
-              onClick={() => setNavCollapsed((v) => !v)}
-              title={navCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            >
-              {navCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
-            </button>
+            {activeNav === 'resume-agent' && (
+              <button
+                className="side-nav-toggle-btn"
+                onClick={() => setPanelCollapsed((v) => !v)}
+                title={panelCollapsed ? '展开对话历史' : '收起对话历史'}
+              >
+                {panelCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+              </button>
+            )}
             <div className="topbar-title">
               <h2>{topbarMeta.title}</h2>
               <p>{topbarMeta.subtitle}</p>
@@ -468,29 +410,6 @@ export function StudentHomePage() {
               </span>
             )}
             <AnnouncementBellDropdown />
-            <Dropdown
-              trigger="click"
-              position="br"
-              droplist={
-                <Menu>
-                  <Menu.Item key="profile" onClick={() => navigate('/student/profile')}>
-                    <IconUser style={{ marginRight: 8 }} />
-                    个人中心
-                  </Menu.Item>
-                  <Divider style={{ margin: '6px 0' }} />
-                  <Menu.Item key="logout" className="logout-menu-item">
-                    <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <IconPoweroff />
-                        退出登录
-                      </span>
-                    </Popconfirm>
-                  </Menu.Item>
-                </Menu>
-              }
-            >
-              <UserAvatar src={studentAvatar} name={studentName} />
-            </Dropdown>
           </div>
         </header>
 
@@ -518,11 +437,11 @@ export function StudentHomePage() {
               <AgentChatView
                 agentType="interviewer"
                 modelOptions={modelOptions}
-                loadTrigger={interviewerLoadTrigger}
-                sessionToLoad={interviewerSessionToLoad}
-                newChatTrigger={interviewerNewChatTrigger}
-                onSessionUpdated={handleInterviewerSessionUpdated}
-                onActiveSessionChange={setInterviewerActiveId}
+                loadTrigger={0}
+                sessionToLoad={null}
+                newChatTrigger={0}
+                onSessionUpdated={noopSessionUpdated}
+                onActiveSessionChange={noopActiveSessionChange}
                 todayEvents={todayEvents}
                 remindersDismissed={remindersDismissed}
                 onDismissReminders={() => setRemindersDismissed(true)}
