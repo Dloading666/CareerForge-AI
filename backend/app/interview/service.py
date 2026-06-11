@@ -104,10 +104,11 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 
 
 def _render_template(template: str, values: dict[str, Any]) -> str:
-    rendered = template
-    for key, value in values.items():
-        rendered = rendered.replace("{" + key + "}", str(value))
-    return rendered
+    """单次遍历替换模板变量，避免已注入值中的 {key} 被后续迭代误替换。"""
+    def _replacer(match: re.Match) -> str:
+        key = match.group(1)
+        return str(values[key]) if key in values else match.group(0)
+    return re.sub(r"\{(\w+)\}", _replacer, template)
 
 
 def _serialize_session(session: InterviewSession) -> dict:
@@ -120,6 +121,10 @@ def _serialize_session(session: InterviewSession) -> dict:
         "round_limit": session.round_limit,
         "model_config_id": session.model_config_id,
         "status": session.status,
+        "company_name": session.company_name,
+        "seniority_level": session.seniority_level,
+        "job_skills": _json_loads(session.job_skills_json, []),
+        "current_stage": session.current_stage or "opening",
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
     }
@@ -136,6 +141,14 @@ def serialize_turn(turn: InterviewTurn) -> dict:
         "followup_reason": turn.followup_reason,
         "retrieved_chunks": _json_loads(turn.retrieved_chunks_json, []),
         "knowledge_points": _json_loads(turn.knowledge_points_json, []),
+        # 阶段 + 检索解释性 + 评分可解释性
+        "stage": turn.stage,
+        "question_type": turn.question_type,
+        "question_reason": turn.question_reason,
+        "capability_tags": _json_loads(turn.capability_tags_json, []),
+        "score_reasons": _json_loads(turn.score_reasons_json, {}),
+        "evidence_quotes": _json_loads(turn.evidence_quotes_json, []),
+        "top_sources": _json_loads(turn.top_sources_json, []),
     }
 
 
@@ -151,12 +164,19 @@ def serialize_report(report: InterviewReport) -> dict:
         "next_questions": _json_loads(report.next_questions_json, []),
         "comparison": _json_loads(report.comparison_json, None),
         "report_text": report.report_text,
+        # 训练闭环
+        "training_plan": _json_loads(report.training_plan_json, []),
+        "rewrite_examples": _json_loads(report.rewrite_examples_json, []),
+        "next_session_preset": _json_loads(report.next_session_preset_json, {}),
         "created_at": report.created_at.isoformat() if report.created_at else None,
     }
 
 
 def knowledge_status() -> dict:
-    return get_knowledge_index().status()
+    info = get_knowledge_index().status()
+    # 不向学生端暴露服务器绝对路径
+    info.pop("root", None)
+    return info
 
 
 def _latest_resume_snapshot(db: Session, identity: AuthIdentity) -> str:
@@ -291,6 +311,26 @@ def _llm_json(
     return fallback, {"used": False, "model": models[0].display_name, "error": " | ".join(errors)[:500]}
 
 
+def _llm_json_with_delete(
+    db: Session,
+    user_prompt: str,
+    fallback: dict[str, Any],
+    *,
+    temperature: float = 0.35,
+    preferred_model_id: int | None = None,
+    max_tokens: int = 2500,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """_llm_json 别名，用于 regenerate_report 时跳过缓存。"""
+    return _llm_json(db, user_prompt, fallback, temperature=temperature, preferred_model_id=preferred_model_id, max_tokens=max_tokens)
+
+
+def delete_report(db: Session, identity: AuthIdentity, session_id: int) -> None:
+    """删除已有报告，允许重新生成。"""
+    session = _get_session(db, identity, session_id)
+    db.query(InterviewReport).filter(InterviewReport.session_id == session.id).delete()
+    db.commit()
+
+
 def _conversation_history(turns: list[InterviewTurn]) -> str:
     lines: list[str] = []
     for turn in turns:
@@ -362,13 +402,175 @@ def _fallback_followup(answer: str, retrieved: list[dict]) -> dict[str, Any]:
         "followup_strategy": "追问项目证据和技术细节",
         "interviewer_tone": "strict",
         "next_question": question,
+        "question_reason": "回答信息量偏少，需要追问可验证的项目细节和技术深度" if vague else "回答有一定内容，但仍需验证技术深度和个人贡献",
         "question_type": "project_deep_dive",
+        "capability_tags": ["项目证据", "技术深度"],
         "knowledge_points": [topic],
         "should_end": False,
     }
 
 
+# ── 岗位画像 ──────────────────────────────────────────────────────────────────
+
+_JOB_SKILL_KEYWORDS = [
+    "Java", "Spring", "Spring Boot", "MySQL", "Redis", "Kafka",
+    "Elasticsearch", "JVM", "Docker", "Kubernetes", "Linux",
+    "React", "Vue", "TypeScript", "Python", "Django", "FastAPI", "Flask",
+    "LLM", "RAG", "Agent", "MCP", "Function Calling", "LangChain", "LangGraph",
+    "数据结构", "算法", "系统设计", "分布式", "微服务", "缓存", "消息队列", "数据库事务",
+]
+
+
+def _extract_job_skills(jd_text: str, user_skills: list[str]) -> list[str]:
+    """从 JD 中提取技能标签，优先使用用户手动填写的内容。"""
+    if user_skills:
+        return list(dict.fromkeys(s.strip() for s in user_skills if s.strip()))
+    if not jd_text:
+        return []
+    found: list[str] = []
+    jd_lower = jd_text.lower()
+    for kw in _JOB_SKILL_KEYWORDS:
+        if kw.lower() in jd_lower:
+            found.append(kw)
+    return found
+
+
+# ── 面试阶段状态机 ──────────────────────────────────────────────────────────────
+
+STAGE_DEFINITIONS: dict[str, dict[str, str]] = {
+    "opening": {"label": "开场", "goal": "确认目标岗位与面试类型，建立氛围"},
+    "self_intro": {"label": "自我介绍", "goal": "考察候选人的自我认知和表达结构"},
+    "resume_deep_dive": {"label": "简历深挖", "goal": "验证项目真实性、个人贡献和量化结果"},
+    "technical_core": {"label": "核心技术", "goal": "考察岗位必备技术深度和原理理解"},
+    "scenario": {"label": "场景题", "goal": "考察系统设计、业务理解和问题拆解能力"},
+    "pressure": {"label": "压力追问", "goal": "考察抗压能力、证据意识和诚实度"},
+    "reverse_question": {"label": "反问环节", "goal": "考察候选人对岗位和公司的思考深度"},
+    "wrap_up": {"label": "收束复盘", "goal": "总结表现，给出改进方向"},
+    "completed": {"label": "已完成", "goal": "面试结束"},
+}
+
+_STAGE_ORDER = ["opening", "self_intro", "resume_deep_dive", "technical_core", "scenario", "pressure", "reverse_question", "wrap_up"]
+
+
+def _build_stage_plan(interview_type: str, round_limit: int, focus_tags: list[str]) -> list[dict]:
+    """根据面试类型和轮次生成阶段计划。"""
+    # 基础分配：按轮次均匀分配阶段（不含 wrap_up，最后单独加）
+    stages = [s for s in _STAGE_ORDER if s != "wrap_up"]
+    # 压力面跳过 self_intro
+    if interview_type == "stress":
+        stages = [s for s in stages if s != "self_intro"]
+    # HR 面跳过 technical_core
+    if interview_type == "hr":
+        stages = [s for s in stages if s not in ("technical_core", "pressure")]
+
+    plan: list[dict] = []
+    usable_rounds = max(1, round_limit - 1)  # 最后一轮留给 wrap_up
+    per_stage = max(1, usable_rounds // len(stages))
+    round_num = 1
+    for i, stage in enumerate(stages):
+        if i == len(stages) - 1:
+            # 最后一个阶段用完剩余轮次（不含 wrap_up）
+            end = usable_rounds
+        else:
+            end = min(round_num + per_stage - 1, usable_rounds)
+        rounds = list(range(round_num, end + 1))
+        if rounds:
+            plan.append({"stage": stage, "rounds": rounds})
+        round_num = end + 1
+    # wrap_up 固定在最后一轮
+    plan.append({"stage": "wrap_up", "rounds": [round_limit]})
+    return plan
+
+
+def _stage_for_turn(stage_plan: list[dict], turn_index: int) -> str:
+    """根据 turn_index 查找当前阶段。"""
+    for entry in stage_plan:
+        if turn_index in entry.get("rounds", []):
+            return entry["stage"]
+    return "opening"
+
+
+def _update_coverage(coverage: dict, stage: str, knowledge_points: list[str], score: dict) -> dict:
+    """更新阶段覆盖度统计。"""
+    if stage not in coverage:
+        coverage[stage] = {"turns": 0, "knowledge_points": [], "avg_score": 0, "scores": []}
+    entry = coverage[stage]
+    entry["turns"] += 1
+    for kp in knowledge_points:
+        if kp not in entry["knowledge_points"]:
+            entry["knowledge_points"].append(kp)
+    if isinstance(score, dict):
+        vals = [v for v in score.values() if isinstance(v, (int, float))]
+        if vals:
+            entry["scores"].append(sum(vals) / len(vals))
+            entry["avg_score"] = round(sum(entry["scores"]) / len(entry["scores"]), 1)
+    return coverage
+
+
+# ── 评分可解释性 ──────────────────────────────────────────────────────────────
+
+def _normalize_score_reasons(raw: Any) -> dict[str, str]:
+    """补齐缺失维度的评分原因。"""
+    if not isinstance(raw, dict):
+        raw = {}
+    return {key: str(raw.get(key, "本轮未提供足够证据。")) for key in SCORE_KEYS}
+
+
+def _filter_evidence_quotes(raw: Any, answer: str) -> list[dict]:
+    """过滤证据引用，只保留来自用户回答原文的引用。"""
+    if not isinstance(raw, list):
+        return []
+    answer_lower = answer.lower()
+    filtered: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        quote = str(item.get("quote", "")).strip()
+        if not quote:
+            continue
+        # quote 必须是用户回答中的原文片段
+        if quote.lower() not in answer_lower:
+            continue
+        filtered.append({"quote": quote, "reason": str(item.get("reason", ""))})
+        if len(filtered) >= 3:
+            break
+    return filtered
+
+
+# ── 训练闭环 ──────────────────────────────────────────────────────────────────
+
+def _build_fallback_training_plan(weakest_dim: str) -> list[dict]:
+    """当 LLM 未返回训练计划时生成 fallback。"""
+    dim_label = {
+        "technical_accuracy": "技术准确性",
+        "project_evidence": "项目证据",
+        "problem_solving": "问题拆解",
+        "communication": "表达能力",
+        "job_fit": "岗位匹配",
+        "pressure_handling": "抗压能力",
+    }.get(weakest_dim, "核心能力")
+    return [
+        {
+            "day": 1,
+            "focus": dim_label,
+            "tasks": ["复盘本轮最低分问题", "准备一个具体项目案例", "补充量化指标"],
+            "expected_output": "一段 2 分钟结构化回答",
+        },
+        {
+            "day": 2,
+            "focus": "综合练习",
+            "tasks": ["用 STAR 结构重写 3 个常见回答", "准备 2 个技术细节追问的应对"],
+            "expected_output": "3 个可直接使用的面试回答模板",
+        },
+    ]
+
+
 def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStartRequest) -> dict:
+    # ── 目标岗位强制必填 ──
+    target_role = (payload.target_role or "").strip()
+    if not target_role:
+        raise HTTPException(status_code=400, detail="请填写目标岗位")
+
     if payload.resume_source == "upload":
         resume_snapshot = (payload.uploaded_resume_text or "").strip()[:12000]
         if not resume_snapshot:
@@ -377,28 +579,52 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         resume_snapshot = _latest_resume_snapshot(db, identity)
     index = get_knowledge_index()
     retrieved = index.search(
-        f"{payload.target_role} {payload.job_description or ''} 面试 项目 技术基础",
-        target_role=payload.target_role,
+        f"{target_role} {payload.job_description or ''} 面试 项目 技术基础",
+        target_role=target_role,
         limit=6,
     )
     type_cfg = INTERVIEW_TYPE_CONFIG.get(payload.interview_type, INTERVIEW_TYPE_CONFIG["technical"])
     style_cfg = INTERVIEW_STYLE_CONFIG.get(payload.interview_style, INTERVIEW_STYLE_CONFIG["strict"])
     resume_source_label = _resume_source_label(payload.resume_source)
+
+    # ── 岗位画像 ──
+    job_skills = _extract_job_skills(payload.job_description or "", list(payload.job_skills))
+    company_name = (payload.company_name or "").strip() or None
+    seniority_level = (payload.seniority_level or "").strip() or None
+    job_profile_parts = [f"岗位：{target_role}"]
+    if company_name:
+        job_profile_parts.append(f"公司：{company_name}")
+    if seniority_level:
+        job_profile_parts.append(f"级别：{seniority_level}")
+    if job_skills:
+        job_profile_parts.append(f"核心技能：{'、'.join(job_skills)}")
+    job_profile_summary = "，".join(job_profile_parts)
+
+    # ── 阶段计划 ──
+    stage_plan = _build_stage_plan(payload.interview_type, payload.round_limit, list(payload.focus_tags))
+    current_stage = "opening"
+
     fallback_start = {
         "resume_brief": f"已读取{resume_source_label}，将围绕岗位匹配度、项目证据和关键能力进行验证。",
         "focus_points": ["项目真实性与个人职责", "目标岗位核心技术匹配", "量化结果和复盘能力"],
         "first_question": (
             f"{type_cfg['opening']} 当前风格是「{style_cfg['label']}」。"
-            f"我已经先读取了{resume_source_label}。请选一个最能证明你适合「{payload.target_role}」的项目，"
+            f"我已经先读取了{resume_source_label}。请选一个最能证明你适合「{target_role}」的项目，"
             "按背景、你的职责、关键方案、量化结果说清楚。"
         ),
         "knowledge_points": [item["topic"] for item in retrieved[:3]] or ["项目证据", "岗位匹配"],
+        "question_reason": f"作为开场问题，要求候选人围绕目标岗位「{target_role}」展示最有说服力的项目经历",
+        "question_type": "resume_deep_dive",
+        "capability_tags": ["项目证据", "岗位匹配"],
     }
+
+    # Prompt 注入岗位画像信息
+    profile_injection = f"\n【岗位画像】{job_profile_summary}" if job_skills or company_name or seniority_level else ""
     start_prompt = _render_template(
         START_USER_PROMPT,
         {
-            "target_role": payload.target_role,
-            "job_description": payload.job_description or "未提供",
+            "target_role": target_role,
+            "job_description": (payload.job_description or "未提供") + profile_injection,
             "interview_type": type_cfg["label"],
             "interview_type_rule": type_cfg["focus"],
             "interview_style": style_cfg["label"],
@@ -412,17 +638,36 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     start_parsed, start_llm_meta = _llm_json(db, start_prompt, fallback_start, preferred_model_id=payload.model_id)
     intro = str(start_parsed.get("first_question") or fallback_start["first_question"])
     knowledge_points = start_parsed.get("knowledge_points") if isinstance(start_parsed.get("knowledge_points"), list) else fallback_start["knowledge_points"]
+    question_reason = str(start_parsed.get("question_reason") or fallback_start["question_reason"])
+    question_type = str(start_parsed.get("question_type") or fallback_start["question_type"])
+    capability_tags = start_parsed.get("capability_tags") if isinstance(start_parsed.get("capability_tags"), list) else fallback_start["capability_tags"]
+
+    # 构建 top_sources（只保留 top 3）
+    top_sources = [
+        {"title": item.get("title", ""), "topic": item.get("topic", ""), "source_file": item.get("source_file", ""), "score": item.get("score", 0)}
+        for item in retrieved[:3]
+    ]
+
     session = InterviewSession(
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
-        target_role=payload.target_role,
+        target_role=target_role,
         job_description=payload.job_description,
         interview_type=payload.interview_type,
         interview_style=payload.interview_style,
         difficulty=payload.difficulty,
         round_limit=payload.round_limit,
         model_config_id=payload.model_id,
-        resume_snapshot=f"【简历来源】{resume_source_label}\n【面试类型】{type_cfg['label']}：{type_cfg['focus']}\n【面试风格】{style_cfg['label']}：{style_cfg['rule']}\n【面试重点】{'、'.join(payload.focus_tags[:8]) or '默认'}\n【用户自定义要求】{payload.custom_instruction or '无'}\n\n【简历内容】\n{resume_snapshot}",
+        resume_snapshot=f"【简历来源】{resume_source_label}\n【面试类型】{type_cfg['label']}：{type_cfg['focus']}\n【面试风格】{style_cfg['label']}：{style_cfg['rule']}\n【面试重点】{'、'.join(payload.focus_tags[:8]) or '默认'}\n【用户自定义要求】{payload.custom_instruction or '无'}\n\n【岗位画像】{job_profile_summary}\n\n【简历内容】\n{resume_snapshot}",
+        # 岗位画像
+        company_name=company_name,
+        seniority_level=seniority_level,
+        job_skills_json=_json_dumps(job_skills),
+        job_profile_json=_json_dumps({"summary": job_profile_summary, "skills": job_skills}),
+        # 阶段状态机
+        current_stage=current_stage,
+        stage_plan_json=_json_dumps(stage_plan),
+        coverage_json=_json_dumps({}),
     )
     db.add(session)
     db.flush()
@@ -437,13 +682,21 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
             "risk_points": [],
             "llm": start_llm_meta,
             "retrieval": {
-                "query": f"{payload.target_role} {payload.job_description or ''} 面试 项目 技术基础"[:500],
+                "query": f"{target_role} {payload.job_description or ''} 面试 项目 技术基础"[:500],
                 "hit_count": len(retrieved),
                 "top_sources": [item.get("source_file") for item in retrieved[:3]],
             },
         }),
         retrieved_chunks_json=_json_dumps(retrieved),
         knowledge_points_json=_json_dumps(knowledge_points),
+        # 阶段 + 检索解释性
+        stage=current_stage,
+        question_type=question_type,
+        question_reason=question_reason,
+        capability_tags_json=_json_dumps(capability_tags),
+        retrieval_query=f"{target_role} {payload.job_description or ''} 面试 项目 技术基础"[:500],
+        retrieval_hit_count=len(retrieved),
+        top_sources_json=_json_dumps(top_sources),
     )
     db.add(turn)
     db.commit()
@@ -454,7 +707,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
 
 def _get_session(db: Session, identity: AuthIdentity, session_id: int) -> InterviewSession:
     session = db.get(InterviewSession, session_id)
-    if not session or session.student_id != identity.user_id:
+    if not session or session.student_id != identity.user_id or session.tenant_id != identity.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="面试会话不存在")
     return session
 
@@ -462,7 +715,10 @@ def _get_session(db: Session, identity: AuthIdentity, session_id: int) -> Interv
 def list_interviews(db: Session, identity: AuthIdentity) -> list[dict]:
     sessions = db.scalars(
         select(InterviewSession)
-        .where(InterviewSession.student_id == identity.user_id)
+        .where(
+            InterviewSession.student_id == identity.user_id,
+            InterviewSession.tenant_id == identity.tenant_id,
+        )
         .order_by(InterviewSession.created_at.desc())
         .limit(50)
     ).all()
@@ -475,6 +731,15 @@ def get_interview_detail(db: Session, identity: AuthIdentity, session_id: int) -
     return {"session": _serialize_session(session), "turns": [serialize_turn(item) for item in turns]}
 
 
+def delete_interview(db: Session, identity: AuthIdentity, session_id: int) -> None:
+    session = _get_session(db, identity, session_id)
+    # 先删子记录（无外键约束，需手动清理）
+    db.query(InterviewTurn).filter(InterviewTurn.session_id == session.id).delete()
+    db.query(InterviewReport).filter(InterviewReport.session_id == session.id).delete()
+    db.delete(session)
+    db.commit()
+
+
 def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: str) -> dict:
     session = _get_session(db, identity, session_id)
     if session.status != "active":
@@ -485,13 +750,26 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="没有待回答的问题")
 
     index = get_knowledge_index()
-    retrieved = index.search(f"{session.target_role} {current.question} {answer}", target_role=session.target_role, limit=6)
+    retrieval_query = f"{session.target_role} {current.question} {answer}"[:500]
+    retrieved = index.search(retrieval_query, target_role=session.target_role, limit=6)
     fallback = _fallback_followup(answer, retrieved)
+
+    # ── 构建 top_sources ──
+    top_sources = [
+        {"title": item.get("title", ""), "topic": item.get("topic", ""), "source_file": item.get("source_file", ""), "score": item.get("score", 0)}
+        for item in retrieved[:3]
+    ]
+
+    # ── 注入当前阶段到 Prompt ──
+    current_stage = session.current_stage or "opening"
+    stage_def = STAGE_DEFINITIONS.get(current_stage, STAGE_DEFINITIONS["opening"])
+    stage_injection = f"\n【当前面试阶段】{stage_def['label']}——{stage_def['goal']}"
+
     prompt = _render_template(
         FOLLOWUP_USER_PROMPT,
         {
             "target_role": session.target_role,
-            "job_description": session.job_description or "未提供",
+            "job_description": (session.job_description or "未提供") + stage_injection,
             "interview_type": INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG["technical"])["label"],
             "interview_type_rule": INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG["technical"])["focus"],
             "interview_style": INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG["strict"])["label"],
@@ -511,11 +789,15 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
     assessment = parsed.get("answer_assessment") if isinstance(parsed.get("answer_assessment"), dict) else fallback["answer_assessment"]
     knowledge_points = parsed.get("knowledge_points") if isinstance(parsed.get("knowledge_points"), list) else fallback["knowledge_points"]
 
+    # ── 评分可解释性 ──
+    score_reasons = _normalize_score_reasons(parsed.get("score_reasons"))
+    evidence_quotes = _filter_evidence_quotes(parsed.get("evidence_quotes"), answer)
+
     current.answer = answer
     if isinstance(assessment, dict):
         assessment["llm"] = llm_meta
         assessment["retrieval"] = {
-            "query": f"{session.target_role} {current.question} {answer}"[:500],
+            "query": retrieval_query,
             "hit_count": len(retrieved),
             "top_sources": [item.get("source_file") for item in retrieved[:3]],
         }
@@ -524,17 +806,39 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
     current.followup_reason = str(parsed.get("followup_strategy") or parsed.get("followup_reason") or fallback["followup_strategy"])
     current.retrieved_chunks_json = _json_dumps(retrieved)
     current.knowledge_points_json = _json_dumps(knowledge_points)
+    # 评分可解释性
+    current.score_reasons_json = _json_dumps(score_reasons)
+    current.evidence_quotes_json = _json_dumps(evidence_quotes)
+    # 检索解释性
+    current.retrieval_query = retrieval_query
+    current.retrieval_hit_count = len(retrieved)
+    current.top_sources_json = _json_dumps(top_sources)
+
+    # ── 更新阶段覆盖度 ──
+    coverage = _json_loads(session.coverage_json, {})
+    coverage = _update_coverage(coverage, current_stage, knowledge_points, score)
+    session.coverage_json = _json_dumps(coverage)
 
     should_finish = bool(parsed.get("should_end")) or current.turn_index >= session.round_limit
     report_id = None
     next_turn = None
     if should_finish:
         session.status = "completed"
+        session.current_stage = "completed"
         session.ended_at = datetime.now(timezone.utc)
         report = generate_report(db, identity, session.id, commit=False)
         report_id = report.id
     else:
+        # ── 计算下一阶段 ──
+        stage_plan = _json_loads(session.stage_plan_json, [])
+        next_stage = _stage_for_turn(stage_plan, current.turn_index + 1)
+        session.current_stage = next_stage
+
         next_question = str(parsed.get("next_question") or fallback["next_question"])
+        next_question_type = str(parsed.get("question_type") or fallback.get("question_type", ""))
+        next_question_reason = str(parsed.get("question_reason") or fallback.get("followup_strategy", ""))
+        next_capability_tags = parsed.get("capability_tags") if isinstance(parsed.get("capability_tags"), list) else []
+
         next_turn = InterviewTurn(
             session_id=session.id,
             student_id=identity.user_id,
@@ -542,6 +846,11 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
             question=next_question,
             retrieved_chunks_json=_json_dumps(retrieved),
             knowledge_points_json=_json_dumps(knowledge_points),
+            # 阶段
+            stage=next_stage,
+            question_type=next_question_type,
+            question_reason=next_question_reason,
+            capability_tags_json=_json_dumps(next_capability_tags),
         )
         db.add(next_turn)
     db.commit()
@@ -578,8 +887,29 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         "weaknesses": ["回答需要更多量化指标", "项目个人贡献和技术取舍还需要讲得更具体"],
         "suggestions": ["用 STAR 结构回答项目题", "每个技术点准备一个真实故障或优化案例", "回答优化类问题时补充前后数据"],
         "next_questions": ["请介绍一个你亲自优化过的接口。", "Redis 缓存和数据库一致性如何保证？", "如果系统 QPS 突增 10 倍，你会怎么排查瓶颈？"],
-        "report_text": f"本次面试综合分 {overall}。整体表现可以继续打磨，重点补充项目证据、数据指标和技术取舍。面试官会认可诚实和细节，不会认可空泛的“负责”和“熟悉”。",
+        "report_text": f"本次面试综合分 {overall}。整体表现可以继续打磨，重点补充项目证据、数据指标和技术取舍。面试官会认可诚实和细节，不会认可空泛的'负责'和'熟悉'。",
+        "training_plan": _build_fallback_training_plan(
+            min(dim_scores, key=lambda k: dim_scores.get(k, 100)) if dim_scores else "project_evidence"
+        ),
+        "rewrite_examples": [],
+        "next_session_preset": {
+            "target_role": session.target_role,
+            "interview_type": session.interview_type,
+            "interview_style": session.interview_style,
+            "focus_tags": [],
+        },
     }
+
+    # ── 注入阶段覆盖度 ──
+    coverage = _json_loads(session.coverage_json, {})
+    coverage_summary = ""
+    if coverage:
+        coverage_lines = []
+        for stage_key, info in coverage.items():
+            stage_label = STAGE_DEFINITIONS.get(stage_key, {}).get("label", stage_key)
+            coverage_lines.append(f"  {stage_label}: {info.get('turns', 0)} 轮, 平均分 {info.get('avg_score', 0)}")
+        coverage_summary = "\n【阶段覆盖度】\n" + "\n".join(coverage_lines)
+
     prompt = _render_template(
         REPORT_USER_PROMPT,
         {
@@ -588,7 +918,7 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
             "job_description": session.job_description or "未提供",
             "resume_snapshot": (session.resume_snapshot or "未提供")[:12000],
             "conversation_history": _conversation_history(turns),
-            "turn_scores": json.dumps(scores, ensure_ascii=False),
+            "turn_scores": json.dumps(scores, ensure_ascii=False) + coverage_summary,
         },
     )
     parsed, llm_meta = _llm_json(
@@ -630,6 +960,10 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         next_questions_json=_json_dumps(parsed.get("next_questions") or fallback["next_questions"]),
         comparison_json=_json_dumps(comparison),
         report_text=report_text,
+        # 训练闭环
+        training_plan_json=_json_dumps(parsed.get("training_plan") or fallback["training_plan"]),
+        rewrite_examples_json=_json_dumps(parsed.get("rewrite_examples") or fallback["rewrite_examples"]),
+        next_session_preset_json=_json_dumps(parsed.get("next_session_preset") or fallback["next_session_preset"]),
     )
     db.add(report)
     session.status = "completed"
@@ -654,6 +988,7 @@ def _build_report_comparison(
         .join(InterviewSession, InterviewReport.session_id == InterviewSession.id)
         .where(
             InterviewReport.student_id == identity.user_id,
+            InterviewSession.tenant_id == identity.tenant_id,
             InterviewReport.session_id != session.id,
             InterviewSession.target_role == session.target_role,
         )

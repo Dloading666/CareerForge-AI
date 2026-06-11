@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class InterviewStartRequest(BaseModel):
-    target_role: str = Field(default="", max_length=128)
+    target_role: str = Field(min_length=1, max_length=128)
     job_description: Optional[str] = None
     interview_type: str = Field(default="technical", max_length=64)
     interview_style: str = Field(default="strict", max_length=32)
@@ -16,8 +16,11 @@ class InterviewStartRequest(BaseModel):
     resume_source: str = Field(default="online", max_length=16)
     uploaded_resume_text: Optional[str] = None
     focus_tags: list[str] = Field(default_factory=list)
-    interview_pace: str = Field(default="balanced", max_length=24)
     custom_instruction: Optional[str] = Field(default=None, max_length=800)
+    # 岗位画像
+    company_name: Optional[str] = Field(default=None, max_length=128)
+    seniority_level: Optional[str] = Field(default=None, max_length=32)
+    job_skills: list[str] = Field(default_factory=list)
 
 
 class InterviewTurnRequest(BaseModel):
@@ -33,6 +36,12 @@ class InterviewSessionResponse(BaseModel):
     round_limit: int
     model_config_id: int | None = None
     status: str
+    # 岗位画像
+    company_name: str | None = None
+    seniority_level: str | None = None
+    job_skills: list[str] = []
+    # 阶段状态机
+    current_stage: str = "opening"
     created_at: str | None = None
     ended_at: str | None = None
 
@@ -47,6 +56,14 @@ class InterviewTurnResponse(BaseModel):
     followup_reason: str | None = None
     retrieved_chunks: list[dict[str, Any]] = []
     knowledge_points: list[str] = []
+    # 阶段 + 检索解释性 + 评分可解释性
+    stage: str | None = None
+    question_type: str | None = None
+    question_reason: str | None = None
+    capability_tags: list[str] = []
+    score_reasons: dict[str, str] = {}
+    evidence_quotes: list[dict[str, Any]] = []
+    top_sources: list[dict[str, Any]] = []
 
 
 class InterviewStartResponse(BaseModel):
@@ -73,4 +90,8 @@ class InterviewReportResponse(BaseModel):
     next_questions: list[str]
     comparison: dict[str, Any] | None = None
     report_text: str
+    # 训练闭环
+    training_plan: list[dict[str, Any]] = []
+    rewrite_examples: list[dict[str, Any]] = []
+    next_session_preset: dict[str, Any] = {}
     created_at: str | None = None

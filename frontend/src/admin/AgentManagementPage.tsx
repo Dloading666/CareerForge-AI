@@ -382,7 +382,11 @@ const mOpts = models
                 <Form.Item label={isInterviewAgent ? '绑定 TTS 模型' : '绑定模型'} field='model_id' extra={isInterviewAgent ? '面试官智能体仅可关联 TTS 模型' : '仅显示文本/多模态模型'}>
                   <Select options={mOpts} placeholder='选择模型（先在模型广场配 API Key）' allowClear />
                 </Form.Item>
-                <Form.Item label='系统提示词' field='sp'>
+                <Form.Item
+                  label='系统提示词'
+                  field='sp'
+                  extra='仅配置 Model 层角色、口吻和任务方法；平台会自动叠加 Agent = Model + Harness 边界，权限、执行、审计和高风险确认不依赖提示词。'
+                >
                   <TextArea placeholder='定义智能体的角色和行为...' autoSize={{ minRows: 3, maxRows: 6 }} />
                 </Form.Item>
                 <Form.Item label={'Temperature (' + (form.getFieldValue?.('temp') ?? 0.7) + ')'} field='temp'>

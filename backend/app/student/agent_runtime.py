@@ -926,6 +926,17 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         metadata={"kind": "resume"},
     ),
     ToolDefinition(
+        name="read_resume_ai",
+        description=(
+            "读取学生在「简历制作」中保存的简历内容（session_id=0 的附件）。"
+            "AI 面试官用此工具了解学生简历以定制面试问题。"
+        ),
+        source="builtin",
+        priority=959,
+        input_schema={"type": "object", "properties": {}, "required": []},
+        metadata={"kind": "resume_ai"},
+    ),
+    ToolDefinition(
         name="analyze_uploaded_file",
         description="分析学生上传的图片、Word、PDF、Excel、文本等附件，并把提取内容交给主智能体综合。",
         source="builtin",
@@ -1596,10 +1607,7 @@ async def stream_master_reply(
     # Curated, safe tool registry. Only tools the Harness can honestly fulfil
     # are exposed — fabricating stubs are intentionally excluded.
     agent_type = getattr(session, "agent_type", "resume") or "resume"
-    if agent_type == "interviewer":
-        tool_defs = assemble_interviewer_tools(db, identity)
-    else:
-        tool_defs = assemble_active_tools(db, identity)
+    tool_defs = _assemble_tools(db, identity, agent_type)
     registry = {tool.name: tool for tool in tool_defs}
     openai_tools = _build_openai_tools(tool_defs)
 
@@ -1878,6 +1886,17 @@ def _analyze_jd_match_tool(
 
 def _invoke_skill(tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
     skill_name = str(tool.metadata.get("name") or tool.name)
+    # 校验 Skill 是否配置了有效的 input_schema
+    schema = tool.input_schema
+    if not schema or not isinstance(schema.get("properties"), dict) or not schema["properties"]:
+        return {
+            "status": "failed",
+            "tool": tool.name,
+            "summary": (
+                f"Skill「{skill_name}」配置不完整：缺少参数定义（input_schema 为空），"
+                "请联系管理员在 Skill 广场补全该 Skill 的参数 schema 后重试。"
+            ),
+        }
     return {
         "status": "completed",
         "tool": tool.name,
@@ -2147,10 +2166,20 @@ def _query_student_profile(db: Session, identity: AuthIdentity) -> dict[str, Any
     loaded_sections.extend(f"{label} {count} 条" for label, count in section_counts.items() if count)
     missing_sections = [label for label, count in section_counts.items() if count == 0]
 
+    # 补充关键字段提示（出生日期、毕业时间）
+    extra_notes: list[str] = []
+    if student.birth_date:
+        extra_notes.append(f"出生日期：{student.birth_date}")
+    if educations:
+        latest_edu = educations[0]
+        if latest_edu.get("duration"):
+            extra_notes.append(f"最近教育经历时间：{latest_edu['duration']}")
+    extra_hint = f"（{', '.join(extra_notes)}）" if extra_notes else ""
+
     return {
         "status": "completed",
         "tool": "query_student_profile",
-        "summary": f"已读取完整个人档案：{'、'.join(loaded_sections)}。",
+        "summary": f"已读取完整个人档案：{'、'.join(loaded_sections)}。{extra_hint}",
         "profile": profile,
         "profile_completeness": {
             "loaded_sections": loaded_sections,
@@ -2339,43 +2368,62 @@ def _configured_fallback_answer(config: Any, user_text: str) -> str:
 
 # ── AI 面试官工具池 ────────────────────────────────────────────────────────────
 
-INTERVIEWER_SYSTEM_PROMPT = """你是一位经验丰富的 AI 面试官，专门帮助求职学生进行模拟面试训练。
+INTERVIEWER_SYSTEM_PROMPT = """你是 CareerForge-AI 的 AI 助手。新版 AI 面试官已升级为岗位定制化训练房间，支持目标岗位必填、阶段状态机、评分可解释性和训练闭环。
 
-## 面试官行为准则
-- 每次只提一个问题，等学生作答后再继续，不要连续抛出多个问题
-- 对每次回答给出专业、具体的点评：指出亮点、指出改进方向、示范更好的表达方式
-- 涵盖：自我介绍 → 行为类问题（STAR 法则）→ 专业技能考察 → 反问环节
-- 保持专业、温和的面试官语气，营造真实面试氛围
+请直接回复用户：
+「新版 AI 面试官已升级为岗位定制化训练房间，请前往 /student/interviewer 开始面试。在那里你可以选择目标岗位、面试类型和风格，系统会围绕你的简历和 JD 进行结构化模拟面试，并在结束后生成包含训练计划的详细报告。」
 
-## 面试流程
-1. 开始时立即调用 query_student_profile 了解学生的背景和求职意向
-2. 若学生已开启简历可读取，调用 read_resume 了解具体经历以便定制问题
-3. 欢迎学生，确认目标岗位，然后从「请做一下自我介绍」开始面试
-4. 逐步展开 3-5 轮提问与点评，循序渐进
-5. 最后给出整体评价和针对性提升建议
-
-## 注意事项
-- 不要帮学生生成、修改或导出简历，这不是面试官的职责
-- 若学生偏题，礼貌引回正轨
-- 点评要有实质内容，给出更好表达方式的示例
+不要进行模拟面试，不要提问，不要调用任何工具。只做引导。
 """
 
 INTERVIEWER_ACTIVE_TOOL_NAMES = (
     "query_student_profile",
-    "read_resume",
+    "read_resume_ai",
     "get_session_context",
     "analyze_uploaded_file",
 )
 
 
-def assemble_interviewer_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
-    """AI 面试官精简工具池：只读取学生信息，不包含生成/修改简历类工具。"""
+def _assemble_tools(db: Session, identity: AuthIdentity, agent_type: str) -> list[ToolDefinition]:
+    """统一工具池组装：按 agent_type 决定内置工具白名单和是否加载平台 Skill。"""
+    if agent_type == "interviewer":
+        active_names = INTERVIEWER_ACTIVE_TOOL_NAMES
+    else:
+        active_names = ACTIVE_BUILTIN_TOOL_NAMES
+
     by_name = {tool.name: tool for tool in BUILTIN_TOOLS}
     pool: dict[str, ToolDefinition] = {}
-    for name in INTERVIEWER_ACTIVE_TOOL_NAMES:
+    for name in active_names:
         tool = by_name.get(name)
         if tool:
             pool[name] = tool
+
+    # 简历助手额外加载内置 Skill + 平台 Skill（面试官不需要）
+    if agent_type != "interviewer":
+        builtin_skill = _builtin_resume_tailor_skill()
+        pool[builtin_skill.name] = builtin_skill
+
+        for skill in list_skills(db, include_disabled=False):
+            data = serialize_skill(skill)
+            name = "skill__" + _tool_safe_name(str(data["slug"]))
+            if name in pool:
+                continue
+            pool[name] = ToolDefinition(
+                name=name,
+                description=str(data.get("description") or data.get("name") or "Skill 工具"),
+                source="skill",
+                priority=500,
+                input_schema={
+                    "type": "object",
+                    "properties": {"task": {"type": "string", "description": "交给该 Skill 处理的具体任务。"}},
+                    "required": ["task"],
+                },
+                metadata=data,
+            )
+
+    # 设计决策（2026-06）：主智能体不再调用子智能体。任务型能力（简历优化/岗位匹配）做成
+    # Skill 由主智能体编排；沉浸型人格（AI 面试官/职业规划师/岗位推荐师）放在「智能体广场」，
+    # 由学生直接进入多轮对话——把有状态人格压成一次性工具调用会毁掉其多轮体验。
     return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
 
 
@@ -2482,38 +2530,12 @@ def _resume_skill_prerequisite_failure(
 
 def assemble_active_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
     """组装工具池：内置工具白名单 + 平台可信 Skill + 管理端启用 Skill。"""
-    pool: dict[str, ToolDefinition] = {}
-    by_name = {tool.name: tool for tool in BUILTIN_TOOLS}
-    for name in ACTIVE_BUILTIN_TOOL_NAMES:
-        tool = by_name.get(name)
-        if tool:
-            pool[name] = tool
+    return _assemble_tools(db, identity, "resume")
 
-    builtin_skill = _builtin_resume_tailor_skill()
-    pool[builtin_skill.name] = builtin_skill
 
-    for skill in list_skills(db, include_disabled=False):
-        data = serialize_skill(skill)
-        name = "skill__" + _tool_safe_name(str(data["slug"]))
-        if name in pool:
-            continue
-        pool[name] = ToolDefinition(
-            name=name,
-            description=str(data.get("description") or data.get("name") or "Skill 工具"),
-            source="skill",
-            priority=500,
-            input_schema={
-                "type": "object",
-                "properties": {"task": {"type": "string", "description": "交给该 Skill 处理的具体任务。"}},
-                "required": ["task"],
-            },
-            metadata=data,
-        )
-
-    # 设计决策（2026-06）：主智能体不再调用子智能体。任务型能力（简历优化/岗位匹配）做成
-    # Skill 由主智能体编排；沉浸型人格（AI 面试官/职业规划师/岗位推荐师）放在「智能体广场」，
-    # 由学生直接进入多轮对话——把有状态人格压成一次性工具调用会毁掉其多轮体验。
-    return sorted(pool.values(), key=lambda item: (-item.priority, item.name))
+def assemble_interviewer_tools(db: Session, identity: AuthIdentity) -> list[ToolDefinition]:
+    """AI 面试官精简工具池：只读取学生信息，不包含生成/修改简历类工具。"""
+    return _assemble_tools(db, identity, "interviewer")
 
 
 def _build_openai_tools(tool_defs: list[ToolDefinition]) -> list[dict[str, Any]]:
@@ -3218,10 +3240,18 @@ async def run_agent_loop(
                         "iteration": iteration + 1,
                     }
                     tool_start = time.monotonic()
-                    result = await _dispatch_tool(
-                        db, identity, session, assistant_message, user_message.content, attachments, name, args, td,
-                        evidence_pool=evidence_pool,
-                    )
+                    try:
+                        result = await _dispatch_tool(
+                            db, identity, session, assistant_message, user_message.content, attachments, name, args, td,
+                            evidence_pool=evidence_pool,
+                        )
+                    except Exception as exc:
+                        logger.exception("工具 %s 执行失败", name)
+                        result = {
+                            "status": "failed",
+                            "tool": name,
+                            "summary": f"Skill 执行失败：{str(exc)[:200]}。请换一种方式重试，或告知学生当前 Skill 暂时不可用。",
+                        }
                     tool_ms = int((time.monotonic() - tool_start) * 1000)
                     if tool_ms > 1000:
                         yield "runtime.heartbeat", {
@@ -3544,6 +3574,12 @@ async def _dispatch_tool(
         session_active_id = getattr(session, "active_resume_id", None)
         active_id = int(explicit_resume_id) if explicit_resume_id else session_active_id
         result = _read_resume_tool(db, identity, session, attachments, active_resume_id=active_id)
+        if result.get("status") == "completed" and evidence_pool:
+            evidence_pool.add_resume_texts(result.get("resumes") or [])
+        return result
+
+    if name == "read_resume_ai":
+        result = _read_resume_ai_tool(db, identity)
         if result.get("status") == "completed" and evidence_pool:
             evidence_pool.add_resume_texts(result.get("resumes") or [])
         return result
@@ -4074,6 +4110,50 @@ def _read_resume_tool(
         "summary": "，".join(summary_parts),
         "resumes": resumes_output,
         "resume_list": resume_list,
+    }
+
+
+def _read_resume_ai_tool(db: Session, identity: AuthIdentity) -> dict[str, Any]:
+    """读取学生在「简历制作」中保存的简历内容（session_id=0 的附件）。"""
+    docs = list(
+        db.scalars(
+            select(StudentAgentAttachment)
+            .where(
+                StudentAgentAttachment.session_id == 0,
+                StudentAgentAttachment.student_id == identity.user_id,
+                StudentAgentAttachment.tenant_id == identity.tenant_id,
+                StudentAgentAttachment.is_deleted.is_(False),
+                StudentAgentAttachment.content_type.notlike("image/%"),
+            )
+            .order_by(StudentAgentAttachment.id.desc())
+            .limit(3)
+        ).all()
+    )
+    if not docs:
+        return {
+            "status": "completed",
+            "tool": "read_resume_ai",
+            "summary": "未找到简历：学生还没有在「简历制作」中保存过简历。",
+            "resumes": [],
+        }
+    resumes: list[dict[str, Any]] = []
+    for att in docs:
+        text = _ensure_attachment_text(db, att)
+        if text:
+            resumes.append({"source": "简历制作", "name": att.original_name, "excerpt": text[:12000]})
+    if not resumes:
+        return {
+            "status": "completed",
+            "tool": "read_resume_ai",
+            "summary": "未找到简历：「简历制作」中的附件无法解析。",
+            "resumes": [],
+        }
+    names = "、".join(r["name"] for r in resumes)
+    return {
+        "status": "completed",
+        "tool": "read_resume_ai",
+        "summary": f"已读取简历：{names}",
+        "resumes": resumes,
     }
 
 

@@ -421,8 +421,7 @@ class RunManager:
             _claim_message_attachments,
             _configured_fallback_answer,
             _select_chat_model,
-            assemble_active_tools,
-            assemble_interviewer_tools,
+            _assemble_tools,
             dumps_event,
             get_session_or_404,
             run_agent_loop,
@@ -496,10 +495,7 @@ class RunManager:
             permission_mode = (config.permission_mode or "ask").lower()
 
             agent_type = getattr(session, "agent_type", "resume") or "resume"
-            if agent_type == "interviewer":
-                tool_defs = assemble_interviewer_tools(db, identity)
-            else:
-                tool_defs = assemble_active_tools(db, identity)
+            tool_defs = _assemble_tools(db, identity, agent_type)
             registry = {tool.name: tool for tool in tool_defs}
             openai_tools = _build_openai_tools(tool_defs)
 

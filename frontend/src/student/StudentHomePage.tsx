@@ -111,6 +111,7 @@ export function StudentHomePage() {
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
+  const [interviewFocusMode, setInterviewFocusMode] = useState(false)
   const [profileModalVisible, setProfileModalVisible] = useState(false)
   const [profileTab, setProfileTab] = useState('profile')
   const [notice, setNotice] = useState<string | null>(null)
@@ -209,6 +210,20 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
     else if (key === 'resume') navigate('/student/resumes')
     else { setProfileModalVisible(true) }
   }
+
+  const toggleRailCollapsed = () => {
+    const next = !railCollapsed
+    setRailCollapsed(next)
+    localStorage.setItem('railCollapsed', String(next))
+  }
+
+  const handleInterviewActiveChange = useCallback((active: boolean) => {
+    setInterviewFocusMode(active)
+    if (active) {
+      setRailCollapsed(true)
+      localStorage.setItem('railCollapsed', 'true')
+    }
+  }, [])
 
   // Load today's events
   useEffect(() => {
@@ -316,7 +331,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
   )
 
   return (
-    <div className="app-shell student-shell">
+    <div className={`app-shell student-shell${interviewFocusMode && activeNav === 'interviewer' ? ' student-shell--interview-focus' : ''}`}>
       {/* 第一栏：全局侧边栏导航 */}
       <nav className={`global-rail${railCollapsed ? ' global-rail--collapsed' : ''}`}>
         <div className="global-rail-brand">
@@ -327,11 +342,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
             role="button"
             title={railCollapsed ? '展开侧栏' : '收起侧栏'}
             style={{ cursor: 'pointer' }}
-            onClick={() => {
-              const next = !railCollapsed
-              setRailCollapsed(next)
-              localStorage.setItem('railCollapsed', String(next))
-            }}
+            onClick={toggleRailCollapsed}
           />
           {!railCollapsed && (
             <div className="global-rail-brand-text">
@@ -340,6 +351,16 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
             </div>
           )}
         </div>
+
+        <button
+          type="button"
+          className="global-rail-collapse-btn"
+          onClick={toggleRailCollapsed}
+          title={railCollapsed ? '展开导航' : '收起导航'}
+          aria-label={railCollapsed ? '展开导航' : '收起导航'}
+        >
+          {railCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+        </button>
 
         <div className="global-rail-menu">
           {railItems.map(({ key, icon, label }) => (
@@ -454,7 +475,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           />
           <Route
             path="interviewer"
-            element={<AIInterviewerPage />}
+            element={<AIInterviewerPage onInterviewActiveChange={handleInterviewActiveChange} />}
           />
 
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
