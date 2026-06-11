@@ -117,7 +117,7 @@ SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `a
 - **统一响应信封**：后端返回 `{code, msg, data}`；前端按此解析（流式 SSE 端点除外）。
 - **软删除**：`is_deleted` 字段，查询默认过滤，不物理删除。
 - **API Key 存储**：`api_key_cipher` 经 `encrypt/decrypt_api_key`（当前实为 base64，生产待加固）。
-- **React 19 + Arco**：用 `Alert` 而非 Arco `Message`；`element.ref` 警告可忽略。
+- **React 19 + Arco**：`element.ref` 警告可忽略；Arco `Message` 静态方法在 2.66+ + React 19 下正常工作。
 - **启动种子**：lifespan 建表 → bootstrap 管理员 → seed 默认模型/智能体；默认 `admin`/`123456`。
 - **迁移在容器内**：`entrypoint.sh` 对「有表无 alembic_version」自动 stamp 再 upgrade。新增迁移若改了判定链记得同步 entrypoint。
 - **配置全走 env**：新增配置项加 `Field(..., alias="ENV_NAME")` 并更新 `.env.example`。

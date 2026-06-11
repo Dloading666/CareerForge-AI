@@ -118,6 +118,7 @@ class RunManager:
 
     async def subscribe(self, run_id: int, after_seq: int = 0) -> AsyncIterator[str]:
         """订阅运行事件流。先注册 Queue 再回放 DB，避免竞态丢事件。"""
+        requested_after_seq = after_seq
         handle = self._runs.get(run_id)
         if handle is None:
             # run 已不在内存：与在线分支同语义——delta 合并为全量 snapshot，
@@ -152,10 +153,11 @@ class RunManager:
                 yield f":seq {last_delta_seq}\n\n"
                 after_seq = max(after_seq, last_delta_seq)
             for row in rows:
-                if row.event == "message.delta" or row.seq <= after_seq:
+                if row.event == "message.delta" or row.seq <= requested_after_seq:
                     continue
                 yield f"event: {row.event}\ndata: {row.data_json}\n\n"
                 yield f":seq {row.seq}\n\n"
+                after_seq = max(after_seq, row.seq)
             return
 
         # P0-2 修复：先注册 Queue，再回放 DB，避免回放与实时之间的事件丢失
@@ -198,14 +200,15 @@ class RunManager:
                     yield f":seq {last_delta_seq}\n\n"
                     after_seq = max(after_seq, last_delta_seq)
 
-                # 非 delta 事件按 after_seq 回放
+                # snapshot 只替代 delta 正文，不能让它的高 seq 吞掉更早的
+                # activity 事件。非 delta 仍按客户端原始游标完整回放。
                 non_delta = list(
                     db.scalars(
                         select(StudentAgentRunEvent)
                         .where(
                             StudentAgentRunEvent.run_id == run_id,
                             StudentAgentRunEvent.event != "message.delta",
-                            StudentAgentRunEvent.seq > after_seq,
+                            StudentAgentRunEvent.seq > requested_after_seq,
                         )
                         .order_by(StudentAgentRunEvent.seq.asc())
                     ).all()
@@ -213,7 +216,7 @@ class RunManager:
                 for row in non_delta:
                     yield f"event: {row.event}\ndata: {row.data_json}\n\n"
                     yield f":seq {row.seq}\n\n"
-                    after_seq = row.seq
+                    after_seq = max(after_seq, row.seq)
             finally:
                 db.close()
 
@@ -419,7 +422,9 @@ class RunManager:
             _build_initial_messages,
             _build_openai_tools,
             _claim_message_attachments,
+            _compress_context,
             _configured_fallback_answer,
+            _looks_like_jd,
             _select_chat_model,
             _assemble_tools,
             dumps_event,
@@ -435,6 +440,18 @@ class RunManager:
             session = get_session_or_404(db, identity, session_id)
             user_message = _save_message(db, session, "user", content.strip())
             attachments = _claim_message_attachments(db, identity, session, user_message, attachment_ids)
+            # 在构建模型上下文之前识别并持久化 JD。此前识别发生在
+            # run_agent_loop 内部，导致本轮 system context 看不到刚粘贴的 JD，
+            # 模型可能再次索要已经提供的岗位描述。
+            detected_jd = user_message.content[:8000]
+            if _looks_like_jd(user_message.content) and session.jd_text != detected_jd:
+                session.jd_text = detected_jd
+                db.commit()
+                logger.info(
+                    "run 前自动识别 JD 并写入 session=%s（%d 字）",
+                    session.id,
+                    len(session.jd_text),
+                )
             if (
                 content.strip() == AUTO_ATTACHMENT_PROMPT
                 and attachments
@@ -499,9 +516,16 @@ class RunManager:
             registry = {tool.name: tool for tool in tool_defs}
             openai_tools = _build_openai_tools(tool_defs)
 
-            messages = _build_initial_messages(
-                db, identity, session, content, reasoning_effort, model, attachments, config,
-                agent_type=agent_type,
+            # D2: 上下文压缩 — 组装后估算 token，超阈值则压缩并重新组装
+            async def _emit_compress_event(event: str, data: dict) -> None:
+                await self._emit_event(run_id, identity.tenant_id, event, data)
+
+            messages, _compressed = await _compress_context(
+                db, identity, session, model, config,
+                user_text=content, reasoning_effort=reasoning_effort,
+                attachments=attachments, agent_type=agent_type,
+                openai_tools=openai_tools,
+                emit_event=_emit_compress_event,
             )
 
             # ── 创建 assistant 消息 ──
@@ -565,6 +589,17 @@ class RunManager:
                 run.status = "completed"
                 run.finished_at = datetime.now(timezone.utc)
                 db.commit()
+
+            # D4: 观测日志 — 记录 run 级别的 token 消耗
+            logger.info(
+                "run_completed run_id=%s session_id=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s duration_ms=%s",
+                run_id,
+                session.id,
+                run_metrics.get("prompt_tokens", 0),
+                run_metrics.get("completion_tokens", 0),
+                run_metrics.get("total_tokens", 0),
+                run_metrics.get("duration_ms", 0),
+            )
 
         except asyncio.CancelledError:
             logger.info("_run_detached: task cancelled run_id=%s", run_id)

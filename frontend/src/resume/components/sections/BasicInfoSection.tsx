@@ -1,7 +1,7 @@
 import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
-import { useResumeEditor } from '../../ResumeEditorContext'
+import { useResumeEditor } from '../../useResumeEditor'
 import { createCustomField } from '../../constants'
 
 export function BasicInfoSection() {

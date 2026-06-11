@@ -3,7 +3,7 @@ import {
   Select, Slider, Switch, Tabs, Tag, Typography, Message,
 } from '@arco-design/web-react'
 import { IconDelete, IconEdit, IconPlus, IconSend } from '@arco-design/web-react/icon'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
 
 const { Text, Title } = Typography
@@ -56,6 +56,8 @@ const GRADIENT_PRESETS = [
 ]
 
 interface ChatMsg { role: 'user' | 'assistant'; content: string }
+interface DifyTestAttempt { path: string; status: number; message?: string }
+interface DifyTestResponse { success: boolean; message: string; attempts?: DifyTestAttempt[] }
 
 export function AgentManagementPage() {
   const [agents, setAgents] = useState<AgentItem[]>([])
@@ -76,11 +78,35 @@ export function AgentManagementPage() {
   const [vVals, setVVals] = useState<Record<string, string>>({})
   const cEnd = useRef<HTMLDivElement>(null)
 
-  const fetchModels = useCallback(async () => {
-    try { const r = await apiRequest<{ list: ModelItem[] }>('/api/v1/admin/models?size=100'); setModels(r.list) } catch { /* silent */ }
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try { const r = await apiRequest<{ list: ModelItem[] }>('/api/v1/admin/models?size=100'); if (alive) setModels(r.list) } catch { /* silent */ }
+    })()
+    return () => { alive = false }
   }, [])
 
-  const fetchAgents = useCallback(async () => {
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const sp = new URLSearchParams()
+        if (flt && flt !== 'all') sp.set('category', flt)
+        if (srch) sp.set('search', srch)
+        const r = await apiRequest<AgentItem[]>(`/api/v1/admin/agents${sp.toString() ? '?' + sp.toString() : ''}`)
+        if (alive) setAgents(Array.isArray(r) ? r : [])
+      } catch { /* silent */ }
+    })()
+    return () => { alive = false }
+  }, [flt, srch])
+
+  useEffect(() => {
+    const h = () => { setEdit(null); form.resetFields(); setUseDify(false); setMsgs([]); setTab('basic'); setDrawer(true) }
+    window.addEventListener('agent-create', h); return () => window.removeEventListener('agent-create', h)
+  }, [form])
+  useEffect(() => { cEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
+
+  const fetchAgents = async () => {
     try {
       const sp = new URLSearchParams()
       if (flt && flt !== 'all') sp.set('category', flt)
@@ -88,15 +114,7 @@ export function AgentManagementPage() {
       const r = await apiRequest<AgentItem[]>(`/api/v1/admin/agents${sp.toString() ? '?' + sp.toString() : ''}`)
       setAgents(Array.isArray(r) ? r : [])
     } catch { /* silent */ }
-  }, [flt, srch])
-
-  useEffect(() => { fetchAgents() }, [fetchAgents])
-  useEffect(() => { fetchModels() }, [fetchModels])
-  useEffect(() => {
-    const h = () => { setEdit(null); form.resetFields(); setUseDify(false); setMsgs([]); setTab('basic'); setDrawer(true) }
-    window.addEventListener('agent-create', h); return () => window.removeEventListener('agent-create', h)
-  }, [])
-  useEffect(() => { cEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
+  }
 
   const openEdit = (a: AgentItem) => {
     setEdit(a)
@@ -129,14 +147,14 @@ export function AgentManagementPage() {
     setDifyTesting(true)
     setDifyTestResult('测试中...')
     try {
-      const r = await apiRequest<any>('/api/v1/admin/agents/test-dify', {
+      const r = await apiRequest<DifyTestResponse>('/api/v1/admin/agents/test-dify', {
         method: 'POST',
         body: JSON.stringify({ api_base_url: vals.dify_api_base_url, api_key: vals.dify_api_key }),
       })
       if (r.success) {
         setDifyTestResult('OK ' + r.message)
       } else {
-        const att = r.attempts?.map((d: any) => '[' + d.path + ':' + d.status + '] ' + (d.message || '')).join(' / ') || ''
+        const att = r.attempts?.map((d) => '[' + d.path + ':' + d.status + '] ' + (d.message || '')).join(' / ') || ''
         setDifyTestResult('FAIL ' + r.message + (att ? ' | ' + att : ''))
       }
     } catch {
@@ -159,7 +177,7 @@ export function AgentManagementPage() {
         dify_api_key: vals.use_dify ? (vals.dify_api_key || undefined) : undefined,
         dify_api_base_url: vals.use_dify ? (vals.dify_api_base_url || undefined) : undefined,
         suggested_questions: (vals.sq || []).filter(Boolean),
-        prompt_variables: (vals.pv || []).filter((v: any) => v.name?.trim()),
+        prompt_variables: (vals.pv || []).filter((v: { name?: string }) => v.name?.trim()),
         system_prompt: vals.sp, temperature: vals.temp, max_tokens: vals.mt,
         top_p: vals.tp, frequency_penalty: vals.fp, presence_penalty: vals.pp,
         memory_window: vals.mw, is_enabled: vals.enabled, is_published: vals.pub,
@@ -169,8 +187,8 @@ export function AgentManagementPage() {
       Message.success(edit ? '保存成功' : '创建成功')
       setDrawer(false)
       fetchAgents()
-    } catch (e: any) {
-      if (e?.message) Message.error(e.message)
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message) Message.error(e.message)
     } finally { setSub(false) }
   }
 

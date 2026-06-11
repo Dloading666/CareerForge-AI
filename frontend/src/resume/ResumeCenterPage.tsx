@@ -1,20 +1,21 @@
 import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
-import { IconDelete, IconDownload, IconEdit, IconFile, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
 import { ApiError } from '../shared/api'
-import { deleteResume, downloadResumePdf, getResume, importResume, listResumes, updateResume, uploadResume } from './api'
+import { deleteResume, downloadResumePdf, getResume, importResumeFile, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
-import { ResumeTemplatePreview, TEMPLATE_REGISTRY } from './templates/registry'
+import { ResumeTemplatePreview } from './templates/registry'
+import { TEMPLATE_REGISTRY } from './templates/templateRegistry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
 
 const MAX_RESUMES = 6
 
 export function ResumeCenterPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [resumes, setResumes] = useState<ResumeSummary[]>([])
   const [resumeDataMap, setResumeDataMap] = useState<Record<number, ResumeData>>({})
@@ -23,7 +24,10 @@ export function ResumeCenterPage() {
   const [newResumeModalVisible, setNewResumeModalVisible] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>('classic')
   const importRef = useRef<HTMLInputElement | null>(null)
-  const uploadRef = useRef<HTMLInputElement | null>(null)
+  const [importModalVisible, setImportModalVisible] = useState(
+    () => new URLSearchParams(window.location.search).get('import') === '1',
+  )
+  const [importing, setImporting] = useState(false)
 
   const mode = searchParams.get('mode')
 
@@ -31,7 +35,7 @@ export function ResumeCenterPage() {
 
 
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const list = await listResumes()
@@ -48,11 +52,39 @@ export function ResumeCenterPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    void refresh()
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      try {
+        const list = await listResumes()
+        if (cancelled) return
+        setResumes(list)
+        const results = await Promise.allSettled(list.map((r) => getResume(r.id)))
+        if (cancelled) return
+        const next: Record<number, ResumeData> = {}
+        list.forEach((r, idx) => {
+          const res = results[idx]
+          if (res.status === 'fulfilled') next[r.id] = res.value
+        })
+        setResumeDataMap(next)
+      } catch {
+        if (!cancelled) Message.error('加载简历列表失败')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
   }, [])
+
+  // ?import=1 自动打开导入弹窗（F1/G2 跳转入口）
+  useEffect(() => {
+    if (searchParams.get('import') === '1') {
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   // ---- Resume preview modal: user-controlled zoom (default = fit viewport) ----
   const A4_W = 794
@@ -67,20 +99,20 @@ export function ResumeCenterPage() {
     return Math.min(maxW / A4_W, maxH / A4_H)
   }
 
+  const recomputeOnResize = useCallback(() => {
+    const fit = computeFitScale()
+    fitScaleRef.current = fit
+    setPreviewScale((prev) => (prev === fitScaleRef.current ? fit : prev))
+  }, [])
+
   useEffect(() => {
     if (previewingId === null) return
     const fit = computeFitScale()
     fitScaleRef.current = fit
-    setPreviewScale(fit)
+    queueMicrotask(() => setPreviewScale(fit))
     window.addEventListener('resize', recomputeOnResize)
     return () => window.removeEventListener('resize', recomputeOnResize)
-  }, [previewingId])
-
-  const recomputeOnResize = () => {
-    const fit = computeFitScale()
-    fitScaleRef.current = fit
-    setPreviewScale((prev) => (prev === fitScaleRef.current ? fit : prev))
-  }
+  }, [previewingId, recomputeOnResize])
 
   const zoomIn = () => setPreviewScale((s) => Math.min(2, +(s + 0.1).toFixed(3)))
   const zoomOut = () => setPreviewScale((s) => Math.max(0.2, +(s - 0.1).toFixed(3)))
@@ -118,29 +150,17 @@ export function ResumeCenterPage() {
       Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
       return
     }
+    setImporting(true)
     try {
-      const raw = await file.text()
-      const parsed = JSON.parse(raw) as ResumeData
-      await importResume(parsed)
-      Message.success('导入成功')
+      const res = await importResumeFile(file)
+      Message.success(`已导入「${res.title}」，请核对内容后保存`)
+      setImportModalVisible(false)
       await refresh()
+      navigate(`/student/resumes/${res.resume_id}?imported=1`)
     } catch (error) {
-      Message.error(error instanceof ApiError ? error.message : '导入失败，请确认 JSON 结构正确')
-    }
-  }
-
-  const handleUpload = async (file: File) => {
-    if (resumes.length >= MAX_RESUMES) {
-      Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
-      return
-    }
-    try {
-      const res = await uploadResume(file)
-      Message.success(`已解析 ${res.title}，约 ${res.chars.toLocaleString()} 字符`)
-      await refresh()
-      navigate(`/student/resumes/${res.id}`)
-    } catch (error) {
-      Message.error(error instanceof ApiError ? error.message : '上传解析失败，请检查文件格式')
+      Message.error(error instanceof ApiError ? error.message : '导入失败，请检查文件格式')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -152,11 +172,8 @@ export function ResumeCenterPage() {
           <Button icon={<IconRefresh />} onClick={() => void refresh()} loading={loading}>
             刷新
           </Button>
-          <Button icon={<IconUpload />} onClick={() => importRef.current?.click()}>
-            导入 JSON
-          </Button>
-          <Button icon={<IconFile />} onClick={() => uploadRef.current?.click()}>
-            上传简历
+          <Button icon={<IconUpload />} onClick={() => setImportModalVisible(true)}>
+            导入简历
           </Button>
           <Button
             type="primary"
@@ -172,30 +189,64 @@ export function ResumeCenterPage() {
 
             新建简历
           </Button>
-          <input
-            ref={importRef}
-            type="file"
-            hidden
-            accept="application/json,.json"
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) void handleImport(file)
-              event.target.value = ''
-            }}
-          />
-          <input
-            ref={uploadRef}
-            type="file"
-            hidden
-            accept=".pdf,.docx,.txt,.md"
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) void handleUpload(file)
-              event.target.value = ''
-            }}
-          />
         </div>
       </div>
+
+      {/* 导入简历 Modal */}
+      <Modal
+        title="导入简历"
+        visible={importModalVisible}
+        onCancel={() => setImportModalVisible(false)}
+        footer={null}
+        style={{ width: 480 }}
+      >
+        <div style={{ padding: '8px 0' }}>
+          <p style={{ color: '#86909C', fontSize: 13, marginBottom: 16 }}>
+            支持 PDF、DOCX、JSON 格式，文件不超过 10MB。AI 将自动解析简历内容，解析后请核对无误再保存。
+          </p>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+            <Button
+              type="primary"
+              loading={importing}
+              onClick={() => importRef.current?.click()}
+              style={{ flex: 1 }}
+            >
+              选择文件（PDF / DOCX / JSON）
+            </Button>
+          </div>
+          <div style={{ fontSize: 12, color: '#86909C', lineHeight: 1.8 }}>
+            <p style={{ margin: 0 }}>• <b>PDF / DOCX</b>：自动识别简历内容并结构化，约需 10-30 秒</p>
+            <p style={{ margin: 0 }}>• <b>JSON</b>：直接导入，无需等待</p>
+            <p style={{ margin: 0 }}>
+              • 没有 JSON？<a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault()
+                  const template = { basic: { name: '', target_position: '', email: '', phone: '', location: '', birth_date: '' }, education: [], experience: [], projects: [], skills: '', self_evaluation: '' }
+                  const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url; a.download = '简历模板.json'; a.click()
+                  URL.revokeObjectURL(url)
+                }}
+                style={{ color: '#165dff' }}
+              >下载 JSON 模板</a>
+            </p>
+          </div>
+        </div>
+      </Modal>
+
+      <input
+        ref={importRef}
+        type="file"
+        hidden
+        accept=".pdf,.docx,.json"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) void handleImport(file)
+          event.target.value = ''
+        }}
+      />
 
       {mode === 'optimize' ? (
         <div className="resume-center-banner">

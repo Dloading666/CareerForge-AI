@@ -1,6 +1,6 @@
-﻿import { Dropdown } from "@arco-design/web-react"
+import { Dropdown } from "@arco-design/web-react"
 import { IconNotification } from "@arco-design/web-react/icon"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { apiRequest } from "../shared/api"
 
 type StudentAnnouncement = {
@@ -44,20 +44,13 @@ export function AnnouncementBellDropdown() {
   const [dismissedIds, setDismissedIds] = useState<Set<number>>(getDismissed)
   const [visible, setVisible] = useState(false)
 
-  const fetchAnns = useCallback(async () => {
-    try {
-      const data = await apiRequest<StudentAnnouncement[]>(
-        "/api/v1/student/announcements"
-      )
-      setAnns(data)
-    } catch {
-      // silently ignore
-    }
-  }, [])
-
   useEffect(() => {
-    void fetchAnns()
-  }, [fetchAnns])
+    let cancelled = false
+    apiRequest<StudentAnnouncement[]>("/api/v1/student/announcements")
+      .then((data) => { if (!cancelled) setAnns(data) })
+      .catch(() => { /* silently ignore */ })
+    return () => { cancelled = true }
+  }, [])
 
   const dismiss = (id: number) => {
     setDismissedIds((prev) => {
@@ -253,20 +246,13 @@ export function AnnouncementBanner() {
   const [anns, setAnns] = useState<StudentAnnouncement[]>([])
   const [dismissed, setDismissed] = useState<Set<number>>(getDismissed)
 
-  const fetchAnns = useCallback(async () => {
-    try {
-      const data = await apiRequest<StudentAnnouncement[]>(
-        "/api/v1/student/announcements"
-      )
-      setAnns(data)
-    } catch {
-      // silently ignore
-    }
-  }, [])
-
   useEffect(() => {
-    void fetchAnns()
-  }, [fetchAnns])
+    let cancelled = false
+    apiRequest<StudentAnnouncement[]>("/api/v1/student/announcements")
+      .then((data) => { if (!cancelled) setAnns(data) })
+      .catch(() => { /* silently ignore */ })
+    return () => { cancelled = true }
+  }, [])
 
   // sync with localStorage changes from the bell dropdown
   useEffect(() => {

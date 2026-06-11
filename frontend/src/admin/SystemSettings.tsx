@@ -1,4 +1,4 @@
-﻿import {
+import {
   Alert,
   Button,
   DatePicker,
@@ -24,7 +24,7 @@ import {
 
   IconSettings,
 } from "@arco-design/web-react/icon"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { apiRequest, ApiError } from "../shared/api"
 
 // ── types ──────────────────────────────────────
@@ -226,7 +226,28 @@ export function SystemSettings() {
 
   // ── fetch system config ─────────────────────
 
-  const fetchConfig = useCallback(async () => {
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const data = await apiRequest<SystemConfigData & Record<string, string>>(
+          "/api/v1/admin/system/config"
+        )
+        if (alive) setConfig({
+          platform_name: data.platform_name || "CareerForge",
+          maintenance_mode: data.maintenance_mode || "false",
+          maintenance_message: data.maintenance_message || "系统维护中，请稍后再试",
+        })
+      } catch {
+        if (alive) showNotify("error", "加载系统配置失败")
+      } finally {
+        if (alive) setConfigLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  const fetchConfig = async () => {
     try {
       const data = await apiRequest<SystemConfigData & Record<string, string>>(
         "/api/v1/admin/system/config"
@@ -241,15 +262,34 @@ export function SystemSettings() {
     } finally {
       setConfigLoading(false)
     }
-  }, [])
-
-  useEffect(() => {
-    void fetchConfig()
-  }, [fetchConfig])
+  }
 
   // ── fetch announcements ─────────────────────
 
-  const fetchAnns = useCallback(async () => {
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      if (alive) setAnnLoading(true)
+      try {
+        const params = new URLSearchParams({
+          page: String(annPage),
+          size: String(annSize),
+          active_only: String(annActiveOnly),
+        })
+        const data = await apiRequest<AnnounceListResponse>(
+          `/api/v1/admin/announcements?${params}`
+        )
+        if (alive) { setAnns(data.list); setAnnTotal(data.total) }
+      } catch {
+        if (alive) showNotify("error", "加载公告列表失败")
+      } finally {
+        if (alive) setAnnLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [annPage, annSize, annActiveOnly])
+
+  const fetchAnns = async () => {
     setAnnLoading(true)
     try {
       const params = new URLSearchParams({
@@ -267,11 +307,7 @@ export function SystemSettings() {
     } finally {
       setAnnLoading(false)
     }
-  }, [annPage, annSize, annActiveOnly])
-
-  useEffect(() => {
-    void fetchAnns()
-  }, [fetchAnns])
+  }
 
   // ── save config ─────────────────────────────
 

@@ -45,11 +45,11 @@ async function performRefreshAccessToken(): Promise<string | null> {
     body: JSON.stringify({ refresh }),
   })
 
-  let payload: { code?: number; data?: { access?: string } } | null = null
+  let payload: { code?: number; data?: { access?: string } }
   try {
     payload = (await response.json()) as { code?: number; data?: { access?: string } }
   } catch {
-    payload = null
+    return null
   }
 
   const access = response.ok && payload?.code === 0 ? payload.data?.access ?? null : null

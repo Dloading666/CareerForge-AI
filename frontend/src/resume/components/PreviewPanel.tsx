@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
-import { useResumeEditor } from '../ResumeEditorContext'
+import { useResumeEditor } from '../useResumeEditor'
 import { ResumeTemplatePreview } from '../templates/registry'
 import type { ResumeData } from '../types'
 

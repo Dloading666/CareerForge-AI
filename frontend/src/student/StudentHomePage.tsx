@@ -292,6 +292,8 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
   const handleDeleteSession = async (target: AgentChatSession) => {
     try {
       await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
+      chatRuntimeStore.abortSession(target.id)
+      chatRuntimeStore.clearSession(target.id)
       setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
       if (resumeActiveId === target.id) {
         setResumeNewChatTrigger((v) => v + 1)
@@ -304,7 +306,8 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
   const handleResumeSessionUpdated = useCallback((s: AgentChatSession) => {
     setResumeSessions((prev) => {
       const existing = prev.find((x) => x.id === s.id)
-      const entry: AgentChatSession = { ...s, title: existing?.title || s.title }
+      const title = (!s.title || s.title === '新对话') && existing?.title ? existing.title : s.title
+      const entry: AgentChatSession = { ...s, title }
       return [entry, ...prev.filter((x) => x.id !== s.id)]
     })
   }, [])
@@ -470,6 +473,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
                 todayEvents={todayEvents}
                 remindersDismissed={remindersDismissed}
                 onDismissReminders={() => setRemindersDismissed(true)}
+                onOpenProfile={() => { setProfileTab('profile'); setProfileModalVisible(true) }}
               />
             }
           />

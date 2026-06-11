@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class AgentSessionCreate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=128)
     agent_type: str = Field(default="resume", max_length=32)
+    active_resume_id: Optional[int] = None
 
 
 class AgentMessageRequest(BaseModel):
@@ -35,7 +36,9 @@ class AgentSessionResponse(BaseModel):
     title: str
     status: str
     agent_type: str = "resume"
+    active_resume_id: Optional[int] = None
     jd_text: Optional[str] = None
+    memory_json: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
