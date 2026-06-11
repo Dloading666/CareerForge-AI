@@ -6263,6 +6263,87 @@ textarea {
   font-size: 22px;
 }
 
+/* ── Interview advanced settings (collapsible) ──────────── */
+.interview-advanced-settings {
+  margin: 16px 0;
+  border: 1px solid #e5e8ef;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.interview-advanced-settings > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+  background: #f7f8fa;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.interview-advanced-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.interview-advanced-settings > summary::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 16px;
+  color: #86909c;
+  transition: transform 0.2s;
+}
+
+.interview-advanced-settings[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.interview-advanced-settings > summary:hover {
+  background: #eef1f6;
+}
+
+.interview-advanced-settings > summary svg {
+  color: #165dff;
+  font-size: 15px;
+}
+
+.interview-advanced-settings > summary small {
+  font-weight: 400;
+  color: #86909c;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.interview-advanced-body {
+  padding: 14px;
+}
+
+/* ── Interview section headers ─────────────────────────────── */
+.interview-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e8ef;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.interview-section-header:first-of-type {
+  margin-top: 0;
+}
+
+.interview-section-header svg {
+  color: #165dff;
+  font-size: 16px;
+}
+
 .interview-field {
   position: relative;
   display: flex;
@@ -6984,6 +7065,36 @@ textarea {
   color: #64748b;
 }
 
+.interview-history-item-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.interview-history-item-wrap .interview-history-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.interview-history-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: #c2c6cc;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.interview-history-delete:hover {
+  color: #f53f3f;
+  background: #fff0f0;
+}
+
 .interview-room-header {
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(16px) saturate(120%);
@@ -7385,16 +7496,17 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 36px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 14px;
   border: 1px solid #dcdfe6;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
   font-size: 14px;
   color: #1d2129;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s;
   user-select: none;
+  line-height: 38px;
 }
 
 .native-select-trigger:hover:not(.native-select-disabled) {
@@ -7439,15 +7551,15 @@ textarea {
 .native-select-popup {
   background: #fff;
   border: 1px solid #e5e6eb;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  max-height: 260px;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  max-height: 280px;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 4px;
 }
 
 .native-select-option {
-  padding: 8px 12px;
+  padding: 10px 14px;
   font-size: 14px;
   color: #1d2129;
   cursor: pointer;
@@ -7455,6 +7567,7 @@ textarea {
   align-items: center;
   gap: 8px;
   transition: background 0.1s;
+  border-radius: 6px;
 }
 
 .native-select-option:hover {

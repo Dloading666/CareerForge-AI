@@ -1,11 +1,14 @@
-import { Button, Input, InputNumber, Message, Select, Spin, Tag } from '@arco-design/web-react'
+import { Button, Input, InputNumber, Message, Popconfirm, Spin, Tag } from '@arco-design/web-react'
 import {
   IconBulb,
   IconCheckCircle,
+  IconDelete,
   IconExclamationCircle,
+  IconFile,
   IconPlayArrow,
   IconRefresh,
   IconRobot,
+  IconSafe,
   IconSend,
   IconSettings,
   IconStop,
@@ -16,9 +19,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
+import { NativeMultiSelect, NativeSelect } from '../shared/NativeSelect'
 
 type KnowledgeStatus = {
-  root: string
   document_count: number
   chunk_count: number
   retriever: string
@@ -42,6 +45,10 @@ type InterviewSession = {
   round_limit: number
   model_config_id?: number | null
   status: string
+  company_name?: string | null
+  seniority_level?: string | null
+  job_skills?: string[]
+  current_stage?: string
   created_at?: string | null
   ended_at?: string | null
 }
@@ -63,6 +70,13 @@ type InterviewTurn = {
   followup_reason?: string | null
   retrieved_chunks?: Array<{ title: string; topic: string; source_file: string; score: number }>
   knowledge_points?: string[]
+  stage?: string | null
+  question_type?: string | null
+  question_reason?: string | null
+  capability_tags?: string[]
+  score_reasons?: Record<string, string>
+  evidence_quotes?: Array<{ quote: string; reason: string }>
+  top_sources?: Array<{ title: string; topic: string; source_file: string; score: number }>
 }
 
 type Report = {
@@ -90,6 +104,9 @@ type Report = {
     }
   } | null
   report_text: string
+  training_plan?: Array<{ day: number; focus: string; tasks: string[]; expected_output: string }>
+  rewrite_examples?: Array<{ original_answer: string; better_answer: string; why_better: string }>
+  next_session_preset?: { target_role?: string; interview_type?: string; interview_style?: string; focus_tags?: string[] }
 }
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -122,14 +139,14 @@ const INTERVIEW_TYPE_META: Record<string, string> = {
 }
 
 const INTERVIEW_TYPE_OPTIONS = [
-  { value: 'first_round', label: '一面' },
-  { value: 'second_round', label: '二面' },
-  { value: 'technical', label: '技术面试' },
-  { value: 'project', label: '项目深挖' },
-  { value: 'hr', label: 'HR 面' },
-  { value: 'manager', label: '总经理面试' },
-  { value: 'final_round', label: '终面' },
-  { value: 'stress', label: '压力面' },
+  { value: 'first_round', label: '📋 一面' },
+  { value: 'second_round', label: '📋 二面' },
+  { value: 'technical', label: '💻 技术面试' },
+  { value: 'project', label: '📂 项目深挖' },
+  { value: 'hr', label: '🤝 HR 面' },
+  { value: 'manager', label: '👔 总经理面试' },
+  { value: 'final_round', label: '🏁 终面' },
+  { value: 'stress', label: '🔥 压力面' },
 ]
 
 const FOCUS_OPTIONS = [
@@ -149,6 +166,18 @@ const INTERVIEW_STYLE_LABELS: Record<string, string> = {
   executive: '高管式审视',
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  opening: '开场',
+  self_intro: '自我介绍',
+  resume_deep_dive: '简历深挖',
+  technical_core: '核心技术',
+  scenario: '场景题',
+  pressure: '压力追问',
+  reverse_question: '反问环节',
+  wrap_up: '收束复盘',
+  completed: '已完成',
+}
+
 const INTERVIEW_STYLE_TONE: Record<string, string> = {
   friendly: '语气会更鼓励，但仍会追证据。',
   coach: '语气会先引导候选人补全结构，再对薄弱点继续追问。',
@@ -166,14 +195,14 @@ const formatDuration = (durationMs: number) => {
 
 
 const normalizeQuestionMarkdown = (text: string) => {
-  // 先压缩所有连续空行为单个换行
+  // 压缩多余空行
   let result = text.replace(/\n{3,}/g, '\n\n').trim()
-  // 再处理编号列表格式
-  if (/(^|\s)1[)）]/.test(result)) {
+  // 编号列表：用单换行保持紧凑，避免段落间距过大
+  if (/(^|\s)\d+[.）)]/.test(result)) {
     result = result
-      .replace(/([：:。！？?；;])\s*(\d+[)）])/g, '$1\n\n$2 ')
-      .replace(/\s+(\d+[)）])\s*/g, '\n\n$1 ')
-      .replace(/\n{3,}/g, '\n\n')
+      .replace(/([：:。！？?；;])\s*(\d+[.）)])\s*/g, '$1\n$2 ')
+      .replace(/\s+(\d+[.）)])\s*/g, '\n$1 ')
+      .replace(/\n{2,}/g, '\n')
   }
   return result
 }
@@ -213,6 +242,9 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [uploadingResume, setUploadingResume] = useState(false)
   const [focusTags, setFocusTags] = useState<string[]>(['resume_project'])
   const [customInstruction, setCustomInstruction] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [seniorityLevel, setSeniorityLevel] = useState('')
+  const [jobSkills, _setJobSkills] = useState<string[]>([])
   const [session, setSession] = useState<InterviewSession | null>(null)
   const [turns, setTurns] = useState<InterviewTurn[]>([])
   const [answer, setAnswer] = useState('')
@@ -241,15 +273,18 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
   const normalizedRoundLimit = Math.max(3, Math.min(20, Number(roundLimit) || 8))
   const promptPreview = `${selectedModel?.display_name ?? '默认模型'} · ${INTERVIEW_TYPE_META[interviewType] ?? '综合能力'} · ${INTERVIEW_STYLE_TONE[interviewStyle] ?? ''} · ${focusTags.map((tag) => FOCUS_OPTIONS.find((item) => item.value === tag)?.label ?? tag).join('、') || '默认'} · ${normalizedRoundLimit} 轮`
-  const selectPopupProps = {
-    getPopupContainer: (node: HTMLElement) => node.closest('.interview-field') ?? document.body,
-    triggerProps: {
-      position: 'bottom' as const,
-      autoFitPosition: false,
-      autoAlignPopupWidth: true,
-      popupStyle: { zIndex: 2600 },
-    },
-  }
+  const modelSelectOptions = modelOptions.map((model) => ({
+    value: String(model.id),
+    label: `${model.display_name} · ${model.model_identifier}`,
+  }))
+  const seniorityOptions = ['实习', '校招', '初级', '中级', '高级'].map((level) => ({ value: level, label: level }))
+  const interviewStyleOptions = [
+    { value: 'strict', label: '🎯 严格追问' },
+    { value: 'stress', label: '🔥 压力面试' },
+    { value: 'friendly', label: '🌱 温和训练' },
+    { value: 'coach', label: '🧭 教练式引导' },
+    { value: 'executive', label: '👔 高管式审视' },
+  ]
   const historyGroups = useMemo(() => {
     const groups: Record<string, InterviewSession[]> = {}
     for (const item of interviewSessions) {
@@ -301,6 +336,23 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
     }
   }
 
+  const handleDeleteInterview = async (sessionId: number) => {
+    try {
+      await apiRequest(`/api/v1/student/interviews/${sessionId}`, { method: 'DELETE' })
+      setInterviewSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      if (session?.id === sessionId) {
+        setSession(null)
+        setTurns([])
+        setReport(null)
+        setConfigCollapsed(false)
+        onInterviewActiveChange?.(false)
+      }
+      Message.success('已删除')
+    } catch (error) {
+      Message.error(error instanceof Error ? error.message : '删除失败')
+    }
+  }
+
   const handleResumeUpload = async (file: File) => {
     setUploadingResume(true)
     try {
@@ -349,6 +401,10 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   }, [loading, onInterviewActiveChange, session?.status])
 
   const startInterview = async () => {
+    if (!targetRole.trim()) {
+      Message.warning('请先填写目标岗位')
+      return
+    }
     if (resumeSource === 'upload' && !uploadedResumeText.trim()) {
       Message.warning('请先上传并解析一份简历，或切换为读取在线简历。')
       return
@@ -388,6 +444,9 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           uploaded_resume_text: resumeSource === 'upload' ? uploadedResumeText : undefined,
           focus_tags: focusTags,
           custom_instruction: customInstruction,
+          company_name: companyName || undefined,
+          seniority_level: seniorityLevel || undefined,
+          job_skills: jobSkills.length > 0 ? jobSkills : undefined,
         }),
       })
       setSession(res.session)
@@ -406,19 +465,6 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         clearInterval(progressTimerRef.current)
         progressTimerRef.current = null
       }
-      setLoading(false)
-    }
-  }
-
-  const reloadKnowledge = async () => {
-    setLoading(true)
-    try {
-      const next = await apiRequest<KnowledgeStatus>('/api/v1/student/interviews/knowledge/reload', { method: 'POST' })
-      setKnowledge(next)
-      Message.success('知识库已重新索引')
-    } catch (error) {
-      Message.error(error instanceof Error ? error.message : '重新索引失败')
-    } finally {
       setLoading(false)
     }
   }
@@ -566,31 +612,55 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           </button>
         </div>
 
+        {/* ── 基本信息 ── */}
+        <div className="interview-section-header">
+          <IconRobot />
+          <span>基本信息</span>
+        </div>
+
         <label className="interview-field">
-          <span>大模型</span>
-          <Select
-            value={selectedModelId ? String(selectedModelId) : undefined}
+          <span>🧠 大模型</span>
+          <NativeSelect
+            value={selectedModelId ? String(selectedModelId) : ''}
             onChange={(val) => setSelectedModelId(Number(val) || undefined)}
+            options={modelSelectOptions}
             placeholder="选择面试官大脑"
             disabled={session?.status === 'active'}
-            style={{ width: '100%' }}
-            {...selectPopupProps}
-          >
-            {modelOptions.map((m) => (
-              <Select.Option key={m.id} value={String(m.id)}>{`${m.display_name} · ${m.model_identifier}`}</Select.Option>
-            ))}
-          </Select>
+          />
         </label>
 
         <label className="interview-field">
-          <span>目标岗位</span>
+          <span>🎯 目标岗位 <b style={{ color: '#f53f3f' }}>*</b></span>
           <Input value={targetRole} onChange={setTargetRole} disabled={session?.status === 'active'} placeholder="Java 后端开发工程师 / 产品经理 / 算法实习生" />
         </label>
 
         <label className="interview-field">
-          <span>岗位 JD</span>
+          <span>📄 岗位 JD</span>
           <Input.TextArea value={jobDescription} onChange={setJobDescription} autoSize={{ minRows: 4, maxRows: 8 }} disabled={session?.status === 'active'} placeholder="粘贴目标岗位要求、职责描述、技术栈或公司招聘 JD。留空时会按目标岗位做通用模拟。" />
         </label>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <label className="interview-field" style={{ flex: 1 }}>
+            <span>🏢 公司/组织</span>
+            <Input value={companyName} onChange={setCompanyName} disabled={session?.status === 'active'} placeholder="如：字节跳动" />
+          </label>
+          <label className="interview-field" style={{ flex: 1 }}>
+            <span>📊 岗位级别</span>
+            <NativeSelect
+              value={seniorityLevel}
+              onChange={(val) => setSeniorityLevel(val || '')}
+              options={seniorityOptions}
+              placeholder="选择级别"
+              disabled={session?.status === 'active'}
+            />
+          </label>
+        </div>
+
+        {/* ── 简历来源 ── */}
+        <div className="interview-section-header">
+          <IconFile />
+          <span>简历来源</span>
+        </div>
 
         <div className="interview-resume-source">
           <span>简历来源</span>
@@ -655,15 +725,24 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           </p>
         </div>
 
+        {/* ── 面试设置 ── */}
+        <div className="interview-section-header">
+          <IconSafe />
+          <span>面试设置</span>
+        </div>
+
         <div className="interview-field-row">
           <label className="interview-field">
-            <span>面试类型</span>
-            <Select value={interviewType} onChange={setInterviewType} disabled={session?.status === 'active'} style={{ width: '100%' }} {...selectPopupProps}>
-              {INTERVIEW_TYPE_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
-            </Select>
+            <span>📋 面试类型</span>
+            <NativeSelect
+              value={interviewType}
+              onChange={setInterviewType}
+              options={INTERVIEW_TYPE_OPTIONS}
+              disabled={session?.status === 'active'}
+            />
           </label>
           <label className="interview-field">
-            <span>轮次</span>
+            <span>🔄 轮次</span>
             <InputNumber
               value={Number(roundLimit) || 8}
               min={3}
@@ -678,64 +757,73 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         </div>
 
         <label className="interview-field">
-          <span>面试风格</span>
-          <Select value={interviewStyle} onChange={setInterviewStyle} disabled={session?.status === 'active'} style={{ width: '100%' }} {...selectPopupProps}>
-            <Select.Option value="strict">严格追问</Select.Option>
-            <Select.Option value="stress">压力面试</Select.Option>
-            <Select.Option value="friendly">温和训练</Select.Option>
-            <Select.Option value="coach">教练式引导</Select.Option>
-            <Select.Option value="executive">高管式审视</Select.Option>
-          </Select>
+          <span>🎭 面试风格</span>
+          <NativeSelect
+            value={interviewStyle}
+            onChange={setInterviewStyle}
+            options={interviewStyleOptions}
+            disabled={session?.status === 'active'}
+          />
         </label>
 
         <label className="interview-field">
-          <span>面试重点（可多选）</span>
-          <Select mode="multiple" value={focusTags} onChange={setFocusTags} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" style={{ width: '100%' }} {...selectPopupProps}>
-            {FOCUS_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
-          </Select>
+          <span>🔍 面试重点（可多选）</span>
+          <NativeMultiSelect
+            value={focusTags}
+            onChange={setFocusTags}
+            options={FOCUS_OPTIONS}
+            disabled={session?.status === 'active'}
+            placeholder="选择你希望重点练习的方向"
+          />
         </label>
 
-        <label className="interview-field">
-          <span>自定义追问要求</span>
-          <Input.TextArea value={customInstruction} onChange={setCustomInstruction} autoSize={{ minRows: 2, maxRows: 5 }} disabled={session?.status === 'active'} placeholder="例如：多问数据库事务；少问八股；每轮都要追问量化结果。" />
-        </label>
-
-        <div className="interview-prompt-preview">
-          <div>
-            <strong>当前提示词策略</strong>
-            <p>{promptPreview}</p>
-          </div>
-          <Tag color={interviewStyle === 'friendly' ? 'green' : interviewStyle === 'stress' ? 'red' : 'blue'}>
-            {INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}
-          </Tag>
-        </div>
-
-        <div className="interview-harness-card">
-          <div className="interview-harness-title">
+        {/* ── 高级设置（可折叠） ── */}
+        <details className="interview-advanced-settings">
+          <summary>
             <IconSettings />
-            <strong>面试 Harness</strong>
-          </div>
-          <div className="interview-harness-steps">
-            <span>开场</span>
-            <span>简历深挖</span>
-            <span>岗位题</span>
-            <span>反问</span>
-            <span>复盘</span>
-          </div>
-          <p>一次只问一个问题，回答越空泛，追问越具体；报告优先指出最低分维度。</p>
-        </div>
+            <span>高级设置</span>
+            <small>自定义追问要求 · 提示词策略 · Harness · 知识库</small>
+          </summary>
+          <div className="interview-advanced-body">
+            <label className="interview-field">
+              <span>✏️ 自定义追问要求</span>
+              <Input.TextArea value={customInstruction} onChange={setCustomInstruction} autoSize={{ minRows: 2, maxRows: 5 }} disabled={session?.status === 'active'} placeholder="例如：多问数据库事务；少问八股；每轮都要追问量化结果。" />
+            </label>
 
-        <div className="knowledge-status">
-          <div>
-            <strong>RAG 知识库</strong>
-            <p>{knowledge ? `${knowledge.document_count} 个文档，${knowledge.chunk_count} 个知识块` : '正在检查知识库'}</p>
-          </div>
-          <Tag color={knowledge?.vector_ready ? 'green' : 'orange'}>{knowledge?.retriever ?? 'checking'}</Tag>
-        </div>
+            <div className="interview-prompt-preview">
+              <div>
+                <strong>当前提示词策略</strong>
+                <p>{promptPreview}</p>
+              </div>
+              <Tag color={interviewStyle === 'friendly' ? 'green' : interviewStyle === 'stress' ? 'red' : 'blue'}>
+                {INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}
+              </Tag>
+            </div>
 
-        <Button icon={<IconRefresh />} onClick={reloadKnowledge} long style={{ marginBottom: 12 }}>
-          重新索引知识库
-        </Button>
+            <div className="interview-harness-card">
+              <div className="interview-harness-title">
+                <IconSettings />
+                <strong>面试 Harness</strong>
+              </div>
+              <div className="interview-harness-steps">
+                <span>开场</span>
+                <span>简历深挖</span>
+                <span>岗位题</span>
+                <span>反问</span>
+                <span>复盘</span>
+              </div>
+              <p>一次只问一个问题，回答越空泛，追问越具体；报告优先指出最低分维度。</p>
+            </div>
+
+            <div className="knowledge-status">
+              <div>
+                <strong>RAG 知识库</strong>
+                <p>{knowledge ? `${knowledge.document_count} 个文档，${knowledge.chunk_count} 个知识块` : '正在检查知识库'}</p>
+              </div>
+              <Tag color={knowledge?.vector_ready ? 'green' : 'orange'}>{knowledge?.retriever ?? 'checking'}</Tag>
+            </div>
+          </div>
+        </details>
 
         <Button type="primary" icon={session?.status === 'active' ? <IconRefresh /> : <IconPlayArrow />} loading={loading && !pendingTurn} onClick={startInterview} long>
           {session?.status === 'active' ? '重新开始一场' : '开始面试'}
@@ -757,16 +845,32 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                   <small>{items.length}</small>
                 </button>
                 {!collapsedHistoryDates.has(date) && items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`interview-history-item${session?.id === item.id ? ' active' : ''}`}
-                      onClick={() => void loadInterviewDetail(item.id)}
-                    >
-                      <b>{formatTimeLabel(item.created_at)}</b>
-                      <em>{item.target_role || '未填写目标岗位'}</em>
-                      <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.round_limit} 轮</small>
-                    </button>
+                    <div key={item.id} className="interview-history-item-wrap">
+                      <button
+                        type="button"
+                        className={`interview-history-item${session?.id === item.id ? ' active' : ''}`}
+                        onClick={() => void loadInterviewDetail(item.id)}
+                      >
+                        <b>{formatTimeLabel(item.created_at)}</b>
+                        <em>{item.target_role || '未填写目标岗位'}</em>
+                        <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.round_limit} 轮</small>
+                      </button>
+                      <Popconfirm
+                        title="确定删除这条面试记录？"
+                        onOk={() => void handleDeleteInterview(item.id)}
+                        okText="删除"
+                        cancelText="取消"
+                      >
+                        <button
+                          type="button"
+                          className="interview-history-delete"
+                          onClick={(e) => e.stopPropagation()}
+                          title="删除"
+                        >
+                          <IconDelete />
+                        </button>
+                      </Popconfirm>
+                    </div>
                   ))}
               </div>
             ))
@@ -778,7 +882,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         <div className={`interview-room-header${session ? ' interview-room-header--session' : ''}`}>
           <div>
             <h2>{session ? session.target_role : '准备进入面试房间'}</h2>
-            <p>{session ? `${formatDateLabel(session.created_at)} ${formatTimeLabel(session.created_at)} · 第 ${turns.length}/${session.round_limit} 轮 · ${session.status === 'active' ? '面试中' : '已结束'}` : '选择岗位、模型和风格后进入沉浸式训练。Enter 发送，Shift + Enter 换行。'}</p>
+            <p>{session ? `${formatDateLabel(session.created_at)} ${formatTimeLabel(session.created_at)} · 第 ${turns.length}/${session.round_limit} 轮 · ${session.current_stage ? STAGE_LABELS[session.current_stage] ?? session.current_stage : ''} · ${session.status === 'active' ? '面试中' : '已结束'}` : '选择岗位、模型和风格后进入沉浸式训练。Enter 发送，Shift + Enter 换行。'}</p>
           </div>
         </div>
 
@@ -824,6 +928,33 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                     {turn.knowledge_points.slice(0, 4).map((item) => <Tag key={item}>{item}</Tag>)}
                   </div>
                 )}
+                {/* 考察点 */}
+                {turn.capability_tags && turn.capability_tags.length > 0 && (
+                  <div className="knowledge-tags" style={{ marginTop: 4 }}>
+                    <span style={{ fontSize: 12, color: '#86909c', marginRight: 4 }}>考察点：</span>
+                    {turn.capability_tags.map((tag) => <Tag key={tag} color="blue" style={{ fontSize: 11 }}>{tag}</Tag>)}
+                  </div>
+                )}
+                {/* 追问原因 */}
+                {turn.question_reason && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: '#86909c', lineHeight: 1.6 }}>
+                    💡 {turn.question_reason}
+                  </div>
+                )}
+                {/* 题库命中来源 */}
+                {turn.top_sources && turn.top_sources.length > 0 && (
+                  <details style={{ marginTop: 6, fontSize: 12, color: '#86909c' }}>
+                    <summary style={{ cursor: 'pointer' }}>📚 题库命中来源（{turn.top_sources.length}）</summary>
+                    <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                      {turn.top_sources.map((src, i) => (
+                        <li key={i}>{src.source_file} / {src.topic} / score {(src.score ?? 0).toFixed(2)}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {(!turn.top_sources || turn.top_sources.length === 0) && turn.turn_index > 1 && turn.answer && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: '#c9cdd4' }}>未命中题库，当前问题按简历和岗位要求自适应生成。</div>
+                )}
               </div>
               {(turn.answer || optimisticAnswers[turn.id]) && (
                 <div className="interview-message candidate">
@@ -857,6 +988,34 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                     <div className="interview-feedback-section">
                       <span className="feedback-label next">→ 追问方向</span>
                       <p>{turn.followup_reason}</p>
+                    </div>
+                  )}
+                  {/* 扣分原因 */}
+                  {turn.score_reasons && Object.keys(turn.score_reasons).length > 0 && (
+                    <details className="interview-feedback-section" style={{ marginTop: 8 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>📊 各维度扣分原因</summary>
+                      <ul style={{ margin: '6px 0 0 16px', padding: 0, fontSize: 12, lineHeight: 1.8 }}>
+                        {DIMENSION_LABELS[Object.keys(turn.score_reasons)[0]] !== undefined
+                          ? Object.entries(turn.score_reasons).map(([dim, reason]) => (
+                              <li key={dim}><strong>{DIMENSION_LABELS[dim] ?? dim}：</strong>{reason}</li>
+                            ))
+                          : Object.entries(turn.score_reasons).map(([dim, reason]) => (
+                              <li key={dim}><strong>{dim}：</strong>{reason}</li>
+                            ))
+                        }
+                      </ul>
+                    </details>
+                  )}
+                  {/* 证据引用 */}
+                  {turn.evidence_quotes && turn.evidence_quotes.length > 0 && (
+                    <div className="interview-feedback-section" style={{ marginTop: 6 }}>
+                      <span className="feedback-label" style={{ color: '#722ed1' }}>💬 证据引用</span>
+                      {turn.evidence_quotes.map((eq, i) => (
+                        <div key={i} style={{ margin: '4px 0', padding: '4px 8px', background: '#f9f0ff', borderRadius: 4, fontSize: 12 }}>
+                          <span style={{ color: '#722ed1' }}>"{eq.quote}"</span>
+                          {eq.reason && <span style={{ color: '#86909c', marginLeft: 6 }}>— {eq.reason}</span>}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -937,11 +1096,35 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                   <h3>面试复盘</h3>
                   <p>先看最低分，再看怎么练。报告会把“最容易被面试官继续追”的地方放在前面。</p>
                   {report.comparison?.scoring && (
+                    <>
                     <p className="report-scoring-meta">
                       {report.comparison.scoring.mode === 'llm_rubric' ? '大模型 Rubric 终评' : 'Rubric 本地兜底'}
                       {report.comparison.scoring.model ? ` · ${report.comparison.scoring.model}` : ''}
                       {report.comparison.scoring.usage?.total_tokens ? ` · ${report.comparison.scoring.usage.total_tokens.toLocaleString()} tokens` : ''}
                     </p>
+                    {report.comparison.scoring.mode !== 'llm_rubric' && session?.id && (
+                      <Button
+                        size="mini"
+                        type="outline"
+                        style={{ marginTop: 4 }}
+                        loading={loading}
+                        onClick={async () => {
+                          try {
+                            setLoading(true)
+                            const data = await apiRequest<Report>(`/api/v1/student/interviews/${session.id}/report/regenerate`, { method: 'POST' })
+                            setReport(data)
+                            Message.success('报告已重新生成')
+                          } catch (error) {
+                            Message.error(error instanceof Error ? error.message : '重新生成失败')
+                          } finally {
+                            setLoading(false)
+                          }
+                        }}
+                      >
+                        重新生成报告
+                      </Button>
+                    )}
+                    </>
                   )}
                 </div>
                 {report.comparison?.overall_delta !== undefined && (
@@ -971,6 +1154,66 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                 <ReportList title="训练建议" tone="coach" items={report.suggestions} />
                 <ReportList title="下一轮题目" tone="next" items={report.next_questions} />
               </div>
+
+              {/* 训练计划 */}
+              {report.training_plan && report.training_plan.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <h4 style={{ marginBottom: 8 }}>📅 训练计划</h4>
+                  {report.training_plan.map((day, i) => (
+                    <div key={i} style={{ padding: '8px 12px', background: '#f7f8fa', borderRadius: 6, marginBottom: 8 }}>
+                      <strong>Day {day.day}：{day.focus}</strong>
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: 13, lineHeight: 1.8 }}>
+                        {day.tasks.map((task, j) => <li key={j}>{task}</li>)}
+                      </ul>
+                      {day.expected_output && <p style={{ margin: '4px 0 0', fontSize: 12, color: '#86909c' }}>预期产出：{day.expected_output}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 回答改写示例 */}
+              {report.rewrite_examples && report.rewrite_examples.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <h4 style={{ marginBottom: 8 }}>✍️ 回答改写示例</h4>
+                  {report.rewrite_examples.map((ex, i) => (
+                    <div key={i} style={{ padding: '8px 12px', background: '#f7f8fa', borderRadius: 6, marginBottom: 8, fontSize: 13 }}>
+                      <p style={{ margin: 0, color: '#86909c' }}><s>{ex.original_answer}</s></p>
+                      <p style={{ margin: '6px 0 0', color: '#00b42a' }}>→ {ex.better_answer}</p>
+                      {ex.why_better && <p style={{ margin: '4px 0 0', fontSize: 12, color: '#86909c' }}>改进点：{ex.why_better}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 下一场预设 + 再练一场 */}
+              {report.next_session_preset && report.next_session_preset.target_role && (
+                <div style={{ marginTop: 16, padding: '10px 14px', background: '#e8f3ff', borderRadius: 6 }}>
+                  <h4 style={{ marginBottom: 6 }}>🎯 下一场建议</h4>
+                  <p style={{ margin: 0, fontSize: 13 }}>
+                    岗位：{report.next_session_preset.target_role}
+                    {report.next_session_preset.interview_type && <> · 类型：{INTERVIEW_TYPE_META[report.next_session_preset.interview_type] ?? report.next_session_preset.interview_type}</>}
+                    {report.next_session_preset.interview_style && <> · 风格：{INTERVIEW_STYLE_LABELS[report.next_session_preset.interview_style] ?? report.next_session_preset.interview_style}</>}
+                  </p>
+                  <Button
+                    size="small"
+                    type="outline"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      setTargetRole(report.next_session_preset?.target_role ?? '')
+                      if (report.next_session_preset?.interview_type) setInterviewType(report.next_session_preset.interview_type)
+                      if (report.next_session_preset?.interview_style) setInterviewStyle(report.next_session_preset.interview_style)
+                      if (report.next_session_preset?.focus_tags) setFocusTags(report.next_session_preset.focus_tags)
+                      setSession(null)
+                      setTurns([])
+                      setReport(null)
+                      setConfigCollapsed(false)
+                      onInterviewActiveChange?.(false)
+                    }}
+                  >
+                    按此计划再练一场
+                  </Button>
+                </div>
+              )}
             </div>
           </section>
         )}
