@@ -958,9 +958,17 @@ textarea {
   overflow: hidden;
 }
 
+.student-shell--interview-focus .topbar {
+  display: none;
+}
+
 .student-shell .content-panel {
   height: 100%;
   min-height: 0;
+}
+
+.student-shell--interview-focus .interview-page {
+  height: 100vh;
 }
 
 .agent-thread {
@@ -6256,12 +6264,14 @@ textarea {
 }
 
 .interview-field {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 7px;
   margin-bottom: 14px;
   font-size: 13px;
   font-weight: 600;
+  overflow: visible;
 }
 
 .interview-field-row {
@@ -6309,10 +6319,6 @@ textarea {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid #eef0f5;
-}
-
-.interview-config-toggle {
-  flex: 0 0 auto;
 }
 
 .interview-dialogue {
@@ -6451,27 +6457,58 @@ textarea {
 .interview-loading {
   display: flex;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
+  width: min(680px, 100%);
+  margin: 14px auto 22px;
+  border: 1px solid rgba(219, 230, 243, 0.92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
   color: #6b778c;
-  padding: 8px 0;
+  padding: 14px 18px;
+  text-align: center;
+  box-shadow: 0 14px 34px rgba(30, 41, 59, 0.08);
 }
 
 .interview-loading small {
   width: 100%;
-  padding-left: 26px;
   color: #94a3b8;
   font-size: 12px;
 }
 
 .interview-answer-box {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: end;
+  align-items: stretch;
   padding: 14px 18px;
   border-top: 1px solid #eef0f5;
   background: #fbfcff;
+}
+
+.interview-answer-input {
+  align-self: stretch;
+}
+
+.interview-answer-actions {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 8px;
+  min-width: 360px;
+}
+
+.interview-answer-actions-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.interview-answer-actions-row .arco-btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 8px;
+  font-weight: 600;
 }
 
 .voice-button--active {
@@ -6556,68 +6593,112 @@ textarea {
   gap: 14px;
   padding: 14px;
   background:
-    linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+    linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
 }
 
 .interview-config-panel,
 .interview-room {
-  border-color: rgba(203, 213, 225, 0.9);
-  box-shadow: 0 18px 48px rgba(30, 41, 59, 0.08);
+  border-color: rgba(214, 221, 232, 0.88);
+  box-shadow:
+    0 22px 54px rgba(30, 41, 59, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .interview-config-panel {
-  background: #fbfcff;
+  background: rgba(251, 252, 255, 0.86);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  scrollbar-width: thin;
 }
 
 .interview-brand {
-  padding-bottom: 14px;
-  border-bottom: 1px solid #e6ebf2;
+  position: relative;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid rgba(219, 230, 243, 0.9);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.88));
+  box-shadow: 0 14px 28px rgba(30, 41, 59, 0.06);
 }
 
 .interview-avatar {
-  background: #172033;
-  box-shadow: 0 10px 22px rgba(23, 32, 51, 0.18);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #101828, #263244);
+  box-shadow: 0 12px 24px rgba(23, 32, 51, 0.2);
+}
+
+.interview-brand h3 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.interview-brand p {
+  max-width: 250px;
+  color: #596579;
+  line-height: 1.6;
 }
 
 .interview-mode-strip {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 6px;
   margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid rgba(219, 230, 243, 0.9);
+  border-radius: 8px;
+  background: rgba(239, 244, 249, 0.86);
 }
 
 .interview-mode-card {
-  min-height: 82px;
-  border: 1px solid #d8e0eb;
-  border-radius: 8px;
-  background: #fff;
+  min-height: 54px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   color: #334155;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 12px;
+  column-gap: 8px;
+  row-gap: 1px;
+  padding: 9px 10px;
   text-align: left;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.interview-mode-card:not(:disabled):hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .interview-mode-card svg {
   font-size: 20px;
+  grid-row: span 2;
 }
 
 .interview-mode-card span {
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .interview-mode-card small {
   color: #64748b;
   font-size: 12px;
+  line-height: 1.2;
 }
 
 .interview-mode-card.active {
-  border-color: rgba(22, 93, 255, 0.45);
-  background: #eef4ff;
+  border-color: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
   color: #174ea6;
+  box-shadow:
+    0 10px 24px rgba(22, 93, 255, 0.12),
+    inset 0 0 0 1px rgba(22, 93, 255, 0.08);
 }
 
 .interview-harness-card {
@@ -6904,7 +6985,18 @@ textarea {
 }
 
 .interview-room-header {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+.interview-room-header--session {
+  justify-content: center;
+  text-align: center;
+}
+
+.interview-room-header--session > div {
+  min-width: 0;
 }
 
 .interview-empty {
@@ -6945,11 +7037,13 @@ textarea {
 .interview-progress-stream {
   width: min(640px, 100%);
   margin: -58px auto 28px;
-  padding: 14px 16px;
-  border: 1px solid #dbe6f3;
+  padding: 16px 18px;
+  border: 1px solid rgba(219, 230, 243, 0.92);
   border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 16px 34px rgba(30, 41, 59, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 42px rgba(30, 41, 59, 0.1);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .interview-progress-head {
@@ -7020,7 +7114,17 @@ textarea {
 }
 
 .interview-message.candidate {
-  background: #172033;
+  background: #e8f3ff;
+  border-color: #c9ddff;
+  color: #1f2329;
+}
+
+.interview-message.candidate .bubble-content {
+  color: #1f2329;
+}
+
+.interview-message.candidate .bubble-title {
+  color: #3370ff;
 }
 
 .interview-feedback {
@@ -7029,7 +7133,10 @@ textarea {
 }
 
 .interview-answer-box {
-  background: #ffffff;
+  grid-template-columns: minmax(0, 1fr) auto;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .interview-answer-box textarea {
@@ -7266,6 +7373,10 @@ textarea {
   .score-grid {
     grid-template-columns: 1fr;
   }
+
+  .interview-answer-actions {
+    min-width: 0;
+  }
 }
 
 /* ── NativeSelect custom dropdown ──────────────────────────────── */
@@ -7423,6 +7534,11 @@ textarea {
   padding: 20px 14px;
   gap: 8px;
   overflow: hidden;
+  transition:
+    width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .global-rail-brand {
@@ -7430,6 +7546,33 @@ textarea {
   align-items: center;
   gap: 10px;
   padding: 4px 4px 16px;
+}
+
+.global-rail-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+  margin: -6px 0 8px;
+  border: 1px solid rgba(217, 222, 238, 0.86);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #64748b;
+  cursor: pointer;
+  font-size: 16px;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.global-rail-collapse-btn:hover {
+  color: #165dff;
+  border-color: rgba(22, 93, 255, 0.24);
+  background: #eef4ff;
+  transform: translateY(-1px);
 }
 
 .global-rail-logo {
@@ -7611,6 +7754,12 @@ textarea {
 
 .global-rail--collapsed .global-rail-menu {
   align-items: center;
+}
+
+.global-rail--collapsed .global-rail-collapse-btn {
+  width: 40px;
+  min-height: 36px;
+  margin-top: -2px;
 }
 
 .global-rail--collapsed .global-rail-item {

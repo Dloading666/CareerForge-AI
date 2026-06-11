@@ -3,7 +3,6 @@ import {
   IconBulb,
   IconCheckCircle,
   IconExclamationCircle,
-  IconLeft,
   IconPlayArrow,
   IconRefresh,
   IconRobot,
@@ -199,7 +198,7 @@ const scoreLevel = (value: number) => {
   return 'weak'
 }
 
-export function AIInterviewerPage() {
+export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActiveChange?: (active: boolean) => void }) {
   const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null)
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([])
   const [selectedModelId, setSelectedModelId] = useState<number | undefined>(undefined)
@@ -217,6 +216,7 @@ export function AIInterviewerPage() {
   const [session, setSession] = useState<InterviewSession | null>(null)
   const [turns, setTurns] = useState<InterviewTurn[]>([])
   const [answer, setAnswer] = useState('')
+  const [optimisticAnswers, setOptimisticAnswers] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState<Report | null>(null)
   const [configCollapsed, setConfigCollapsed] = useState(false)
@@ -241,6 +241,15 @@ export function AIInterviewerPage() {
   const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
   const normalizedRoundLimit = Math.max(3, Math.min(20, Number(roundLimit) || 8))
   const promptPreview = `${selectedModel?.display_name ?? '默认模型'} · ${INTERVIEW_TYPE_META[interviewType] ?? '综合能力'} · ${INTERVIEW_STYLE_TONE[interviewStyle] ?? ''} · ${focusTags.map((tag) => FOCUS_OPTIONS.find((item) => item.value === tag)?.label ?? tag).join('、') || '默认'} · ${normalizedRoundLimit} 轮`
+  const selectPopupProps = {
+    getPopupContainer: (node: HTMLElement) => node.closest('.interview-field') ?? document.body,
+    triggerProps: {
+      position: 'bottom' as const,
+      autoFitPosition: false,
+      autoAlignPopupWidth: true,
+      popupStyle: { zIndex: 2600 },
+    },
+  }
   const historyGroups = useMemo(() => {
     const groups: Record<string, InterviewSession[]> = {}
     for (const item of interviewSessions) {
@@ -335,6 +344,10 @@ export function AIInterviewerPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [turns.length, loading, report, reportProgress.length, interviewProgress.length])
 
+  useEffect(() => {
+    onInterviewActiveChange?.(session?.status === 'active' || loading)
+  }, [loading, onInterviewActiveChange, session?.status])
+
   const startInterview = async () => {
     if (resumeSource === 'upload' && !uploadedResumeText.trim()) {
       Message.warning('请先上传并解析一份简历，或切换为读取在线简历。')
@@ -346,13 +359,15 @@ export function AIInterviewerPage() {
     setLoading(true)
     setReport(null)
     setReportProgress([])
+    setConfigCollapsed(true)
+    onInterviewActiveChange?.(true)
     progressStartRef.current = Date.now()
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
     progressTimerRef.current = setInterval(() => setProgressTick((tick) => tick + 1), 1000)
-    setInterviewProgress([`正在读取${resumeSource === 'upload' ? '本次上传简历' : '智能体可读取的在线简历'}，分析关键经历和技能匹配点…`])
+    setInterviewProgress([`正在为你整理${resumeSource === 'upload' ? '本次上传的简历' : '在线简历'}，把经历、技能和目标岗位放到同一张画像里。`])
     const progressTimers = [
-      window.setTimeout(() => setInterviewProgress((prev) => [...prev, '正在检索岗位相关题库，筛选与简历经历匹配的追问素材。']), 500),
-      window.setTimeout(() => setInterviewProgress((prev) => [...prev, `模型：${selectedModel?.display_name ?? '默认'}；风格：${INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}；正在生成第一轮问题…`]), 1000),
+      window.setTimeout(() => setInterviewProgress((prev) => [...prev, '正在结合你的项目表达、岗位要求和面试重点，准备一组更贴近你当前状态的问题。']), 500),
+      window.setTimeout(() => setInterviewProgress((prev) => [...prev, `正在用${INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}的节奏校准第一轮开场，让追问既有压力也有帮助。`]), 1000),
     ]
     try {
       const res = await apiRequest<{
@@ -379,10 +394,11 @@ export function AIInterviewerPage() {
       setTurns([res.first_turn])
       setKnowledge(res.knowledge_status)
       setAnswer('')
-      setConfigCollapsed(true)
-      setInterviewProgress((prev) => [...prev, '第一轮问题已生成，面试开始。'])
+      setInterviewProgress((prev) => [...prev, '第一轮问题已准备好，我们从你最值得展开的经历开始。'])
       await loadInterviewSessions()
     } catch (error) {
+      setConfigCollapsed(false)
+      onInterviewActiveChange?.(false)
       Message.error(error instanceof Error ? error.message : '创建面试失败')
     } finally {
       progressTimers.forEach((timer) => window.clearTimeout(timer))
@@ -445,6 +461,10 @@ export function AIInterviewerPage() {
 
   const submitAnswer = async () => {
     if (!session || !pendingTurn || !answer.trim()) return
+    const submittedAnswer = answer.trim()
+    const submittedTurnId = pendingTurn.id
+    setOptimisticAnswers((prev) => ({ ...prev, [submittedTurnId]: submittedAnswer }))
+    setAnswer('')
     setLoading(true)
     progressStartRef.current = Date.now()
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
@@ -456,19 +476,29 @@ export function AIInterviewerPage() {
         is_finished: boolean
       }>(`/api/v1/student/interviews/${session.id}/turns`, {
         method: 'POST',
-        body: JSON.stringify({ answer: answer.trim() }),
+        body: JSON.stringify({ answer: submittedAnswer }),
+      })
+      setOptimisticAnswers((prev) => {
+        const next = { ...prev }
+        delete next[submittedTurnId]
+        return next
       })
       setTurns((prev) => {
         const updated = prev.map((turn) => (turn.id === res.current_turn.id ? res.current_turn : turn))
         return res.next_turn ? [...updated, res.next_turn] : updated
       })
-      setAnswer('')
       if (res.is_finished) {
         setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
         await loadReport(session.id)
       }
       await loadInterviewSessions()
     } catch (error) {
+      setOptimisticAnswers((prev) => {
+        const next = { ...prev }
+        delete next[submittedTurnId]
+        return next
+      })
+      setAnswer(submittedAnswer)
       Message.error(error instanceof Error ? error.message : '提交回答失败')
     } finally {
       if (progressTimerRef.current) {
@@ -519,7 +549,7 @@ export function AIInterviewerPage() {
           <div className="interview-avatar"><IconRobot /></div>
           <div>
             <h3>AI 面试官</h3>
-            <p>Model 负责追问与评分，Harness 负责流程、证据、边界和复盘。</p>
+            <p>围绕你的简历、岗位和回答动态追问，结束后给出可复练的复盘。</p>
           </div>
         </div>
 
@@ -544,6 +574,7 @@ export function AIInterviewerPage() {
             placeholder="选择面试官大脑"
             disabled={session?.status === 'active'}
             style={{ width: '100%' }}
+            {...selectPopupProps}
           >
             {modelOptions.map((m) => (
               <Select.Option key={m.id} value={String(m.id)}>{`${m.display_name} · ${m.model_identifier}`}</Select.Option>
@@ -627,7 +658,7 @@ export function AIInterviewerPage() {
         <div className="interview-field-row">
           <label className="interview-field">
             <span>面试类型</span>
-            <Select value={interviewType} onChange={setInterviewType} disabled={session?.status === 'active'} style={{ width: '100%' }}>
+            <Select value={interviewType} onChange={setInterviewType} disabled={session?.status === 'active'} style={{ width: '100%' }} {...selectPopupProps}>
               {INTERVIEW_TYPE_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
             </Select>
           </label>
@@ -648,7 +679,7 @@ export function AIInterviewerPage() {
 
         <label className="interview-field">
           <span>面试风格</span>
-          <Select value={interviewStyle} onChange={setInterviewStyle} disabled={session?.status === 'active'} style={{ width: '100%' }}>
+          <Select value={interviewStyle} onChange={setInterviewStyle} disabled={session?.status === 'active'} style={{ width: '100%' }} {...selectPopupProps}>
             <Select.Option value="strict">严格追问</Select.Option>
             <Select.Option value="stress">压力面试</Select.Option>
             <Select.Option value="friendly">温和训练</Select.Option>
@@ -659,7 +690,7 @@ export function AIInterviewerPage() {
 
         <label className="interview-field">
           <span>面试重点（可多选）</span>
-          <Select mode="multiple" value={focusTags} onChange={setFocusTags} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" style={{ width: '100%' }}>
+          <Select mode="multiple" value={focusTags} onChange={setFocusTags} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" style={{ width: '100%' }} {...selectPopupProps}>
             {FOCUS_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
           </Select>
         </label>
@@ -744,21 +775,11 @@ export function AIInterviewerPage() {
       </section>
 
       <section className="interview-room">
-        <div className="interview-room-header">
-          {configCollapsed && (
-            <Button className="interview-config-toggle" icon={<IconLeft />} onClick={() => setConfigCollapsed(false)}>
-              设置
-            </Button>
-          )}
+        <div className={`interview-room-header${session ? ' interview-room-header--session' : ''}`}>
           <div>
             <h2>{session ? session.target_role : '准备进入面试房间'}</h2>
             <p>{session ? `${formatDateLabel(session.created_at)} ${formatTimeLabel(session.created_at)} · 第 ${turns.length}/${session.round_limit} 轮 · ${session.status === 'active' ? '面试中' : '已结束'}` : '选择岗位、模型和风格后进入沉浸式训练。Enter 发送，Shift + Enter 换行。'}</p>
           </div>
-          {session?.status === 'active' && (
-            <Button icon={<IconStop />} onClick={() => loadReport()} disabled={loading}>
-              结束并生成报告
-            </Button>
-          )}
         </div>
 
         <div className="interview-dialogue">
@@ -804,10 +825,10 @@ export function AIInterviewerPage() {
                   </div>
                 )}
               </div>
-              {turn.answer && (
+              {(turn.answer || optimisticAnswers[turn.id]) && (
                 <div className="interview-message candidate">
                   <div className="bubble-title">我的回答</div>
-                  <div className="bubble-content"><MarkdownMessage content={turn.answer} /></div>
+                  <div className="bubble-content"><MarkdownMessage content={turn.answer ?? optimisticAnswers[turn.id]} /></div>
                 </div>
               )}
               {turn.answer_assessment && (
@@ -855,8 +876,8 @@ export function AIInterviewerPage() {
           {loading && (
             <div className="interview-loading">
               <Spin />
-              <span>{reportProgress.length > 0 ? reportProgress[reportProgress.length - 1] : '面试官正在检索题库、评价回答并组织追问。'}</span>
-              <small>思考 {formatDuration(progressElapsed)} · {INTERVIEW_STYLE_LABELS[interviewStyle]}</small>
+              <span>{reportProgress.length > 0 ? reportProgress[reportProgress.length - 1] : '我已经看到你的回答，正在从证据完整度、表达结构和岗位匹配度三个维度做分析。'}</span>
+              <small>{reportProgress.length > 0 ? '正在生成可复练的面试报告' : '分析完成后会先总结亮点，再指出下一轮最值得补强的地方'} · {formatDuration(progressElapsed)}</small>
             </div>
           )}
           <div ref={bottomRef} />
@@ -865,6 +886,7 @@ export function AIInterviewerPage() {
         {session?.status === 'active' && pendingTurn && (
           <div className="interview-answer-box">
             <Input.TextArea
+              className="interview-answer-input"
               value={answer}
               onChange={setAnswer}
               onKeyDown={handleAnswerKeyDown}
@@ -872,12 +894,24 @@ export function AIInterviewerPage() {
               autoSize={{ minRows: 3, maxRows: 8 }}
               disabled={loading}
             />
-            <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
-              提交回答
-            </Button>
-            <Button className={listening ? 'voice-button voice-button--active' : 'voice-button'} icon={<IconVoice />} disabled={loading} onClick={toggleVoiceInput}>
-              {listening ? '停止语音' : '语音接入'}
-            </Button>
+            <div className="interview-answer-actions">
+              <div className="interview-answer-actions-row interview-answer-actions-row--secondary">
+                <Button icon={<IconRefresh />} disabled={loading} onClick={() => setConfigCollapsed((prev) => !prev)}>
+                  {configCollapsed ? '再试一次' : '回到房间'}
+                </Button>
+                <Button icon={<IconStop />} onClick={() => loadReport()} disabled={loading}>
+                  结束并生成报告
+                </Button>
+              </div>
+              <div className="interview-answer-actions-row interview-answer-actions-row--primary">
+                <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
+                  提交回答
+                </Button>
+                <Button className={listening ? 'voice-button voice-button--active' : 'voice-button'} icon={<IconVoice />} disabled={loading} onClick={toggleVoiceInput}>
+                  {listening ? '停止语音' : '语音接入'}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 
