@@ -413,8 +413,8 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
             issues.append({"severity": "warning", "section": "self_evaluation", "issue": f"自我评价 {len(eval_sentences)} 句（建议 2-4 句）"})
 
     # 3. 时间格式一致性
-    # birth_date 不参与：schema 要求它用 YYYY-MM，而经历时间段示例是 YYYY.MM，
-    # 两者格式天然不同，纳入会导致按 schema 输出也报混用
+    # birth_date 仍不参与校验：它是单点日期，格式与经历区间本身不同（主检查范围是 education/experience/projects）。
+    # 经历区间统一以 YYYY-MM-DD 为准（个人信息中完成日期精度改造，2026-06）。
     all_dates: list[str] = []
     for section in ("education", "experience", "projects"):
         items = args.get(section) or []
@@ -437,7 +437,7 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
             for m in _re.finditer(r"\d{4}([.\-/。．])\d{1,2}(?!\d)", d):
                 separators.add(m.group(1))
         if len(separators) > 1:
-            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM 或全角句号），请统一为 YYYY.MM"})
+            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM-DD 或全角句号），请统一为 YYYY-MM-DD"})
 
     # 判定
     errors = [i for i in issues if i["severity"] == "error"]
@@ -645,7 +645,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "email": {"type": "string"},
                         "phone": {"type": "string"},
                         "location": {"type": "string"},
-                        "birth_date": {"type": "string", "description": "格式 YYYY-MM"},
+                        "birth_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2002-09-15）"},
                     },
                 },
                 "education": {
@@ -657,8 +657,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                             "school": {"type": "string"},
                             "major": {"type": "string"},
                             "degree": {"type": "string"},
-                            "start_date": {"type": "string"},
-                            "end_date": {"type": "string"},
+                            "start_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2021-09-01）"},
+                            "end_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2025-06-30），尚未毕业请填“至今”"},
                             "gpa": {"type": "string"},
                             "description": {"type": "string", "description": "每行一个亮点，换行分隔"},
                         },
@@ -672,7 +672,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "company": {"type": "string"},
                             "position": {"type": "string"},
-                            "date": {"type": "string", "description": "时间段，例如 2022.06 - 2024.12"},
+                            "date": {"type": "string", "description": "时间段，例如 2022-06-01 - 2024-12-15，尚未结束请填“至今”"},
                             "details": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -685,7 +685,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "name": {"type": "string"},
                             "role": {"type": "string"},
-                            "date": {"type": "string"},
+                            "date": {"type": "string", "description": "时间段，例如 2024-03-01 - 2024-08-15，尚未结束请填“至今”"},
                             "description": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -1946,7 +1946,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  · ATS 优化：experience/projects 的 details/description 字段和 skills 字段须自然地覆盖 JD 中出现的核心技术关键词；\n"
         "  · 自我评价控制在 2-3 句，重点突出与 JD 最匹配的核心能力，不写泛泛的「认真负责」「吃苦耐劳」；\n"
         "  · 没有具体数字时，用规模描述（「百万级 DAU」「10+ 人跨部门」）替代空洞形容词；\n"
-        "  · 同一份简历中时间格式统一（YYYY.MM 或 YYYY-MM），勿混用。\n"
+        "  · 同一份简历中时间格式统一为 YYYY-MM-DD（如 2022-06-01），勿混用。\n"
         "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），工具返回 editor_url 后用链接呈现。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
         "export_resume_pdf（传入完整的 Markdown 简历正文）生成 PDF。注意 export_resume_pdf 也受事实核验约束，禁止用 export 绕过 optimize 的校验。"
@@ -3316,7 +3316,7 @@ def _fact_guard_failure(tool: str, violations: list[str]) -> dict[str, Any]:
             f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
             "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
             "禁止换一种说法绕过校验。允许改写表达和措辞，但不允许新增无来源的经历、项目、技术栈或指标。"
-            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY.MM 格式，不要照抄档案中的全角句号等笔误。"
+            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM-DD 格式，不要照抄档案中的全角句号等笔误。"
         ),
         "display_summary": f"🛡️ 事实核对：发现 {n} 处缺少依据的数据{suffix}，已退回 AI 重写",
         "fact_validation": {"passed": False, "violations": violations[:20]},
