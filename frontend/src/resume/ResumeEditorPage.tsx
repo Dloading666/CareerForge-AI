@@ -1,10 +1,11 @@
-import { Button, Modal, Result, Spin, Switch } from '@arco-design/web-react'
+import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
 import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { createEmptyResumeDocument, createTemplateResumeDocument } from './constants'
 import { ResumeEditorProvider, useResumeEditor } from './ResumeEditorContext'
+import { TEMPLATE_REGISTRY } from './templates/registry'
 import { createResume, getResume, updateResume } from './api'
 import { EditPanel } from './components/EditPanel'
 import { PreviewPanel } from './components/PreviewPanel'
@@ -72,8 +73,11 @@ function ResumeEditorInner() {
 
   const resumeId = params.resumeId
   const templateParam = searchParams.get('template')
+  // → 以 TEMPLATE_REGISTRY 为准验证 templateParam：避免硬编码白名单遗漏新模板。
   const draftTemplateId: TemplateId =
-    templateParam === 'classic' || templateParam === 'modern' || templateParam === 'elegant' ? templateParam : 'classic'
+    templateParam && TEMPLATE_REGISTRY.some((t) => t.id === templateParam)
+      ? (templateParam as TemplateId)
+      : 'blank'
 
   useEffect(() => {
     let alive = true
@@ -84,7 +88,7 @@ function ResumeEditorInner() {
       try {
         if (resumeId === 'new' || !resumeId) {
           const created = await createResume(
-            searchParams.get('template') ? createTemplateResumeDocument(draftTemplateId) : createEmptyResumeDocument(draftTemplateId),
+            draftTemplateId !== 'blank' ? createTemplateResumeDocument(draftTemplateId) : createEmptyResumeDocument(draftTemplateId),
           )
           if (!alive) return
           setResume(created)
@@ -246,7 +250,9 @@ function ResumeEditorInner() {
 
         <div className="wb-header-right">
           <label className="wb-visibility-row">
-            <span>智能体可读取</span>
+            <Tooltip content="同一时间只能勾选一份简历供 AI 读取，勾选后其他简历将自动取消">
+              <span>智能体可读取</span>
+            </Tooltip>
             <Switch checked={resume.visibility} onChange={setVisibility} size="small" />
           </label>
           <span className="wb-header-divider" />

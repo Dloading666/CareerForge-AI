@@ -1,4 +1,4 @@
-export type TemplateId = 'classic' | 'modern' | 'elegant' | 'left-right' | 'timeline' | 'minimalist' | 'creative' | 'editorial' | 'swiss'
+export type TemplateId = 'blank' | 'classic' | 'modern' | 'elegant' | 'left-right' | 'timeline' | 'minimalist' | 'creative' | 'editorial' | 'swiss'
 export type ResumeSectionId = string
 export type BasicFieldKey = 'name' | 'title' | 'birthDate' | 'employementStatus' | 'email' | 'phone' | 'location'
 
