@@ -1,8 +1,9 @@
 import { Button, Tooltip } from '@arco-design/web-react'
-import { IconBold, IconItalic, IconUnorderedList, IconOrderedList, IconRefresh } from '@arco-design/web-react/icon'
+import { IconBold, IconItalic, IconOrderedList, IconRefresh, IconUnderline, IconUnorderedList } from '@arco-design/web-react/icon'
 import Placeholder from '@tiptap/extension-placeholder'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import Underline from '@tiptap/extension-underline'
 import type { ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 
@@ -17,6 +18,20 @@ export type RichTextEditorProps = {
   aiAssistLabel?: string
   ariaLabel?: string
   listOnly?: boolean
+}
+
+function toggleListSafely(editor: Editor, target: 'bulletList' | 'orderedList') {
+  // If cursor is already in the target list, untoggle it.
+  if (editor.isActive(target)) {
+    editor.chain().focus().toggleList(target, 'listItem').run()
+    return
+  }
+  // Otherwise lift out of any current list first so the conversion is a
+  // clean swap (avoids nesting or mixed-list artefacts).
+  const other = target === 'bulletList' ? 'orderedList' : 'bulletList'
+  const chain = editor.chain().focus()
+  if (editor.isActive(other)) chain.toggleList(other, 'listItem')
+  chain.toggleList(target, 'listItem').run()
 }
 
 function ToolbarButton({
@@ -68,16 +83,23 @@ function EditorToolbar({ editor, onAiAssist, aiAssistLabel }: { editor: Editor; 
           <IconItalic />
         </ToolbarButton>
         <ToolbarButton
+          title="下划线 (Ctrl+U)"
+          active={editor.isActive('underline')}
+          onClick={() => editor.chain().focus().toggleMark('underline').run()}
+        >
+          <IconUnderline />
+        </ToolbarButton>
+        <ToolbarButton
           title="项目符号列表"
           active={editor.isActive('bulletList')}
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          onClick={() => toggleListSafely(editor, 'bulletList')}
         >
           <IconUnorderedList />
         </ToolbarButton>
         <ToolbarButton
           title="编号列表"
           active={editor.isActive('orderedList')}
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          onClick={() => toggleListSafely(editor, 'orderedList')}
         >
           <IconOrderedList />
         </ToolbarButton>
@@ -128,6 +150,7 @@ export function RichTextEditor({
         codeBlock: false,
         horizontalRule: false,
       }),
+      Underline,
       Placeholder.configure({
         placeholder,
         showOnlyWhenEditable: true,

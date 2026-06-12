@@ -9,7 +9,7 @@ import type {
   TemplateViewModel,
   ViewListItem,
 } from '../types'
-import { richTextToInlineHtml, richTextToLines } from '../utils/content'
+import { richTextToInlineBlocks, type RichInlineBlock } from '../utils/content'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
@@ -167,29 +167,29 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
       title: resume.basic.title,
       contacts: getContacts(resume).map((item) => item.value),
     },
-    skills: richTextToInlineHtml(resume.skillContent),
+    skills: richTextToInlineBlocks(resume.skillContent),
     education: mapItems(resume.education, (item) => ({
       itemId: item.id,
       title: item.school || '学校',
       subtitle: [item.major, item.degree, item.gpa ? `GPA ${item.gpa}` : ''].filter(Boolean).join(' · '),
       meta: [item.startDate, item.endDate].filter(Boolean).join(' - '),
-      lines: richTextToLines(item.description ?? ''),
+      blocks: richTextToInlineBlocks(item.description ?? ''),
     })),
     experience: mapItems(resume.experience, (item) => ({
       itemId: item.id,
       title: item.company || '公司',
       subtitle: item.position,
       meta: item.date,
-      lines: richTextToInlineHtml(item.details),
+      blocks: richTextToInlineBlocks(item.details),
     })),
     projects: mapItems(resume.projects, (item) => ({
       itemId: item.id,
       title: item.name || '项目',
       subtitle: item.role,
       meta: item.date,
-      lines: richTextToInlineHtml(item.description),
+      blocks: richTextToInlineBlocks(item.description),
     })),
-    selfEvaluation: richTextToInlineHtml(resume.selfEvaluationContent),
+    selfEvaluation: richTextToInlineBlocks(resume.selfEvaluationContent),
   }
 }
 
@@ -581,28 +581,66 @@ function SectionTitle({
   )
 }
 
-function RichList({ lines, resume, inverse = false }: { lines: string[]; resume: ResumeData; inverse?: boolean }) {
-  if (!lines.length) return null
+function RichList({ blocks, resume, inverse = false }: { blocks: RichInlineBlock[]; resume: ResumeData; inverse?: boolean }) {
+  // Render bullet/ordered lists AND any free-text paragraph lines.
+  // The paragraph fallback keeps legacy plain-text skill content visible
+  // (e.g. a single line "Java, Python" still renders as a bullet item).
+  const listBlocks = blocks.filter((b) => b.type === 'bullet' || b.type === 'ordered')
+  const paraLines = blocks.filter((b) => b.type === 'paragraph').flatMap((b) => b.lines)
+  if (!listBlocks.length && !paraLines.length) return null
+  const baseColor = inverse ? 'rgba(255,255,255,.86)' : '#212529'
+  const fontSize = resume.globalSettings.baseFontSize ?? 14
+  const lineHeight = resume.globalSettings.lineHeight ?? 1.6
   return (
-    <ul
-      style={{
-        margin: '4px 0 0',
-        paddingLeft: '1.45em',
-        color: inverse ? 'rgba(255,255,255,.86)' : '#212529',
-        fontSize: resume.globalSettings.baseFontSize ?? 14,
-        lineHeight: resume.globalSettings.lineHeight ?? 1.6,
-      }}
-    >
-      {lines.map((line, index) => (
-        <li key={`${line}-${index}`} style={{ paddingLeft: 2 }}>
-          <span dangerouslySetInnerHTML={{ __html: line }} />
-        </li>
-      ))}
-    </ul>
+    <div style={{ marginTop: 4 }}>
+      {listBlocks.map((block, idx) => {
+        const Tag = block.type === 'ordered' ? 'ol' : 'ul'
+        return (
+          <Tag
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${block.type}-${idx}`}
+            style={{
+              margin: '4px 0 0',
+              paddingLeft: '1.45em',
+              color: baseColor,
+              fontSize,
+              lineHeight,
+            }}
+          >
+            {block.lines.map((line, index) => (
+              <li key={`${line}-${index}`} style={{ paddingLeft: 2 }}>
+                <span dangerouslySetInnerHTML={{ __html: line }} />
+              </li>
+            ))}
+          </Tag>
+        )
+      })}
+      {paraLines.length > 0 ? (
+        <ul
+          style={{
+            margin: '4px 0 0',
+            paddingLeft: '1.45em',
+            color: baseColor,
+            fontSize,
+            lineHeight,
+          }}
+        >
+          {paraLines.map((line, index) => (
+            <li key={`para-${line}-${index}`} style={{ paddingLeft: 2 }}>
+              <span dangerouslySetInnerHTML={{ __html: line }} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 
-function Paragraphs({ lines, resume }: { lines: string[]; resume: ResumeData }) {
+function Paragraphs({ blocks, resume }: { blocks: RichInlineBlock[]; resume: ResumeData }) {
+  const paragraphs = blocks.filter((b) => b.type === 'paragraph')
+  if (!paragraphs.length) return null
+  // Flatten back to one line per paragraph (each block may have multiple lines)
+  const lines = paragraphs.flatMap((b) => b.lines)
   if (!lines.length) return null
   return (
     <div
@@ -620,6 +658,59 @@ function Paragraphs({ lines, resume }: { lines: string[]; resume: ResumeData }) 
           <span dangerouslySetInnerHTML={{ __html: line }} />
         </p>
       ))}
+    </div>
+  )
+}
+
+function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: ResumeData }) {
+  // Render an arbitrary mix of paragraph / bullet / ordered blocks in order.
+  if (!blocks.length) return null
+  const baseStyle: CSSProperties = {
+    color: '#212529',
+    fontSize: resume.globalSettings.baseFontSize ?? 14,
+    lineHeight: resume.globalSettings.lineHeight ?? 1.6,
+  }
+  return (
+    <div style={{ marginTop: 4 }}>
+      {blocks.map((block, idx) => {
+        if (block.type === 'paragraph') {
+          return (
+            <div
+              // eslint-disable-next-line react/no-array-index-key
+              key={`p-${idx}`}
+              style={{ ...baseStyle, marginBottom: 4 }}
+            >
+              {block.lines.map((line, j) => (
+                <p
+                  // eslint-disable-next-line react/no-array-index-key
+                  key={`p-${idx}-${j}`}
+                  style={{ margin: 0 }}
+                >
+                  <span dangerouslySetInnerHTML={{ __html: line }} />
+                </p>
+              ))}
+            </div>
+          )
+        }
+        const Tag = block.type === 'ordered' ? 'ol' : 'ul'
+        return (
+          <Tag
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${block.type}-${idx}`}
+            style={{
+              ...baseStyle,
+              margin: '4px 0',
+              paddingLeft: '1.45em',
+            }}
+          >
+            {block.lines.map((line, j) => (
+              <li key={`${line}-${j}`} style={{ paddingLeft: 2 }}>
+                <span dangerouslySetInnerHTML={{ __html: line }} />
+              </li>
+            ))}
+          </Tag>
+        )
+      })}
     </div>
   )
 }
@@ -667,7 +758,7 @@ function EntryList({
               <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{item.meta}</span>
             </div>
             {!centerSubtitle && item.subtitle ? <div style={{ marginTop: 2, fontSize: subheaderSize }}>{item.subtitle}</div> : null}
-            <RichList lines={item.lines} resume={resume} />
+            <MixedBlocks blocks={item.blocks} resume={resume} />
           </article>
         )
       })}
@@ -685,7 +776,7 @@ function SidebarEducation({ resume, items }: { resume: ResumeData; items: ViewLi
           <strong style={{ display: 'block', fontSize: (resume.globalSettings.baseFontSize ?? 14) + 2 }}>{item.title}</strong>
           <span style={{ display: 'block', marginTop: 2, fontSize: 12, opacity: 0.8 }}>{item.meta}</span>
           <span style={{ display: 'block', marginTop: 2, fontSize: 12, opacity: 0.9 }}>{item.subtitle}</span>
-          <RichList lines={item.lines} resume={resume} inverse />
+          <RichList blocks={item.blocks} resume={resume} inverse />
         </article>
       ))}
     </section>
@@ -700,7 +791,7 @@ function CustomEntries({ items, resume }: { items: CustomItem[]; resume: ResumeD
         title: item.title,
         subtitle: item.subtitle,
         meta: item.dateRange,
-        lines: richTextToInlineHtml(item.description),
+        blocks: richTextToInlineBlocks(item.description),
       }))}
     />
   )
@@ -721,11 +812,11 @@ function StandardSection({
 }) {
   const offsets = resume.globalSettings.sectionOffsets ?? {}
   let content: ReactNode = null
-  if (id === 'skills') content = <RichList lines={model.skills} resume={resume} />
+  if (id === 'skills') content = <RichList blocks={model.skills} resume={resume} />
   if (id === 'experience') content = <EntryList items={model.experience} resume={resume} offsets={offsets} />
   if (id === 'projects') content = <EntryList items={model.projects} resume={resume} offsets={offsets} />
   if (id === 'education') content = <EntryList items={model.education} resume={resume} offsets={offsets} />
-  if (id === 'selfEvaluation') content = <Paragraphs lines={model.selfEvaluation} resume={resume} />
+  if (id === 'selfEvaluation') content = <Paragraphs blocks={model.selfEvaluation} resume={resume} />
   if (id === 'certificates' && resume.certificates.length) {
     content = (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
@@ -804,14 +895,32 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
       paddingBottom: 4,
       borderBottom: '1px solid #e5e7eb',
     }
-    const renderLines = (lines: string[]) =>
-      lines.length === 0
-        ? null
-        : lines.map((line, i) => (
-            <div key={i} style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 2 }}>
-              <span dangerouslySetInnerHTML={{ __html: line }} />
+    const renderLines = (blocks: RichInlineBlock[]) => {
+      if (!blocks.length) return null
+      return blocks.map((block, i) => {
+        if (block.type === 'paragraph') {
+          return (
+            <div key={`p-${i}`} style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 2 }}>
+              {block.lines.map((line, j) => (
+                <div key={`p-${i}-${j}`}>
+                  <span dangerouslySetInnerHTML={{ __html: line }} />
+                </div>
+              ))}
             </div>
-          ))
+          )
+        }
+        const Tag = block.type === 'ordered' ? 'ol' : 'ul'
+        return (
+          <Tag key={`${block.type}-${i}`} style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 2, paddingLeft: 18 }}>
+            {block.lines.map((line, j) => (
+              <li key={`${line}-${j}`}>
+                <span dangerouslySetInnerHTML={{ __html: line }} />
+              </li>
+            ))}
+          </Tag>
+        )
+      })
+    }
     const renderItem = (it: typeof model.experience[number]) => (
       <div key={it.itemId} style={{ marginBottom: 10 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
@@ -819,7 +928,7 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
           {it.meta ? <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 8 }}>{it.meta}</span> : null}
         </div>
         {it.subtitle ? <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>{it.subtitle}</div> : null}
-        {renderLines(it.lines)}
+        {renderLines(it.blocks)}
       </div>
     )
     return (
@@ -936,11 +1045,11 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
               </div>
               {/* reuse StandardSection without its own title */}
               <div style={{ fontSize: resume.globalSettings.baseFontSize ?? 14 }}>
-                {section.id === 'skills' && <RichList lines={model.skills} resume={resume} />}
+                {section.id === 'skills' && <RichList blocks={model.skills} resume={resume} />}
                 {section.id === 'experience' && <EntryList items={model.experience} resume={resume} />}
                 {section.id === 'projects' && <EntryList items={model.projects} resume={resume} />}
                 {section.id === 'education' && <EntryList items={model.education} resume={resume} />}
-                {section.id === 'selfEvaluation' && <Paragraphs lines={model.selfEvaluation} resume={resume} />}
+                {section.id === 'selfEvaluation' && <Paragraphs blocks={model.selfEvaluation} resume={resume} />}
                 {section.id === 'certificates' && resume.certificates.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
                     {resume.certificates.map((cert) => (

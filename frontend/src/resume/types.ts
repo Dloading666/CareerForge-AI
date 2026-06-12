@@ -164,13 +164,15 @@ export type ResumeTemplateConfig = {
   layout: 'single' | 'split' | 'center'
 }
 
+import type { RichInlineBlock } from './utils/content'
+
 export type ViewListItem = {
   /** 原始数据项的 id，用于画布拖拽定位 */
   itemId?: string
   title: string
   subtitle?: string
   meta?: string
-  lines: string[]
+  blocks: RichInlineBlock[]
 }
 
 export type TemplateViewModel = {
@@ -179,9 +181,9 @@ export type TemplateViewModel = {
     title: string
     contacts: string[]
   }
-  skills: string[]
+  skills: RichInlineBlock[]
   education: ViewListItem[]
   experience: ViewListItem[]
   projects: ViewListItem[]
-  selfEvaluation: string[]
+  selfEvaluation: RichInlineBlock[]
 }

@@ -55,7 +55,6 @@ export function sanitizeInlineHtml(html: string): string {
       const value = m[3] ?? m[4] ?? ''
       if (!allowedAttrs.includes(name)) continue
       if (tagLower === 'span' && name === 'style') {
-        // Only allow safe CSS props, no url() / expression() / @import
         const safeDecls = value
           .split(';')
           .map((d) => d.trim())
@@ -82,7 +81,6 @@ export function sanitizeInlineHtml(html: string): string {
   // Normalise <b> -> <strong>, <i> -> <em>
   s = s.replace(/<(\/?)b(\s|>)/gi, '<$1strong$2').replace(/<(\/?)i(\s|>)/gi, '<$1em$2')
 
-  // Strip any leftover javascript:/data: hrefs (defence in depth)
   s = s.replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]*)/gi, '')
   return s
 }
@@ -109,30 +107,135 @@ export function richTextToTextarea(content: string) {
 }
 
 /**
- * Same line-splitting as richTextToLines, but each line keeps inline
- * formatting (<strong>, <em>, <u>, <code>, <br>, <span style=...>)
- * and is sanitised for safe dangerouslySetInnerHTML rendering.
- *
- * Use this for the resume preview so Tiptap's bold/italic/etc. flow through.
+ * A single block of inline content for resume preview rendering.
+ * - `paragraph`: free-flowing text line. Render with plain <div>/<p>.
+ * - `bullet`:    bullet list item. Render as <ul><li>...</li></ul>.
+ * - `ordered`:   numbered list item. Render as <ol><li>...</li></ol>.
  */
-export function richTextToInlineHtml(content: string): string[] {
+export type RichInlineBlock = {
+  type: 'paragraph' | 'bullet' | 'ordered'
+  lines: string[]
+}
+
+/**
+ * Walk the raw Tiptap HTML and produce a sequence of inline blocks,
+ * preserving bullet vs ordered list semantics so the preview can render
+ * the right list type.
+ */
+export function richTextToInlineBlocks(content: string): RichInlineBlock[] {
   if (!content) return []
-  let html = decodeHtmlEntities(content)
-  // Normalise block/list closers to <br>
-  html = html.replace(BREAK_TAGS, '<br>')
-  html = html.replace(LIST_ITEM_OPEN_TAG, '<br>')
-  html = html.replace(BLOCK_BREAK_TAGS, '<br>')
-  // Drop raw <p>/<ul>/<ol> openers (they have no styling we need)
-  html = html.replace(/<\/?(?:p|ul|ol|div|section|article|h[1-6])[^>]*>/gi, '')
+  const decoded = decodeHtmlEntities(content)
+  const blocks: RichInlineBlock[] = []
+  // We accumulate text + inline tags into `buf`, then decide on flush whether
+  // it belongs to a list item or a paragraph line.
+  let buf = ''
+  let listMode: 'bullet' | 'ordered' | null = null
+  let paraLines: string[] = []
 
-  // Sanitise first
-  html = sanitizeInlineHtml(html)
+  // Inline tags: preserved verbatim so sanitizeInlineHtml can keep the
+  // strong/em/u/code/span markup that the user typed in the editor.
+  const INLINE_ALWAYS = new Set([
+    'strong', 'b', 'em', 'i', 'u', 's', 'code', 'span', 'a', 'sub', 'sup', 'mark',
+  ])
+  const BLOCK_CLOSE = new Set(['p', 'div', 'section', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
-  // Split on <br>
-  return html
-    .split(/<br\s*\/?>/gi)
-    .map((line) => line.trim())
-    .filter((line) => line.replace(/<[^>]+>/g, '').trim().length > 0)
+  const sanitiseBuf = (): string => {
+    const cleaned = sanitizeInlineHtml(buf).replace(/<br\s*\/?>$/i, '').trim()
+    buf = ''
+    return cleaned
+  }
+
+  const flushParaLine = () => {
+    const html = sanitiseBuf()
+    if (html.replace(/<[^>]+>/g, '').trim()) paraLines.push(html)
+  }
+
+  const closeParagraph = () => {
+    flushParaLine()
+    if (paraLines.length) {
+      blocks.push({ type: 'paragraph', lines: [...paraLines] })
+      paraLines = []
+    }
+  }
+
+  const flushListItem = () => {
+    if (!listMode) return
+    const html = sanitiseBuf()
+    if (html.replace(/<[^>]+>/g, '').trim()) {
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === listMode) last.lines.push(html)
+      else blocks.push({ type: listMode, lines: [html] })
+    }
+  }
+  const closeList = () => {
+    flushListItem()
+    listMode = null
+  }
+
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g
+  let m: RegExpExecArray | null
+  let lastIdx = 0
+  while ((m = tagRe.exec(decoded)) !== null) {
+    const between = decoded.slice(lastIdx, m.index)
+    const slash = m[1]
+    const tag = m[2].toLowerCase()
+    const text = decodeHtmlEntities(between)
+    if (text) buf += text
+    if (INLINE_ALWAYS.has(tag)) buf += m[0]
+
+    // --- list structure changes ---
+    if (!slash && tag === 'ul') {
+      closeParagraph()
+      listMode = 'bullet'
+    } else if (!slash && tag === 'ol') {
+      closeParagraph()
+      listMode = 'ordered'
+    } else if (slash && (tag === 'ul' || tag === 'ol')) {
+      closeList()
+    } else if (listMode && slash && tag === 'li') {
+      flushListItem()
+    } else if (!listMode) {
+      // --- paragraph-level changes (only meaningful outside a list) ---
+      if (!slash && tag === 'br') {
+        flushParaLine()
+      } else if (slash && (tag === 'p' || BLOCK_CLOSE.has(tag))) {
+        closeParagraph()
+      } else if (!slash && tag === 'p' && (paraLines.length || buf.trim())) {
+        // opening a new <p> when we already have content flushes the prior line
+        flushParaLine()
+      }
+    }
+    // <br> inside a list item stays inside the item (just append to buf)
+
+    lastIdx = m.index + m[0].length
+  }
+  const tail = decoded.slice(lastIdx)
+  if (tail) buf += decodeHtmlEntities(tail)
+  closeList()
+  closeParagraph()
+
+  return blocks
+}
+
+export function richTextToInlineHtml(content: string): string[] {
+  const blocks = richTextToInlineBlocks(content)
+  const out: string[] = []
+  for (const b of blocks) {
+    for (const line of b.lines) out.push(line)
+  }
+  return out
+}
+
+/** Split a single paragraph block's lines out of mixed content. */
+export function richTextToParagraphLines(content: string): string[] {
+  const blocks = richTextToInlineBlocks(content)
+  const out: string[] = []
+  for (const b of blocks) {
+    if (b.type === 'paragraph') {
+      for (const line of b.lines) out.push(line)
+    }
+  }
+  return out
 }
 
 function escapeHtml(content: string) {
