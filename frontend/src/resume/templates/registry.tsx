@@ -1,10 +1,10 @@
+import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
 import type {
   CustomItem,
   ResumeData,
   ResumeTemplateConfig,
-  TemplateId,
   TemplateViewModel,
   ViewListItem,
 } from '../types'
@@ -259,11 +259,13 @@ function photoRadius(resume: ResumeData) {
 
 function ResumePhoto({ resume }: { resume: ResumeData }) {
   const config = resume.basic.photoConfig
-  if (!resume.basic.photo || config.visible === false) return null
+  const [failed, setFailed] = useState(false)
+  if (!resume.basic.photo || config.visible === false || failed) return null
   return (
     <img
       src={resume.basic.photo}
       alt={resume.basic.name || '头像'}
+      onError={() => setFailed(true)}
       style={{
         display: 'block',
         width: config.width || 90,

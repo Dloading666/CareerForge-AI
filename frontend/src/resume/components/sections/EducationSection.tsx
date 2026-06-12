@@ -1,7 +1,7 @@
 import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
-import { useResumeEditor } from '../../ResumeEditorContext'
+import { useResumeEditor } from '../../useResumeEditor'
 import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
 
 export function EducationSection() {
@@ -35,14 +35,21 @@ export function EducationSection() {
               <Input value={item.degree} onChange={(value) => updateEducation(item.id, { degree: value })} />
             </Form.Item>
             <Form.Item label="起止时间">
-              <Input
-                value={[item.startDate, item.endDate].filter(Boolean).join(' - ')}
-                onChange={(value) => {
-                  const [startDate = '', endDate = ''] = value.split('-').map((part) => part.trim())
-                  updateEducation(item.id, { startDate, endDate })
-                }}
-                placeholder="如 2021-09 - 2025-06"
-              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
+                <Input
+                  value={item.startDate}
+                  onChange={(startDate) => updateEducation(item.id, { startDate })}
+                  placeholder="开始 YYYY-MM"
+                  maxLength={7}
+                />
+                <span style={{ color: '#86909c' }}>至</span>
+                <Input
+                  value={item.endDate}
+                  onChange={(endDate) => updateEducation(item.id, { endDate })}
+                  placeholder="结束 YYYY-MM"
+                  maxLength={7}
+                />
+              </div>
             </Form.Item>
             <Form.Item label="GPA / 排名">
               <Input value={item.gpa} onChange={(value) => updateEducation(item.id, { gpa: value })} />

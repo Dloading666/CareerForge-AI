@@ -1,6 +1,6 @@
 import { Button, Card, Drawer, Image, Message, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
 import { IconBug, IconCheckCircle, IconEye } from '@arco-design/web-react/icon'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { apiRequest } from '../shared/api'
 
 interface FeedbackItem {
@@ -29,7 +29,22 @@ export function FeedbackPage() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
   const [detailItem, setDetailItem] = useState<FeedbackItem | null>(null)
 
-  const fetchList = useCallback(async () => {
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      setLoading(true)
+      try {
+        const params = new URLSearchParams({ page: String(page), size: "20" })
+        if (statusFilter) params.set("status", statusFilter)
+        const res = await apiRequest<{ list: FeedbackItem[]; total: number }>(`/api/v1/admin/feedback?${params}`)
+        if (alive) { setList(res.list); setTotal(res.total) }
+      } catch { if (alive) Message.error('加载失败') }
+      finally { if (alive) setLoading(false) }
+    })()
+    return () => { alive = false }
+  }, [page, statusFilter])
+
+  const fetchList = async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: String(page), size: "20" })
@@ -39,9 +54,7 @@ export function FeedbackPage() {
       setTotal(res.total)
     } catch { Message.error('加载失败') }
     finally { setLoading(false) }
-  }, [page, statusFilter])
-
-  useEffect(() => { fetchList() }, [fetchList])
+  }
 
   const handleResolve = async (id: number) => {
     try {

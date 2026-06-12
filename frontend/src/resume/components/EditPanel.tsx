@@ -1,4 +1,4 @@
-import { useResumeEditor } from '../ResumeEditorContext'
+import { useResumeEditor } from '../useResumeEditor'
 import { BasicInfoSection } from './sections/BasicInfoSection'
 import { EducationSection } from './sections/EducationSection'
 import { ExperienceSection } from './sections/ExperienceSection'

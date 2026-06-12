@@ -20,6 +20,8 @@ class ProjectItem(BaseModel):
     role: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    link: Optional[str] = Field(default=None, max_length=512)
+    link_label: Optional[str] = Field(default=None, max_length=64)
     description: Optional[str] = None
 
 
@@ -46,6 +48,7 @@ class EducationItem(BaseModel):
     major: Optional[str] = None
     degree: Optional[str] = None
     duration: Optional[str] = None
+    gpa: Optional[str] = Field(default=None, max_length=64)
     description: Optional[str] = None
 
 

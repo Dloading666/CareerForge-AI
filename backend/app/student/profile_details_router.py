@@ -49,6 +49,8 @@ def _serialize_project(item: StudentProject) -> dict[str, Any]:
         "role": item.role,
         "start_date": item.start_date,
         "end_date": item.end_date,
+        "link": item.link,
+        "link_label": item.link_label,
         "description": item.description,
     }
 
@@ -81,6 +83,7 @@ def _serialize_education(item: StudentEducation) -> dict[str, Any]:
         "major": item.major,
         "degree": item.degree,
         "duration": item.duration,
+        "gpa": item.gpa,
         "description": item.description,
     }
 
@@ -96,6 +99,7 @@ def _replace_education(db: Session, student_id: int, tenant_id: int, items: Iter
                 major=(item.major or None),
                 degree=(item.degree or None),
                 duration=(item.duration or None),
+                gpa=(item.gpa or None),
                 description=(item.description or None),
                 sort_order=index,
             )
@@ -149,6 +153,8 @@ def _replace_project(db: Session, student_id: int, tenant_id: int, items: Iterab
                 role=(item.role or None),
                 start_date=(item.start_date or None),
                 end_date=(item.end_date or None),
+                link=(item.link or None),
+                link_label=(item.link_label or None),
                 description=(item.description or None),
                 sort_order=index,
             )

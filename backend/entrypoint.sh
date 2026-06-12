@@ -34,7 +34,10 @@ if [ -n "$STAMP_REVISION" ]; then
 fi
 
 echo "Running database migrations..."
-alembic upgrade head
+# Use `upgrade heads` (plural) so that branching migration histories (multiple
+# heads) still reach every branch's tip. After merges are introduced the
+# preferred single-head form `upgrade head` will resume working.
+alembic upgrade heads || alembic upgrade head
 
 # High-concurrency: multiple workers with tuned timeouts
 # WEB_CONCURRENCY env overrides worker count; defaults to 4

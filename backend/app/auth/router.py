@@ -134,6 +134,7 @@ def current_me(current=Depends(get_current_user)):
             "email": user.email,
             "display_name": getattr(user, "display_name", None),
             "name": getattr(user, "name", None),
+            "nickname": getattr(user, "nickname", None),
             "college": getattr(user, "college", None),
             "major": getattr(user, "major", None),
             "grade": getattr(user, "grade", None),

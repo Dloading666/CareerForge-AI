@@ -28,14 +28,12 @@ export async function listResumes() {
   return apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
 }
 
-export async function createResume(payload?: Partial<ResumeData>) {
+export async function createResume(payload?: Pick<ResumeData, 'templateId'>) {
   const detail = await apiRequest<ResumeDetailEnvelope>('/api/v1/student/resumes', {
     method: 'POST',
     body: JSON.stringify({
-      title: payload?.title,
       templateId: payload?.templateId,
-      visibility: payload?.visibility ?? false,
-      data: payload,
+      visibility: false,
     }),
   })
   return normalizeResume(detail)
@@ -52,6 +50,25 @@ export async function importResume(data: ResumeData) {
     }),
   })
   return normalizeResume(detail)
+}
+
+export async function uploadResume(file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return apiRequest<{ id: number; title: string; chars: number }>('/api/v1/student/resumes/upload', {
+    method: 'POST',
+    body: form,
+  })
+}
+
+export async function importResumeFile(file: File, title?: string) {
+  const form = new FormData()
+  form.append('file', file)
+  if (title) form.append('title', title)
+  return apiRequest<{ resume_id: number; title: string; sections_summary: Record<string, number | boolean> }>('/api/v1/student/resumes/import/file', {
+    method: 'POST',
+    body: form,
+  })
 }
 
 export async function getResume(resumeId: number) {

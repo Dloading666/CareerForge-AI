@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class AgentSessionCreate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=128)
     agent_type: str = Field(default="resume", max_length=32)
+    active_resume_id: Optional[int] = None
 
 
 class AgentMessageRequest(BaseModel):
@@ -35,6 +36,9 @@ class AgentSessionResponse(BaseModel):
     title: str
     status: str
     agent_type: str = "resume"
+    active_resume_id: Optional[int] = None
+    jd_text: Optional[str] = None
+    memory_json: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
@@ -45,6 +49,11 @@ class AgentMessageResponse(BaseModel):
     session_id: int
     role: str
     content: str
+    model_name: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    duration_ms: int | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -57,6 +66,7 @@ class AgentActivityResponse(BaseModel):
     name: str
     status: str
     summary: str | None
+    display_summary: str | None = None
     detail: dict[str, Any]
     started_at: datetime
     completed_at: datetime | None

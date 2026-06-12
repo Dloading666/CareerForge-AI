@@ -38,6 +38,8 @@ from app.student.feedback_router import router as feedback_router
 from app.admin.feedback_router import router as admin_feedback_router
 from app.student.attachment_router import router as attachment_router
 from app.student.resume_router import router as resume_router
+from app.interview import models as interview_models  # noqa: F401
+from app.interview.router_student import router as interview_router
 
 AVATAR_DIR = Path("/app/data/avatars")
 BANNER_DIR = Path("/app/data/banners")
@@ -72,6 +74,23 @@ async def lifespan(_: FastAPI):
         seed_default_agents(db)
     finally:
         db.close()
+
+    # 启动清扫：把库中 status=running 的孤儿 run 标记 failed
+    from app.student.agent_models import StudentAgentRun
+    from sqlalchemy import update as _update
+    db2 = SessionLocal()
+    try:
+        db2.execute(
+            _update(StudentAgentRun)
+            .where(StudentAgentRun.status == "running")
+            .values(status="failed", error_text="服务重启导致运行中断")
+        )
+        db2.commit()
+    except Exception:
+        db2.rollback()
+    finally:
+        db2.close()
+
     yield
 
 
@@ -95,7 +114,9 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_frontend_origins,
 os.makedirs("data/avatars", exist_ok=True)
 os.makedirs("/app/data/feedbacks", exist_ok=True)
 app.mount("/feedback-images", StaticFiles(directory="/app/data/feedbacks"), name="feedback-images")
-app.mount("/data", StaticFiles(directory="data"), name="data")
+# /data 静态挂载已移除：学生简历 PDF 等敏感文件不再通过文件名 obscurity 保护。
+# 改用受鉴权保护的 /api/v1/student/files/download 端点。
+# app.mount("/data", StaticFiles(directory="data"), name="data")  # 已废弃
 
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
@@ -111,6 +132,116 @@ app.include_router(attachment_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
 app.include_router(student_profile_details_router, prefix=settings.api_v1_prefix)
 app.include_router(resume_router, prefix=settings.api_v1_prefix)
+app.include_router(interview_router, prefix=settings.api_v1_prefix)
+
+
+# ── Authenticated file download endpoint ──────────────────────────────────────
+# 方案：前端无法在 <a href> / <img src> 中携带 Authorization header，
+# 因此使用短时效签名 token 作为 query 参数鉴权。
+import hashlib as _hashlib
+import hmac as _hmac
+import time as _time
+from fastapi import Query as _Query
+from fastapi.responses import FileResponse as _FileResponse
+
+
+def _sign_download_token(path: str, user_id: int, tenant_id: int) -> str:
+    """生成短时效下载签名 token（HMAC-SHA256，有效期 10 分钟）。"""
+    exp = int(_time.time()) + 600  # 10 分钟
+    payload = f"{tenant_id}:{user_id}:{path}:{exp}"
+    sig = _hmac.new(
+        settings.jwt_secret_key.encode("utf-8"),
+        payload.encode("utf-8"),
+        _hashlib.sha256,
+    ).hexdigest()[:32]
+    return f"{exp}.{sig}"
+
+
+def _verify_download_token(path: str, user_id: int, tenant_id: int, token: str) -> bool:
+    """验证下载签名 token。"""
+    try:
+        parts = token.split(".", 1)
+        if len(parts) != 2:
+            return False
+        exp = int(parts[0])
+        sig = parts[1]
+        if _time.time() > exp:
+            return False
+        payload = f"{tenant_id}:{user_id}:{path}:{exp}"
+        expected = _hmac.new(
+            settings.jwt_secret_key.encode("utf-8"),
+            payload.encode("utf-8"),
+            _hashlib.sha256,
+        ).hexdigest()[:32]
+        return _hmac.compare_digest(sig, expected)
+    except Exception:
+        return False
+
+
+def _attachment_download_url_with_token(stored_path: str, user_id: int, tenant_id: int) -> str:
+    """生成带签名 token 的下载 URL。"""
+    s = stored_path.replace("\\", "/")
+    marker = "agent_uploads/"
+    idx = s.find(marker)
+    rel_path = s[idx:] if idx >= 0 else Path(s).name
+    token = _sign_download_token(rel_path, user_id, tenant_id)
+    return f"/api/v1/student/files/download?path={rel_path}&token={token}"
+
+
+@app.get("/api/v1/student/files/download")
+def download_file(
+    path: str,
+    token: str = _Query(default=""),
+):
+    """受签名 token 保护的文件下载端点。
+
+    鉴权方式：短时效 HMAC 签名 token（query 参数），支持 <a href> / <img src> 直接引用。
+    安全校验：token 有效性 + tenant 隔离 + user 隔离 + 路径穿越防护。
+    """
+    # 解析 token 获取身份信息
+    try:
+        parts = token.split(".", 1)
+        if len(parts) != 2:
+            raise ValueError
+        exp = int(parts[0])
+    except Exception:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="下载链接无效或已过期")
+
+    # 安全路径处理：拒绝含 .. 的路径穿越
+    safe_path = path.replace("\\", "/").lstrip("/")
+    if ".." in safe_path:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="非法路径")
+
+    # 解析路径中的 tenant_id 和 user_id 并校验 token
+    parts_path = safe_path.split("/")
+    if len(parts_path) < 3 or parts_path[0] != "agent_uploads":
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该文件")
+
+    try:
+        path_tenant = int(parts_path[1])
+        path_user = int(parts_path[2])
+    except ValueError:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该文件")
+
+    if not _verify_download_token(safe_path, path_user, path_tenant, token):
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="下载链接无效或已过期")
+
+    full_path = (Path("data") / safe_path).resolve()
+    data_root = Path("data").resolve()
+    if not str(full_path).startswith(str(data_root)):
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该文件")
+
+    if not full_path.exists() or not full_path.is_file():
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+
+    return _FileResponse(str(full_path), filename=full_path.name)
 
 
 @app.get("/")

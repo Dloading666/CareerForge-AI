@@ -1,4 +1,4 @@
-import { Input, Skeleton, Tooltip } from '@arco-design/web-react'
+import { Input, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconAttachment,
   IconBook,
@@ -6,7 +6,6 @@ import {
   IconCaretRight,
   IconCheck,
   IconClose,
-  IconCloseCircle,
   IconCopy,
   IconDashboard,
   IconDownload,
@@ -15,18 +14,16 @@ import {
   IconMindMapping,
   IconNotification,
   IconPlus,
-  IconRobot,
   IconSend,
-  IconThunderbolt,
-  IconUser,
 } from '@arco-design/web-react/icon'
-import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react'
+import type { ChangeEvent, KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ApiError, apiRequest } from '../shared/api'
+import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
 import { AnnouncementBanner } from './StudentAnnouncementBar'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { useAuth } from '../shared/auth'
+import { buildTimelineSegments, chatRuntimeStore, type TimelineSegment } from './chatRuntimeStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -35,6 +32,7 @@ export type AgentChatSession = {
   title: string
   status: string
   agent_type: string
+  active_resume_id?: number | null
   created_at: string
   updated_at: string
 }
@@ -44,6 +42,11 @@ type AgentMessage = {
   session_id: number
   role: 'user' | 'assistant'
   content: string
+  model_name?: string | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  duration_ms?: number | null
   created_at: string
 }
 
@@ -55,6 +58,7 @@ type AgentActivity = {
   name: string
   status: 'started' | 'completed' | 'failed'
   summary: string | null
+  display_summary: string | null
   detail: Record<string, unknown>
   started_at: string
   completed_at: string | null
@@ -74,6 +78,22 @@ type AgentAttachment = {
 }
 
 type GeneratedFile = { attachment_id: number; download_url: string; filename: string }
+
+type RuntimeInfo = {
+  message_id: number
+  model_name: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  duration_ms: number
+}
+
+type RuntimeStatus = {
+  message_id: number
+  phase: string
+  label: string
+  iteration: number
+}
 
 type AgentHistory = {
   session: AgentChatSession
@@ -95,11 +115,6 @@ export type AgentModelOption = {
 
 type ReasoningEffort = 'low' | 'medium' | 'high'
 
-type StreamEvent = {
-  event: string
-  data: Record<string, unknown>
-}
-
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 export interface AgentChatViewProps {
@@ -115,17 +130,27 @@ export interface AgentChatViewProps {
   todayEvents: { id: number; title: string; event_time: string | null }[]
   remindersDismissed: boolean
   onDismissReminders: () => void
+  onOpenProfile?: () => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+const MAX_RESUMES = 6
 
 const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
 ]
+
+// ── Resume list types (for workspace selector) ────────────────────────────
+
+type ResumeSummary = {
+  id: number
+  title: string
+  updated_at: string | null
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -245,75 +270,608 @@ function ModelReasoningPicker({
   )
 }
 
-function activityKindIcon(kind: string): ReactNode {
-  const style = { fontSize: 12 }
-  switch (kind) {
-    case 'profile': return <IconUser style={style} />
-    case 'resume': return <IconFile style={style} />
-    case 'file': return <IconAttachment style={style} />
-    case 'knowledge': return <IconBook style={style} />
-    case 'subagent': return <IconRobot style={style} />
-    case 'skill': return <IconThunderbolt style={style} />
-    case 'context': return <IconThunderbolt style={style} />
-    default: return <IconThunderbolt style={style} />
-  }
-}
 
-function ActivityChip({ activity }: { activity: AgentActivity }) {
-  const running = activity.status === 'started'
-  const failed = activity.status === 'failed'
+function ResumeSelector({
+  activeResumeId,
+  onResumeChange,
+  disabled,
+}: {
+  activeResumeId: number | null
+  onResumeChange: (id: number | null) => void
+  disabled: boolean
+}) {
+  const [popupVisible, setPopupVisible] = useState(false)
+  const [resumes, setResumes] = useState<ResumeSummary[]>([])
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  const activeResume = resumes.find((r) => r.id === activeResumeId)
+  const fetchedRef = useRef(false)
+
+  const fetchResumes = async () => {
+    setLoading(true)
+    try {
+      const data = await apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
+      setResumes(data)
+    } catch {
+      // silent
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // P1-8: 加载历史会话后 activeResumeId 非空但列表为空时，主动 fetch 一次
+  useEffect(() => {
+    if (activeResumeId && resumes.length === 0 && !fetchedRef.current) {
+      fetchedRef.current = true
+      let cancelled = false
+      apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
+        .then((data) => { if (!cancelled) setResumes(data) })
+        .catch(() => { /* silent */ })
+      return () => { cancelled = true }
+    }
+  }, [activeResumeId, resumes.length])
+
+  const handleOpen = () => {
+    if (disabled) return
+    setPopupVisible((v) => !v)
+    if (!popupVisible) void fetchResumes()
+  }
+
+  const handleSelect = (id: number) => {
+    onResumeChange(id)
+    setPopupVisible(false)
+  }
+
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onResumeChange(null)
+  }
+
+  if (activeResume) {
+    return (
+      <div style={{ position: 'relative' }}>
+        <span
+          className="attachment-chip"
+          style={{ cursor: disabled ? 'default' : 'pointer', background: '#EEF2FF', borderColor: '#C7D2FE', color: '#4338CA' }}
+          onClick={handleOpen}
+        >
+          📄
+          <span>正在编辑：《{activeResume.title}》</span>
+          <button type="button" onClick={handleClear} aria-label="解除绑定"><IconClose /></button>
+        </span>
+        {popupVisible && (
+          <div
+            className="composer-settings-menu"
+            style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 280 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="composer-settings-heading">
+              <IconFile />
+              <span>切换工作简历</span>
+            </div>
+            <div className="composer-settings-options">
+              {resumes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={`composer-settings-option${r.id === activeResumeId ? ' selected' : ''}`}
+                  onClick={() => handleSelect(r.id)}
+                >
+                  <span>{r.title}</span>
+                  {r.id === activeResumeId && <IconCheck />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
-    <span className={`activity-chip${running ? ' running' : ''}${failed ? ' failed' : ''}`}>
-      <span className="activity-chip-icon">
-        {running
-          ? <IconLoading style={{ fontSize: 12 }} />
-          : failed
-            ? <IconCloseCircle style={{ fontSize: 12 }} />
-            : activityKindIcon(activity.kind)}
-      </span>
-      <span>{activity.summary || activity.name}</span>
-    </span>
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className="attachment-chip"
+        style={{
+          cursor: disabled ? 'default' : 'pointer',
+          borderStyle: 'dashed',
+          background: 'transparent',
+          color: '#86909C',
+        }}
+        disabled={disabled}
+        onClick={handleOpen}
+      >
+        📄
+        <span>选择简历</span>
+      </button>
+      {popupVisible && (
+        <div
+          className="composer-settings-menu"
+          style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 280 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="composer-settings-heading">
+            <IconFile />
+            <span>选择工作简历</span>
+          </div>
+          {loading ? (
+            <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>加载中…</div>
+          ) : resumes.length === 0 ? (
+            <div style={{ padding: '12px 16px', fontSize: 13 }}>
+              <div style={{ color: '#86909C', marginBottom: 8 }}>还没有简历</div>
+              <button
+                type="button"
+                className="composer-settings-option"
+                onClick={() => { setPopupVisible(false); navigate('/student/resumes') }}
+              >
+                <span>去简历制作新建</span>
+              </button>
+            </div>
+          ) : (
+            <div className="composer-settings-options">
+              {resumes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="composer-settings-option"
+                  onClick={() => handleSelect(r.id)}
+                >
+                  <span>{r.title}</span>
+                  {r.updated_at && <span style={{ fontSize: 11, color: '#86909C' }}>{r.updated_at.slice(0, 10)}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
-function ActivityBlock({ activities, pending }: { activities: AgentActivity[]; pending: boolean }) {
-  const [expanded, setExpanded] = useState(true)
+
+/** 根据当前运行状态返回状态栏的 phase 图标（emoji）和动画 class */
+
+const toolDisplayNames: Record<string, string> = {
+  query_student_profile: '查看个人档案',
+  read_resume: '查看简历',
+  analyze_uploaded_file: '分析附件',
+  get_session_context: '回顾对话',
+  generate_resume_data: '生成在线简历',
+  optimize_resume_data: '生成优化版简历',
+  update_resume_data: '更改简历',
+  export_resume_pdf: '导出简历 PDF',
+  read_webpage: '读取网页',
+  web_search: '搜索网络信息',
+  analyze_jd_match: '分析 JD 匹配度',
+  save_session_note: '记下要点',
+}
+
+const skillDisplayNames: Record<string, string> = {
+  skill__evidence_backed_resume_tailor: '准备简历定制策略',
+}
+
+function formatDuration(durationMs?: number | null) {
+  if (!durationMs && durationMs !== 0) return ''
+  if (durationMs < 1000) return `${durationMs} ms`
+  return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)} 秒`
+}
+
+function activityDisplayName(activity: AgentActivity) {
+  const knownName = toolDisplayNames[activity.name] || skillDisplayNames[activity.name]
+  if (knownName) return knownName
+
+  const displayName = activity.detail?.display_name
+  if (typeof displayName === 'string' && displayName.trim() && !displayName.includes('_')) {
+    return displayName.trim()
+  }
+
+  if (activity.name.startsWith('skill__') || activity.kind === 'skill' || activity.kind === 'resume_skill') {
+    return '运行专业技能'
+  }
+  return '处理任务'
+}
+
+function activityAction(activity: AgentActivity) {
+  const action = activityDisplayName(activity)
+  if (activity.status === 'started') return `正在${action}…`
+  if (activity.status === 'failed') return `${action}未完成`
+  return `已${action}`
+}
+
+
+
+/** Format elapsed ms as "Xm Ys" for the runtime statusline. */
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+/** Estimate token count from character count (CJK ≈ 1.5 chars/token). */
+function formatTokens(chars: number): string {
+  const t = Math.round(chars / 1.5)
+  return t >= 1000 ? `${(t / 1000).toFixed(1)}k` : String(t)
+}
+
+/** Resolve the statusline label with priority rules. */
+
+type ActivityIconSpec = {
+  src: string
+  tone: string
+}
+
+const ACTIVITY_ICON_BASE = '/activity-icons-v2'
+
+const ACTIVITY_ICON_MAP: Record<string, ActivityIconSpec> = {
+  query_student_profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
+  read_resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
+  analyze_uploaded_file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
+  get_session_context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
+  generate_resume_data: { src: `${ACTIVITY_ICON_BASE}/generate-resume.png`, tone: 'generate' },
+  optimize_resume_data: { src: `${ACTIVITY_ICON_BASE}/optimize-resume.png`, tone: 'optimize' },
+  update_resume_data: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'edit' },
+  export_resume_pdf: { src: `${ACTIVITY_ICON_BASE}/export-pdf.png`, tone: 'export' },
+  read_webpage: { src: `${ACTIVITY_ICON_BASE}/read-webpage.png`, tone: 'web' },
+  web_search: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
+  analyze_jd_match: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
+  save_session_note: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'note' },
+}
+
+const KIND_ICON_MAP: Record<string, ActivityIconSpec> = {
+  profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
+  resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
+  file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
+  context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
+  job: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
+  knowledge: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
+  skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
+  resume_skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
+}
+
+type SessionMemory = {
+  constraints?: string[]
+  facts?: string[]
+  preferences?: string[]
+}
+
+function MemoryPanel({
+  sessionId,
+  visible,
+}: {
+  sessionId: number | null
+  visible: boolean
+}) {
+  const [memory, setMemory] = useState<SessionMemory>({})
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!pending && activities.length > 0 && activities.every((a) => a.status !== 'started')) {
-      const timer = window.setTimeout(() => setExpanded(false), 800)
-      return () => window.clearTimeout(timer)
+    if (!visible || !sessionId) return
+    let cancelled = false
+    apiRequest<{ session: { memory_json?: string | null } }>(`/api/v1/student/master/sessions/${sessionId}/messages?limit=0`)
+      .then((data) => {
+        if (cancelled) return
+        setLoading(true)
+        try {
+          setMemory(JSON.parse(data.session.memory_json || '{}'))
+        } catch { setMemory({}) }
+      })
+      .catch(() => { if (!cancelled) setMemory({}) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [visible, sessionId])
+
+  const handleDelete = async (type: 'constraints' | 'facts' | 'preferences', index?: number) => {
+    const updated: SessionMemory = { ...memory, constraints: [...(memory.constraints || [])], facts: [...(memory.facts || [])], preferences: [...(memory.preferences || [])] }
+    if (type === 'preferences' && index !== undefined) {
+      updated.preferences = updated.preferences!.filter((_, i) => i !== index)
+    } else if (type === 'constraints' && index !== undefined) {
+      updated.constraints = updated.constraints!.filter((_, i) => i !== index)
+    } else if (type === 'facts' && index !== undefined) {
+      updated.facts = updated.facts!.filter((_, i) => i !== index)
     }
-  }, [pending, activities])
+    setMemory(updated)
+    if (sessionId) {
+      try {
+        await authenticatedFetch(`/api/v1/student/master/sessions/${sessionId}/memory`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        })
+      } catch { /* silent */ }
+    }
+  }
 
-  if (activities.length === 0) return null
+  if (!visible) return null
 
-  const completedCount = activities.filter((a) => a.status === 'completed').length
-  const failedCount = activities.filter((a) => a.status === 'failed').length
-  const runningCount = activities.filter((a) => a.status === 'started').length
+  const constraints = memory.constraints || []
+  const facts = memory.facts || []
+  const prefs = memory.preferences || []
+  const total = constraints.length + facts.length + prefs.length
 
   return (
-    <div className="activity-block">
-      {expanded ? (
-        <>
-          <button type="button" className="activity-block-toggle" onClick={() => setExpanded(false)}>
-            <IconCaretDown style={{ fontSize: 11 }} />
-            <span>
-              {runningCount > 0
-                ? `${runningCount} 个工具运行中…`
-                : `已调用 ${completedCount} 个工具${failedCount > 0 ? `，${failedCount} 个失败` : ''}`}
-            </span>
-          </button>
-          <div className="activity-chip-list">
-            {activities.map((a) => <ActivityChip key={a.id} activity={a} />)}
-          </div>
-        </>
+    <div
+      className="composer-settings-menu"
+      style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 300, maxHeight: 360, overflow: 'auto' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="composer-settings-heading">
+        <IconMindMapping />
+        <span>本次对话记住的内容</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#86909C' }}>{total} 条</span>
+      </div>
+      {loading ? (
+        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>加载中…</div>
+      ) : total === 0 ? (
+        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>暂无记忆内容</div>
       ) : (
-        <button type="button" className="activity-block-toggle collapsed" onClick={() => setExpanded(true)}>
-          <IconCaretRight style={{ fontSize: 11 }} />
-          <span>已调用 {completedCount} 个工具{failedCount > 0 ? `，${failedCount} 个失败` : ''}</span>
-        </button>
+        <div style={{ padding: '4px 0' }}>
+          {constraints.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>约束</div>
+              {constraints.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>🚫 {c}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('constraints', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {facts.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>事实</div>
+              {facts.map((f, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>📝 {f}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('facts', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {prefs.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>偏好</div>
+              {prefs.map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>⚙️ {p}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('preferences', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
+    </div>
+  )
+}
+
+
+function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
+  if (name.startsWith('skill__')) return { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' }
+  return ACTIVITY_ICON_MAP[name]
+    || KIND_ICON_MAP[kind]
+    || { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'neutral' }
+}
+
+/** 工具动作像普通消息一样嵌入对话时间线，不再呈现为面板或列表。 */
+function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; collapsed: boolean } }) {
+  const toolActivities = segment.activities
+
+  const isRecoveredFailure = (activity: AgentActivity) => (
+    activity.status === 'failed'
+    && toolActivities.some((candidate) => (
+      candidate.name === activity.name
+      && candidate.status === 'completed'
+      && candidate.id > activity.id
+    ))
+  )
+  const visibleActivities = toolActivities.filter((activity) => !isRecoveredFailure(activity))
+  const primaryActivity = [...visibleActivities].reverse().find((activity) => activity.status === 'started')
+    || visibleActivities[visibleActivities.length - 1]
+  const hasFailures = visibleActivities.some((activity) => activity.status === 'failed')
+
+  if (!primaryActivity) return null
+
+  const { src, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
+  const isRunning = visibleActivities.some((activity) => activity.status === 'started')
+
+  return (
+    <div className={`activity-trace${isRunning ? ' is-running' : ''}${hasFailures ? ' has-failures' : ''}`}>
+      <Tooltip content={activityDisplayName(primaryActivity)} mini>
+        <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
+          <img className="activity-trace-image" src={src} alt="" />
+        </span>
+      </Tooltip>
+      <span className="activity-trace-copy">
+        {visibleActivities.map((activity, index) => (
+          <span key={activity.id}>
+            {index > 0 && <span className="activity-trace-separator"> · </span>}
+            <span className={`activity-trace-action status-${activity.status}`}>
+              {activityAction(activity)}
+            </span>
+          </span>
+        ))}
+      </span>
+    </div>
+  )
+}
+
+/** 时间线渲染：text 和 actions 段交错 */
+function TimelineRenderer({ segments }: { segments: TimelineSegment[] }) {
+  return (
+    <div className="timeline-container">
+      {segments.map((seg, i) => {
+        if (seg.type === 'text') {
+          return seg.content ? (
+            <div key={`t${i}`} className="assistant-answer timeline-text">
+              <MarkdownMessage content={seg.content} />
+            </div>
+          ) : null
+        }
+        return <ActivityTrace key={`a${i}`} segment={seg} />
+      })}
+    </div>
+  )
+}
+
+/** Breathing-logo status line shown during streaming; freezes to a static footer on completion. */
+function RuntimeStatusline({
+  pending,
+  heartbeat,
+  runtimeStatus,
+  runtimeInfo,
+  activities,
+  streamStartMs,
+}: {
+  pending: boolean
+  heartbeat?: { output_chars: number; phase: string }
+  runtimeStatus?: RuntimeStatus
+  runtimeInfo?: RuntimeInfo
+  activities: AgentActivity[]
+  streamStartMs: number | null
+}) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!streamStartMs || !pending) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [streamStartMs, pending])
+  if (!pending && !runtimeInfo) return null
+
+  // Completed state -> static footer
+  if (!pending && runtimeInfo) {
+    const chars = runtimeInfo.total_tokens > 0 ? runtimeInfo.total_tokens : 0
+    return (
+      <div className="runtime-footer">
+        <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
+        <span>用时 {formatDuration(runtimeInfo.duration_ms)}</span>
+        {chars > 0 && (
+          <>
+            <span className="rs-dot">·</span>
+            <span>{chars.toLocaleString()} tokens</span>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Streaming state
+  const elapsed = streamStartMs ? now - streamStartMs : 0
+  const outputChars = heartbeat?.output_chars ?? 0
+  // Resolve label from active tool or heartbeat phase
+  const activeTool = activities.find((a) => a.status === 'started')
+  let label = activeTool?.summary || ''
+  if (!label) {
+    if (heartbeat?.phase === 'tool_writing') label = '正在撰写内容…'
+    else if (heartbeat?.phase === 'writing') label = '正在组织回复…'
+    else if (runtimeStatus?.label) label = runtimeStatus.label
+    else label = '正在理解你的需求…'
+  }
+  if (elapsed > 30000 && !label.includes('请稍候')) {
+    label = label.replace(/…$/, '（内容较多，请稍候）…')
+  }
+
+  return (
+    <div className="runtime-statusline">
+      <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
+      <span>{formatElapsed(elapsed)}</span>
+      <span className="rs-dot">·</span>
+      <span>{formatTokens(outputChars)} tokens</span>
+      <span className="rs-dot">·</span>
+      <span className="rs-label">{label}</span>
+    </div>
+  )
+}
+
+function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
+  const navigate = useNavigate()
+  const [reverting, setReverting] = useState<number | null>(null)
+  const editorLinks = useMemo(() => {
+    const links: { resumeId: number; label: string; activityName: string; revisionId?: number }[] = []
+    for (const a of activities) {
+      if (a.status !== 'completed') continue
+      const detail = a.detail || {}
+      if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
+        const label = a.name === 'generate_resume_data' ? '查看生成的简历'
+          : a.name === 'optimize_resume_data' ? '查看优化后的简历'
+          : a.name === 'update_resume_data' ? '查看修改后的简历'
+          : '查看简历'
+        links.push({ resumeId: detail.resume_id as number, label, activityName: a.name, revisionId: typeof detail?.revision_id === 'number' ? detail.revision_id as number : undefined })
+      }
+    }
+    return links
+  }, [activities])
+
+  const handleRevert = async (resumeId: number, revisionId: number | undefined, e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!window.confirm('确定撤销本次修改？简历将恢复到修改前的状态。')) return
+    setReverting(resumeId)
+    try {
+      let targetRevisionId = revisionId
+      if (!targetRevisionId) {
+        // 兜底：获取最近的 revision
+        const revisions = await apiRequest<{ id: number }[]>(`/api/v1/student/resumes/${resumeId}/revisions`)
+        if (revisions.length === 0) {
+          alert('没有可撤销的快照')
+          return
+        }
+        targetRevisionId = revisions[0].id
+      }
+      const resp = await authenticatedFetch(`/api/v1/student/resumes/${resumeId}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision_id: targetRevisionId }),
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        alert(err.detail || '撤销失败，请重试')
+        return
+      }
+      alert('已撤销修改')
+    } catch {
+      alert('撤销失败，请重试')
+    } finally {
+      setReverting(null)
+    }
+  }
+
+  if (editorLinks.length === 0) return null
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {editorLinks.map((link) => (
+        <span key={link.resumeId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <a
+            href={`/student/resumes/${link.resumeId}`}
+            onClick={(e) => { e.preventDefault(); navigate(`/student/resumes/${link.resumeId}`) }}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '8px 14px', borderRadius: 10,
+              border: '1px solid #C7D2FE', background: '#EEF2FF',
+              color: '#4338CA', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+            }}
+          >
+            <IconFile />
+            <span>{link.label}</span>
+            <IconCaretRight />
+          </a>
+          {link.activityName === 'update_resume_data' && (
+            <button
+              type="button"
+              onClick={(e) => void handleRevert(link.resumeId, link.revisionId, e)}
+              disabled={reverting === link.resumeId}
+              style={{
+                padding: '6px 10px', borderRadius: 8,
+                border: '1px solid #FCA5A5', background: '#FEF2F2',
+                color: '#DC2626', fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              {reverting === link.resumeId ? '撤销中…' : '撤销本次修改'}
+            </button>
+          )}
+        </span>
+      ))}
     </div>
   )
 }
@@ -348,41 +906,70 @@ function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
 }
 
 function AssistantMessage({
-  message, activities, files = [], pending = false,
+  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, segments,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
   files?: GeneratedFile[]
   pending?: boolean
+  runtimeStatus?: RuntimeStatus
+  runtimeInfo?: RuntimeInfo
+  heartbeat?: { output_chars: number; phase: string }
+  streamStartMs?: number | null
+  segments?: TimelineSegment[]
 }) {
+  // 流式阶段使用 store 时间线；历史消息依据持久化 activity 的
+  // content_offset 重建，保证工具轨迹不会随临时流式组件卸载而消失。
+  const timelineSegments = segments?.length
+    ? segments
+    : activities.length
+      ? buildTimelineSegments(message.content, activities)
+      : []
+  const hasSegments = timelineSegments.length > 0
   return (
     <div className="message-row assistant">
       <div className="assistant-message">
-        <ActivityBlock activities={activities} pending={pending} />
-        {message.content ? (
-          <div className="assistant-answer">
-            {!pending && (
-              <button
-                className="msg-copy-btn"
-                title="复制"
-                onClick={() => navigator.clipboard.writeText(message.content)}
-              >
-                <IconCopy />
-              </button>
-            )}
-            <MarkdownMessage content={message.content} />
-            {pending && <span className="stream-cursor" />}
-          </div>
+        {hasSegments ? (
+          <TimelineRenderer segments={timelineSegments} />
         ) : (
-          pending && (
-            <div className="assistant-thinking">
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-            </div>
-          )
+          <>
+            {message.content ? (
+              <div className="assistant-answer">
+                {!pending && (
+                  <button
+                    className="msg-copy-btn"
+                    title="复制"
+                    onClick={() => navigator.clipboard.writeText(message.content)}
+                  >
+                    <IconCopy />
+                  </button>
+                )}
+                <MarkdownMessage content={message.content} />
+                {pending && <span className="stream-cursor" />}
+              </div>
+            ) : (
+              pending && (
+                <div className="assistant-thinking">
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                </div>
+              )
+            )}
+          </>
         )}
+        <ResumeEditorLinks activities={activities} />
         <GeneratedFileLinks files={files} />
+        {(pending || runtimeInfo) && (
+          <RuntimeStatusline
+            pending={pending}
+            heartbeat={heartbeat}
+            runtimeStatus={runtimeStatus}
+            runtimeInfo={runtimeInfo}
+            activities={activities}
+            streamStartMs={streamStartMs ?? null}
+          />
+        )}
       </div>
     </div>
   )
@@ -398,21 +985,6 @@ function activitiesForAssistant(
   const previousUser = [...messages.slice(0, assistantIndex)].reverse().find((m) => m.role === 'user')
   if (!previousUser) return []
   return activities.filter((a) => a.message_id === previousUser.id)
-}
-
-function parseSseBlock(block: string): StreamEvent | null {
-  let event = 'message'
-  const dataLines: string[] = []
-  for (const line of block.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-  }
-  if (dataLines.length === 0) return null
-  try {
-    return { event, data: JSON.parse(dataLines.join('\n')) as Record<string, unknown> }
-  } catch {
-    return null
-  }
 }
 
 function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
@@ -438,6 +1010,19 @@ function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   )
 }
 
+
+/** 缓存的会话状态，用于并行对话切换时保留各会话的 UI 状态 */
+type SavedSessionState = {
+  messages: AgentMessage[]
+  activities: AgentActivity[]
+  generatedFiles: Record<number, GeneratedFile[]>
+  runtimeStatuses: Record<number, RuntimeStatus>
+  runtimeInfo: Record<number, RuntimeInfo>
+  userMessageAttachments: Record<number, AgentAttachment[]>
+  storeSegments: TimelineSegment[]
+  heartbeats: Record<number, { output_chars: number; phase: string }>
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function AgentChatView({
@@ -451,6 +1036,7 @@ export function AgentChatView({
   todayEvents,
   remindersDismissed,
   onDismissReminders,
+  onOpenProfile,
 }: AgentChatViewProps) {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -460,6 +1046,11 @@ export function AgentChatView({
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
+  const [runtimeStatuses, setRuntimeStatuses] = useState<Record<number, RuntimeStatus>>({})
+  const [runtimeInfo, setRuntimeInfo] = useState<Record<number, RuntimeInfo>>({})
+  const [heartbeats, setHeartbeats] = useState<Record<number, { output_chars: number; phase: string }>>({})
+  const [storeSegments, setStoreSegments] = useState<TimelineSegment[]>([])
+  const streamStartRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -468,11 +1059,25 @@ export function AgentChatView({
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium')
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
+  const [activeResumeId, setActiveResumeId] = useState<number | null>(null)
+  const [memoryPanelVisible, setMemoryPanelVisible] = useState(false)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
-  const abortRef = useRef<AbortController | null>(null)
+  // G2: 新手引导 — 档案完整度
+  const [completeness, setCompleteness] = useState<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean } | null>(null)
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => localStorage.getItem('onboarding_dismissed') === '1')
+
+  useEffect(() => {
+    if (agentType !== 'resume' || messages.length > 0 || onboardingDismissed) return
+    apiRequest<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean }>('/api/v1/student/profile/completeness')
+      .then(setCompleteness)
+      .catch(() => {})
+  }, [agentType, messages.length, onboardingDismissed])
+
+
+  const sessionCache = useRef<Map<number, SavedSessionState>>(new Map())  // 并行对话：缓存各 session 的 UI 状态
   const pendingResumeNavRef = useRef<number | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -480,6 +1085,12 @@ export function AgentChatView({
   const isNearBottomRef = useRef(true)
   const dragCounterRef = useRef(0)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+
+  // ── Store sync ────────────────────────────────────────────────────────────
+  const [storeTick, setStoreTick] = useState(0)
+  useEffect(() => {
+    return chatRuntimeStore.subscribe(() => setStoreTick((t) => t + 1))
+  }, [])
 
   // Sync selected model with parent's model options
   useEffect(() => {
@@ -512,20 +1123,86 @@ export function AgentChatView({
     onActiveSessionChange(agentSession?.id ?? null)
   }, [agentSession?.id, onActiveSessionChange])
 
-  // Load session when loadTrigger increments
+  // ── 并行对话：计算当前 session 是否正在运行 ─────────────────────────────
+  const currentSessionId = agentSession?.id ?? null
+  const isCurrentStreaming = currentSessionId != null ? chatRuntimeStore.isRunning(currentSessionId) : false
+
+  // Load session when loadTrigger increments — 并行对话：切换会话时保留状态、不中断运行
   useEffect(() => {
     if (loadTrigger === 0 || !sessionToLoad) return
-    if (streaming) abortRef.current?.abort()
+
+    // 1. 保存当前 session 的 UI 状态到缓存（不 abort 正在运行的任务）
+    if (agentSession?.id) {
+      sessionCache.current.set(agentSession.id, {
+        messages,
+        activities,
+        generatedFiles,
+        runtimeStatuses,
+        runtimeInfo,
+        userMessageAttachments,
+        storeSegments,
+        heartbeats,
+      })
+      // 限制缓存大小：最多保留 5 个 session
+      if (sessionCache.current.size > 5) {
+        const oldest = sessionCache.current.keys().next().value
+        if (oldest != null) sessionCache.current.delete(oldest)
+      }
+    }
+
+    // 如果目标就是当前 session，不重复加载
+    if (sessionToLoad.id === agentSession?.id) return
+
     setNotice(null)
+    setPendingAttachments([])
+
+    // 2. 优先从缓存恢复
+    const cached = sessionCache.current.get(sessionToLoad.id)
+    if (cached) {
+      setHistoryLoading(false)
+      // 需要从 API 获取 session 元数据（title 等可能更新了）
+      apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages?limit=0`)
+        .then((history) => { setAgentSession(history.session); setActiveResumeId(history.session.active_resume_id ?? null) })
+        .catch(() => {
+          // 兜底：构造一个最小 session 对象
+          setAgentSession({ id: sessionToLoad.id, title: sessionToLoad.title, status: 'active', agent_type: agentType, created_at: '', updated_at: '' })
+        })
+      setMessages(cached.messages)
+      setActivities(cached.activities)
+      setGeneratedFiles(cached.generatedFiles)
+      setRuntimeStatuses(cached.runtimeStatuses)
+      setRuntimeInfo(cached.runtimeInfo)
+      setUserMessageAttachments(cached.userMessageAttachments)
+      setStoreSegments(cached.storeSegments)
+      setHeartbeats(cached.heartbeats)
+      return
+    }
+
+    // 3. 无缓存 → 正常 API 加载
     setHistoryLoading(true)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
 
     apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages`)
       .then((history) => {
         setAgentSession(history.session)
+        setActiveResumeId(history.session.active_resume_id ?? null)
         setMessages(history.messages)
         setActivities(history.activities)
+        setRuntimeInfo(Object.fromEntries(
+          history.messages
+            .filter((message) => message.role === 'assistant' && message.duration_ms)
+            .map((message) => [message.id, {
+              message_id: message.id,
+              model_name: message.model_name || '未知模型',
+              prompt_tokens: message.prompt_tokens || 0,
+              completion_tokens: message.completion_tokens || 0,
+              total_tokens: message.total_tokens || 0,
+              duration_ms: message.duration_ms || 0,
+            }]),
+        ))
         setPendingAttachments([])
         setGeneratedFiles({})
         // Restore user image attachments
@@ -558,102 +1235,126 @@ export function AgentChatView({
   // Reset to new chat when newChatTrigger increments
   useEffect(() => {
     if (newChatTrigger === 0) return
-    if (streaming) abortRef.current?.abort()
+    // 并行对话：新建对话前保存当前 session 状态（不 abort 正在运行的任务）
+    if (agentSession?.id) {
+      sessionCache.current.set(agentSession.id, {
+        messages, activities, generatedFiles, runtimeStatuses,
+        runtimeInfo, userMessageAttachments, storeSegments, heartbeats,
+      })
+    }
     setAgentSession(null)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
+    setHeartbeats({})
+    setStoreSegments([])
+    streamStartRef.current = null
     setPendingAttachments([])
     setGeneratedFiles({})
     setInputValue('')
     setNotice(null)
+    setActiveResumeId(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newChatTrigger])
 
   const createAgentSession = useCallback(async () => {
+    const body: Record<string, unknown> = { title: '新对话', agent_type: agentType }
+    if (activeResumeId) body.active_resume_id = activeResumeId
     const created = await apiRequest<AgentChatSession>('/api/v1/student/master/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: '新对话', agent_type: agentType }),
+      body: JSON.stringify(body),
     })
     setAgentSession(created)
     setMessages([])
     setActivities([])
+    setRuntimeStatuses({})
+    setRuntimeInfo({})
+    setHeartbeats({})
+    streamStartRef.current = null
     setPendingAttachments([])
     setGeneratedFiles({})
     return created
-  }, [agentType])
+  }, [agentType, activeResumeId])
 
-  const upsertActivity = (activity: AgentActivity) => {
-    setActivities((prev) => {
-      const idx = prev.findIndex((a) => a.id === activity.id)
-      if (idx < 0) return [...prev, activity]
-      const next = [...prev]
-      next[idx] = activity
-      return next
-    })
+  // 工作简历切换：已有 session 走 PATCH，否则只存 state
+  const handleResumeChange = useCallback(async (resumeId: number | null) => {
+    setActiveResumeId(resumeId)
+    if (agentSession?.id) {
+      try {
+        await apiRequest<AgentChatSession>(`/api/v1/student/master/sessions/${agentSession.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ active_resume_id: resumeId }),
+        })
+      } catch {
+        // silent — state already updated locally
+      }
+    }
+  }, [agentSession?.id])
+
+  // 从 activity.completed 事件同步 activeResumeId（AI 生成/优化简历后自动绑定）
+  useEffect(() => {
+    for (const a of activities) {
+      if (a.status !== 'completed') continue
+      const detail = a.detail || {}
+      if ((a.name === 'generate_resume_data' || a.name === 'optimize_resume_data' || a.name === 'update_resume_data')
+        && typeof detail?.resume_id === 'number') {
+        setActiveResumeId(detail.resume_id as number)
+      }
+    }
+  }, [activities])
+
+
+  const ensureResumeCapacity = async () => {
+    try {
+      const resumes = await apiRequest<unknown[]>('/api/v1/student/resumes')
+      if (resumes.length >= MAX_RESUMES) {
+        setNotice(`简历数量已达上限（${MAX_RESUMES} 份），请先前往「简历制作」删除一份简历后再继续生成。`)
+        return false
+      }
+      return true
+    } catch (error) {
+      setNotice(error instanceof ApiError ? error.message : '暂时无法检查简历数量，请稍后重试')
+      return false
+    }
   }
 
-  const appendAssistantDelta = (messageId: number, delta: string, sessionId: number) => {
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === messageId)
-      if (idx < 0) {
-        return [...prev, { id: messageId, session_id: sessionId, role: 'assistant', content: delta, created_at: new Date().toISOString() }]
-      }
-      const next = [...prev]
-      next[idx] = { ...next[idx], content: next[idx].content + delta }
-      return next
-    })
+  const startResumeCreation = async () => {
+    if (!(await ensureResumeCapacity())) return
+    await submitMessage('AI简历制作：请先读取我的个人信息，然后帮我制作一份针对目标岗位的简历')
   }
 
-  const handleStreamEvent = (evt: StreamEvent, optimisticId: number, sessionId: number) => {
-    const { event, data } = evt
-    if (event === 'message.saved') {
-      const messageId = Number(data.message_id)
-      setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, id: messageId } : m)))
-      setUserMessageAttachments((prev) => {
-        if (!prev[optimisticId]) return prev
-        const next = { ...prev }
-        next[messageId] = next[optimisticId]
-        delete next[optimisticId]
-        return next
-      })
-      return
-    }
-    if (event === 'activity.started' || event === 'activity.completed' || event === 'activity.failed') {
-      const activity = data as AgentActivity
-      upsertActivity(activity)
-      if (event === 'activity.completed') {
-        const detail = activity.detail
-        if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
-          pendingResumeNavRef.current = detail.resume_id as number
-        }
+  const startResumeOptimization = async () => {
+    try {
+      const list = await apiRequest<{ id: number; title: string }[]>('/api/v1/student/resumes')
+      if (list.length === 0) {
+        // 0 份简历：引导去简历中心导入
+        Modal.confirm({
+          title: '还没有在线简历',
+          content: '先把简历上传到简历中心，AI 就能直接优化它。',
+          okText: '去导入简历',
+          cancelText: '取消',
+          onOk: () => navigate('/student/resumes?import=1'),
+        })
+        return
       }
-      return
-    }
-    if (event === 'message.delta') {
-      appendAssistantDelta(Number(data.message_id), String(data.delta ?? ''), sessionId)
-      return
-    }
-    if (event === 'attachment.created') {
-      const messageId = Number(data.message_id)
-      const downloadUrl = String(data.download_url ?? '')
-      if (!downloadUrl) return
-      const file: GeneratedFile = {
-        attachment_id: Number(data.attachment_id),
-        download_url: downloadUrl,
-        filename: String(data.filename ?? '简历.pdf'),
+      if (list.length === 1) {
+        // 1 份：自动绑定为工作简历
+        await handleResumeChange(list[0].id)
+        setInputValue('请优化这份简历。目标岗位 JD：\n（在这里粘贴 JD）')
+      } else {
+        // 多份：预填提示，用户通过 ResumeSelector 选择
+        setInputValue('请优化我的工作简历。目标岗位 JD：\n（在这里粘贴 JD）')
       }
-      setGeneratedFiles((prev) => {
-        const list = prev[messageId] ?? []
-        if (list.some((f) => f.attachment_id === file.attachment_id)) return prev
-        return { ...prev, [messageId]: [...list, file] }
-      })
+    } catch {
+      // silent
     }
   }
 
   const submitMessage = async (preset?: string) => {
     const text = (preset ?? inputValue).trim()
     const hasAttachments = pendingAttachments.length > 0
-    if ((!text && !hasAttachments) || streaming) return
+    if ((!text && !hasAttachments) || isCurrentStreaming) return
     const content = text || '请帮我分析上传的附件。'
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
@@ -673,6 +1374,10 @@ export function AgentChatView({
     setInputValue('')
     setNotice(null)
     setStreaming(true)
+    setRuntimeStatuses({})
+    setHeartbeats({})
+    setStoreSegments([])
+    streamStartRef.current = Date.now()
     const sendingAttachments = [...pendingAttachments]
     setPendingAttachments([])
     setMessages((prev) => [
@@ -695,60 +1400,53 @@ export function AgentChatView({
     }
     onSessionUpdated(sessionForParent)
 
-    const controller = new AbortController()
-    abortRef.current = controller
+    // Store-driven streaming: chatRuntimeStore manages the SSE connection
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/student/master/sessions/${currentSession.id}/messages/stream`,
+      await chatRuntimeStore.startRun(
+        currentSession.id,
+        agentType,
         {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session?.access ?? ''}`,
-            'Content-Type': 'application/json',
+          content,
+          model_id: selectedModelId,
+          reasoning_effort: reasoningEffort,
+          attachment_ids: sendingAttachments.map((a) => a.id),
+          optimisticUserMessageId: optimisticId,
+          sendingAttachments,
+        },
+        {
+          onSessionUpdated: (sess) => onSessionUpdated(sess as AgentChatSession),
+          onResumeNav: (resumeId) => {
+            pendingResumeNavRef.current = resumeId
           },
-          body: JSON.stringify({
-            content,
-            model_id: selectedModelId,
-            reasoning_effort: reasoningEffort,
-            attachment_ids: sendingAttachments.map((a) => a.id),
-          }),
-          signal: controller.signal,
         },
       )
-      if (!response.ok || !response.body) throw new Error(`请求失败（${response.status}）`)
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
-        buffer = blocks.pop() ?? ''
-        for (const block of blocks) {
-          const parsed = parseSseBlock(block)
-          if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
-        }
-      }
-      if (buffer.trim()) {
-        const parsed = parseSseBlock(buffer)
-        if (parsed) handleStreamEvent(parsed, optimisticId, currentSession.id)
-      }
+      // After startRun resolves, check pending resume navigation
       if (pendingResumeNavRef.current !== null) {
         const resumeId = pendingResumeNavRef.current
         pendingResumeNavRef.current = null
         navigate(`/student/resumes/${resumeId}`)
       }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setNotice(error instanceof Error ? error.message : '回复失败')
+      // Check store error
+      const storeState = chatRuntimeStore.getState(currentSession.id)
+      if (storeState?.error) {
+        const message = storeState.error
+        const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
+          : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
+          : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
+          : message
+        setNotice(hint)
         setPendingAttachments((prev) => [...sendingAttachments, ...prev])
-        setInputValue(content)
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '回复失败'
+      const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
+        : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
+        : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
+        : message
+      setNotice(hint)
+      setPendingAttachments((prev) => [...sendingAttachments, ...prev])
     } finally {
       setStreaming(false)
-      abortRef.current = null
     }
   }
 
@@ -760,8 +1458,14 @@ export function AgentChatView({
     }
   }
 
+  const scrollToBottom = () => {
+    const node = threadRef.current
+    if (!node) return
+    node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+  }
+
   const stopStreaming = () => {
-    abortRef.current?.abort()
+    if (agentSession?.id != null) chatRuntimeStore.abortSession(agentSession.id)
     setStreaming(false)
     setMessages((prev) => {
       const last = prev[prev.length - 1]
@@ -783,13 +1487,9 @@ export function AgentChatView({
       for (const file of files.slice(0, 8)) {
         const form = new FormData()
         form.append('file', file)
-        const response = await fetch(
-          `${API_BASE_URL}/api/v1/student/master/sessions/${sess.id}/attachments`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${session?.access ?? ''}` },
-            body: form,
-          },
+        const response = await authenticatedFetch(
+          `/api/v1/student/master/sessions/${sess.id}/attachments`,
+          { method: 'POST', body: form },
         )
         const payload = await response.json()
         if (!response.ok || payload.code !== 0) {
@@ -851,11 +1551,178 @@ export function AgentChatView({
     return messages.slice(idx + 1).some((m) => m.role === 'assistant')
   }, [latestUserMessage, messages])
 
+  // ── Sync store events → component state ──────────────────────────────────
+  useEffect(() => {
+    const sid = agentSession?.id
+    if (sid == null || storeTick === 0) return // storeTick===0 means no store notify yet
+    const storeState = chatRuntimeStore.getState(sid)
+    if (!storeState) return
+
+    // Update streaming flag from store（并行对话：仅跟踪当前 session 的状态）
+    setStreaming(storeState.streaming || false)
+
+    // Sync stream start ref
+    if (storeState.streamStartMs != null) {
+      streamStartRef.current = storeState.streamStartMs
+    }
+
+    // Sync segments
+    if (storeState.segments.length > 0) {
+      setStoreSegments(storeState.segments)
+    }
+
+    // Sync activities
+    if (storeState.activities.length > 0) {
+      setActivities((prev) => {
+        const merged = [...prev]
+        for (const act of storeState.activities) {
+          const idx = merged.findIndex((a) => a.id === act.id)
+          if (idx >= 0) merged[idx] = act
+          else merged.push(act)
+        }
+        return merged
+      })
+    }
+
+    // Sync runtime status
+    if (storeState.runtimeStatus) {
+      setRuntimeStatuses((prev) => ({ ...prev, [storeState.runtimeStatus!.message_id]: storeState.runtimeStatus! }))
+    } else {
+      // Clear runtime statuses when store has none
+      setRuntimeStatuses({})
+    }
+
+    // Sync heartbeat
+    if (storeState.heartbeat) {
+      setHeartbeats((prev) => ({ ...prev, [storeState.heartbeat!.message_id]: { output_chars: storeState.heartbeat!.output_chars, phase: storeState.heartbeat!.phase } }))
+    }
+
+    // Sync runtime info
+    if (storeState.runtimeInfo) {
+      setRuntimeInfo((prev) => ({ ...prev, [storeState.runtimeInfo!.message_id]: storeState.runtimeInfo! }))
+    }
+
+    // Sync assistant content (delta-based incremental append)
+    if (storeState.assistantContent && storeState.assistantMessageId) {
+      // store.assistantContent 是全量累加内容，组件 messages 里已有部分内容，
+      // 只追加增量部分，避免复读
+      const fullContent = storeState.assistantContent
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === storeState.assistantMessageId)
+        if (idx < 0) {
+          return [...prev, { id: storeState.assistantMessageId!, session_id: sid, role: 'assistant', content: fullContent, created_at: new Date().toISOString() }]
+        }
+        const existing = prev[idx].content
+        if (fullContent.length <= existing.length) return prev // 无新内容
+        const delta = fullContent.slice(existing.length)
+        if (!delta) return prev
+        const next = [...prev]
+        next[idx] = { ...next[idx], content: existing + delta }
+        return next
+      })
+    }
+
+    // Sync message.saved：把乐观负数 id 替换为数据库真实 id。
+    // 活动(activity)事件按 user_message 的真实 id 关联——不替换的话，
+    // 流式期间步骤列表按 message_id 过滤永远匹配不上，整个执行过程区域不渲染。
+    const realUserMsgId = storeState.pendingUserMessageId
+    if (typeof realUserMsgId === 'number' && realUserMsgId > 0) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === realUserMsgId)) return prev
+        let optimisticIdx = -1
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].role === 'user' && prev[i].id < 0) { optimisticIdx = i; break }
+        }
+        if (optimisticIdx < 0) return prev
+        const next = [...prev]
+        next[optimisticIdx] = { ...next[optimisticIdx], id: realUserMsgId }
+        return next
+      })
+      setUserMessageAttachments((prev) => {
+        const negKey = Object.keys(prev).map(Number).find((k) => k < 0)
+        if (negKey == null || prev[realUserMsgId]) return prev
+        const { [negKey]: moved, ...rest } = prev
+        return { ...rest, [realUserMsgId]: moved }
+      })
+    }
+
+    // Sync generated files
+    for (const [msgId, files] of storeState.generatedFiles) {
+      setGeneratedFiles((prev) => {
+        const list = prev[msgId] ?? []
+        const newFiles = files.filter((f) => !list.some((l) => l.attachment_id === f.attachment_id))
+        if (newFiles.length === 0) return prev
+        return { ...prev, [msgId]: [...list, ...newFiles] }
+      })
+    }
+
+    // Sync user attachments
+    for (const [msgId, atts] of storeState.userAttachments) {
+      setUserMessageAttachments((prev) => ({ ...prev, [msgId]: atts as AgentAttachment[] }))
+    }
+  }, [storeTick, agentSession?.id])
+
   // ── Render ──
+
+  const allOnboardingDone = completeness && completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills && completeness.has_resume && activeResumeId
 
   const emptyState = agentType === 'resume' ? (
     <section className="agent-empty-state agent-home-workbench">
       <div className="agent-home-grid">
+        {/* G2: 新手引导卡 */}
+        {completeness && !allOnboardingDone && !onboardingDismissed && (
+          <div style={{
+            background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12,
+            padding: '16px 20px', marginBottom: 16, fontSize: 13, lineHeight: 1.8,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>新手引导</span>
+              <button
+                type="button"
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C', fontSize: 12 }}
+                onClick={() => { localStorage.setItem('onboarding_dismissed', '1'); setOnboardingDismissed(true) }}
+              >不再显示</button>
+            </div>
+            {/* Step 1: 完善档案 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '✓' : '1'}
+              </span>
+              <span style={{ flex: 1 }}>完善个人档案</span>
+              {!(completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills) && (
+                <button
+                  type="button"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
+                  onClick={() => onOpenProfile?.()}
+                >去完善</button>
+              )}
+            </div>
+            {/* Step 2: 准备简历 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.has_resume ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {completeness.has_resume ? '✓' : '2'}
+              </span>
+              <span style={{ flex: 1 }}>准备一份简历</span>
+              {!completeness.has_resume && (
+                <button
+                  type="button"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
+                  onClick={() => navigate('/student/resumes?import=1')}
+                >去导入</button>
+              )}
+            </div>
+            {/* Step 3: 选择工作简历 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: activeResumeId ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {activeResumeId ? '✓' : '3'}
+              </span>
+              <span style={{ flex: 1 }}>选择工作简历，开始对话</span>
+              {!activeResumeId && completeness.has_resume && (
+                <span style={{ color: '#86909C', fontSize: 12 }}>点击输入框上方的「📄 选择简历」</span>
+              )}
+            </div>
+          </div>
+        )}
         <div className="agent-home-badge">
           <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
         </div>
@@ -865,7 +1732,7 @@ export function AgentChatView({
           <button
             className="agent-home-card"
             type="button"
-            onClick={() => void submitMessage('AI简历制作：请先读取我的个人信息，然后帮我制作一份针对目标岗位的简历')}
+            onClick={() => void startResumeCreation()}
           >
             <strong>AI订制简历</strong>
             <span>读取个人信息档案，结合你提供的目标岗位 JD，自动生成一份在线简历。</span>
@@ -873,13 +1740,10 @@ export function AgentChatView({
           <button
             className="agent-home-card"
             type="button"
-            onClick={() => {
-              setInputValue('请帮我优化简历，我会上传简历 PDF 和目标岗位 JD。')
-              fileInputRef.current?.click()
-            }}
+            onClick={() => void startResumeOptimization()}
           >
             <strong>简历优化</strong>
-            <span>上传简历 PDF + 粘贴目标岗位 JD，AI 给出优化建议并保存到简历制作。</span>
+            <span>选择一份在线简历 + 粘贴目标岗位 JD，AI 直接优化并保存。</span>
           </button>
         </div>
       </div>
@@ -968,6 +1832,12 @@ export function AgentChatView({
               message={message}
               activities={activitiesForAssistant(messages, activities, index)}
               files={generatedFiles[message.id] ?? []}
+              pending={streaming && index === messages.length - 1}
+              runtimeStatus={runtimeStatuses[message.id]}
+              runtimeInfo={runtimeInfo[message.id]}
+              heartbeat={heartbeats[message.id]}
+              streamStartMs={streamStartRef.current}
+              segments={index === messages.length - 1 ? storeSegments : undefined}
             />
           ),
         )}
@@ -976,15 +1846,22 @@ export function AgentChatView({
           <AssistantMessage
             message={{ id: 0, session_id: latestUserMessage.session_id, role: 'assistant', content: '', created_at: new Date().toISOString() }}
             activities={activities.filter((a) => a.message_id === latestUserMessage.id)}
+            runtimeStatus={Object.values(runtimeStatuses).at(-1)}
+            heartbeat={Object.values(heartbeats).at(-1)}
+            streamStartMs={streamStartRef.current}
             pending
+            segments={storeSegments}
           />
         )}
       </div>
 
       {showScrollBtn && (
         <button
+          type="button"
           className="scroll-to-bottom-btn"
-          onClick={() => { const node = threadRef.current; if (node) node.scrollTop = node.scrollHeight }}
+          title="回到底部"
+          aria-label="回到底部"
+          onClick={scrollToBottom}
         >
           <IconCaretDown />
         </button>
@@ -1005,8 +1882,15 @@ export function AgentChatView({
           </div>
         )}
 
-        {pendingAttachments.length > 0 && (
+        {(agentType === 'resume' || pendingAttachments.length > 0) && (
           <div className="attachment-chip-row">
+            {agentType === 'resume' && (
+              <ResumeSelector
+                activeResumeId={activeResumeId}
+                onResumeChange={(id) => void handleResumeChange(id)}
+                disabled={streaming}
+              />
+            )}
             {pendingAttachments.map((a) =>
               a.content_type?.startsWith('image/') && a.download_url ? (
                 <div key={a.id} className="composer-image-preview" title={a.original_name}>
@@ -1051,6 +1935,24 @@ export function AgentChatView({
                 {uploadingAttachment ? <IconLoading /> : <IconPlus />}
               </button>
             </Tooltip>
+            {agentType === 'resume' && agentSession?.id && (
+              <div style={{ position: 'relative' }}>
+                <Tooltip content="查看本次对话记住的内容">
+                  <button
+                    type="button"
+                    className="composer-add-btn"
+                    onClick={() => setMemoryPanelVisible((v) => !v)}
+                    style={memoryPanelVisible ? { background: '#EEF2FF', color: '#4338CA' } : undefined}
+                  >
+                    <IconMindMapping />
+                  </button>
+                </Tooltip>
+                <MemoryPanel
+                  sessionId={agentSession.id}
+                  visible={memoryPanelVisible}
+                />
+              </div>
+            )}
             <input
               ref={fileInputRef}
               type="file"

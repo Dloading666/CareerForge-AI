@@ -1,7 +1,7 @@
 import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
-import { useResumeEditor } from '../../ResumeEditorContext'
+import { useResumeEditor } from '../../useResumeEditor'
 import { createCustomField } from '../../constants'
 
 export function BasicInfoSection() {
@@ -34,7 +34,7 @@ export function BasicInfoSection() {
         <Form.Item label="姓名">
           <Input value={resume.basic.name} onChange={(value) => updateBasic({ name: value })} />
         </Form.Item>
-        <Form.Item label="目标岗位">
+        <Form.Item label="期望岗位">
           <Input value={resume.basic.title} onChange={(value) => updateBasic({ title: value })} />
         </Form.Item>
         <Form.Item label="求职状态">
@@ -46,11 +46,16 @@ export function BasicInfoSection() {
         <Form.Item label="电话">
           <Input value={resume.basic.phone} onChange={(value) => updateBasic({ phone: value })} />
         </Form.Item>
-        <Form.Item label="所在城市 / 学校">
+        <Form.Item label="期望城市">
           <Input value={resume.basic.location} onChange={(value) => updateBasic({ location: value })} />
         </Form.Item>
         <Form.Item label="出生日期">
-          <Input value={resume.basic.birthDate} onChange={(value) => updateBasic({ birthDate: value })} placeholder="如 2002-09" />
+          <Input
+            value={resume.basic.birthDate}
+            onChange={(value) => updateBasic({ birthDate: value })}
+            placeholder="YYYY-MM-DD"
+            maxLength={10}
+          />
         </Form.Item>
         <Form.Item label="GitHub Key">
           <Input value={resume.basic.githubKey} onChange={(value) => updateBasic({ githubKey: value })} placeholder="如 octocat" />
@@ -61,7 +66,7 @@ export function BasicInfoSection() {
         <Form.Item label="显示 GitHub 贡献图">
           <Switch checked={resume.basic.githubContributionsVisible} onChange={(checked) => updateBasic({ githubContributionsVisible: checked })} />
         </Form.Item>
-        <Form.Item label="头像 URL">
+        <Form.Item label="简历头像 URL">
           <Input
             value={resume.basic.photo}
             onChange={(value) => updateBasic({ photo: value })}

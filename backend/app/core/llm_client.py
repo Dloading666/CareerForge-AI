@@ -1,52 +1,195 @@
-"""OpenAI-compatible LLM client"""
+"""LLM client supporting OpenAI-compatible and Anthropic-compatible APIs."""
+from __future__ import annotations
+
+from typing import Any
+
 import httpx
+
 from app.admin.model_service import decrypt_api_key
 
-# ── 模型名称规范化映射 ──────────────────────────
-# 将常见的旧/非标准模型名映射到当前支持的名称
+
 _MODEL_ALIAS_MAP = {
     "deepseek-v4": "deepseek-v4-pro",
 }
 
+
 def _normalize_model_id(model_id: str, base_url: str) -> str:
-    """规范化模型标识符，处理已知别名"""
     normalized = _MODEL_ALIAS_MAP.get(model_id)
     if normalized:
         import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"模型名称已自动修正: '%s' -> '%s'", model_id, normalized)
+
+        logging.getLogger(__name__).warning("model id normalized: %s -> %s", model_id, normalized)
     return normalized or model_id
 
 
-def chat_completion(model_config, *, system_prompt, variables, memory, user_message,
-                    temperature=0.7, max_tokens=4096, top_p=0.9,
-                    frequency_penalty=0.0, presence_penalty=0.0) -> dict:
-    sp = system_prompt or "你是一个有帮助的 AI 助手。"
+def _protocols(model_config) -> set[str]:
+    raw = (getattr(model_config, "protocols", "") or "").lower()
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def is_anthropic_model(model_config) -> bool:
+    protocols = _protocols(model_config)
+    base_url = (getattr(model_config, "base_url", "") or "").lower()
+    return "anthropic" in protocols or "/anthropic" in base_url or "api.anthropic.com" in base_url
+
+
+def _apply_variables(system_prompt: str | None, variables: dict[str, str] | None) -> str:
+    sp = system_prompt or "You are a helpful AI assistant."
     if variables:
-        for key, val in variables.items(): sp = sp.replace(f"{{{{{key}}}}}", val)
-    messages = [{"role": "system", "content": sp}]
+        for key, val in variables.items():
+            sp = sp.replace(f"{{{{{key}}}}}", str(val))
+    return sp
+
+
+def _anthropic_messages(memory: list[dict[str, Any]], user_message: str) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for item in memory:
+        role = item.get("role")
+        if role == "system":
+            continue
+        if role == "assistant":
+            messages.append({"role": "assistant", "content": str(item.get("content") or "")})
+        elif role == "user":
+            messages.append({"role": "user", "content": str(item.get("content") or "")})
+        elif role == "tool":
+            messages.append({"role": "user", "content": str(item.get("content") or "")})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def _anthropic_completion(
+    model_config,
+    *,
+    system_prompt: str,
+    memory: list[dict[str, Any]],
+    user_message: str,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+) -> dict:
+    api_base = (model_config.base_url or "https://api.anthropic.com/v1").rstrip("/")
+    if api_base.endswith("/anthropic"):
+        api_base = f"{api_base}/v1"
+    elif not api_base.endswith("/v1"):
+        api_base = f"{api_base}/v1"
+    api_key = decrypt_api_key(model_config.api_key_cipher) if model_config.api_key_cipher else ""
+    body = {
+        "model": model_config.model_identifier,
+        "system": system_prompt,
+        "messages": _anthropic_messages(memory, user_message),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": top_p,
+        "stream": False,
+    }
+    headers = {
+        "x-api-key": api_key,
+        "api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=httpx.Timeout(getattr(model_config, "timeout_sec", None) or 120.0)) as client:
+        resp = client.post(f"{api_base}/messages", json=body, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(f"LLM call failed ({resp.status_code}): {resp.text[:512]}")
+    data = resp.json()
+    reply_parts: list[str] = []
+    for block in data.get("content") or []:
+        if block.get("type") == "text":
+            reply_parts.append(block.get("text") or "")
+    usage = data.get("usage") or {}
+    return {
+        "reply": "".join(reply_parts),
+        "usage": {
+            "prompt_tokens": usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
+            "total_tokens": (usage.get("input_tokens", 0) or 0) + (usage.get("output_tokens", 0) or 0),
+        },
+    }
+
+
+def _openai_completion(
+    model_config,
+    *,
+    system_prompt: str,
+    memory: list[dict[str, Any]],
+    user_message: str,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+    frequency_penalty: float,
+    presence_penalty: float,
+) -> dict:
+    messages = [{"role": "system", "content": system_prompt}]
     messages.extend(memory)
     messages.append({"role": "user", "content": user_message})
 
     api_base = (model_config.base_url or "https://api.deepseek.com").rstrip("/")
     api_key = decrypt_api_key(model_config.api_key_cipher) if model_config.api_key_cipher else ""
     model_id = _normalize_model_id(model_config.model_identifier or "deepseek-chat", api_base)
-
-    body = {"model": model_id, "messages": messages, "temperature": temperature,
-            "max_tokens": max_tokens, "top_p": top_p,
-            "frequency_penalty": frequency_penalty, "presence_penalty": presence_penalty, "stream": False}
+    body = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": top_p,
+        "frequency_penalty": frequency_penalty,
+        "presence_penalty": presence_penalty,
+        "stream": False,
+    }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    client = httpx.Client(timeout=httpx.Timeout(120.0))
-    try: resp = client.post(f"{api_base}/chat/completions", json=body, headers=headers)
-    finally: client.close()
-
+    with httpx.Client(timeout=httpx.Timeout(getattr(model_config, "timeout_sec", None) or 120.0)) as client:
+        resp = client.post(f"{api_base}/chat/completions", json=body, headers=headers)
     if resp.status_code != 200:
-        raise RuntimeError(f"LLM 调用失败 ({resp.status_code}): {resp.text[:512]}")
+        raise RuntimeError(f"LLM call failed ({resp.status_code}): {resp.text[:512]}")
     data = resp.json()
     choice = data.get("choices", [{}])[0]
     reply = choice.get("message", {}).get("content", "")
     usage = data.get("usage")
-    return {"reply": reply, "usage": {"prompt_tokens": usage.get("prompt_tokens", 0),
+    return {
+        "reply": reply,
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0)} if usage else None}
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+        if usage
+        else None,
+    }
+
+
+def chat_completion(
+    model_config,
+    *,
+    system_prompt,
+    variables,
+    memory,
+    user_message,
+    temperature=0.7,
+    max_tokens=4096,
+    top_p=0.9,
+    frequency_penalty=0.0,
+    presence_penalty=0.0,
+) -> dict:
+    sp = _apply_variables(system_prompt, variables)
+    if is_anthropic_model(model_config):
+        return _anthropic_completion(
+            model_config,
+            system_prompt=sp,
+            memory=memory,
+            user_message=user_message,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+    return _openai_completion(
+        model_config,
+        system_prompt=sp,
+        memory=memory,
+        user_message=user_message,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
+    )

@@ -62,7 +62,8 @@
     env_file:
       - ./backend/.env.docker
     environment:
-      - WEB_CONCURRENCY=4
+      - WEB_CONCURRENCY=1
+      - INTERVIEW_KNOWLEDGE_BASE_DIR=/app/knowledge-base
     depends_on:
       mysql:
         condition: service_healthy

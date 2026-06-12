@@ -17,6 +17,7 @@ export type AuthContextValue = {
   login: (session: AuthSession) => void
   logout: () => void
   updateAccess: (access: string) => void
+  refreshProfile: () => Promise<void>
 }
 
 export type MeResponse = {

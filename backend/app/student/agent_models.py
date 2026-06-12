@@ -19,6 +19,11 @@ class StudentAgentSession(Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     agent_type: Mapped[str] = mapped_column(String(32), default="resume", nullable=False)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    active_resume_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    memory_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarized_until_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    jd_analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -35,6 +40,11 @@ class StudentAgentMessage(Base):
     session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -68,4 +78,30 @@ class StudentAgentAttachment(Base):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     extracted_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="ready", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StudentAgentRun(Base):
+    __tablename__ = "student_agent_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running", nullable=False)
+    assistant_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class StudentAgentRunEvent(Base):
+    __tablename__ = "student_agent_run_event"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

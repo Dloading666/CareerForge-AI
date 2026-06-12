@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 
 class StudentEmailCodeSendRequest(BaseModel):
     email: EmailStr
-    scene: Literal["register", "login", "reset"]
+    scene: Literal["register", "login", "reset", "change_email"]
     # 重置密码场景需先通过图形验证码
     captcha_id: Optional[str] = None
     captcha_code: Optional[str] = None
@@ -68,3 +68,8 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh: str
+
+
+class StudentChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    code: str = Field(min_length=4, max_length=8)

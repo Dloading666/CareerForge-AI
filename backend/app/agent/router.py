@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from app.admin.agent_service import get_agent, get_agent_dict, list_agents
+from app.admin.agent_service import build_agent_harness_system_prompt, get_agent, get_agent_dict, list_agents
 from app.admin.agent_schemas import AgentChatRequest, AgentChatResponse
 from app.admin.model_service import decrypt_api_key
 from app.auth.service import get_current_identity
@@ -40,7 +40,7 @@ async def _stream_agent_reply(agent, message: str, variables: dict[str, Any]) ->
         yield _sse("done", {})
         return
 
-    system_prompt = agent.system_prompt or "你是一个有帮助的 AI 助手。"
+    system_prompt = build_agent_harness_system_prompt(agent)
     for key, value in (variables or {}).items():
         system_prompt = system_prompt.replace(f"{{{{{key}}}}}", str(value))
 
@@ -127,7 +127,7 @@ def api_public_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depe
     if not agent.model_config.api_key_cipher:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="This agent is temporarily unavailable")
     try:
-        result = chat_completion(agent.model_config, system_prompt=agent.system_prompt, variables=payload.variables,
+        result = chat_completion(agent.model_config, system_prompt=build_agent_harness_system_prompt(agent), variables=payload.variables,
             memory=[], user_message=payload.message, temperature=agent.temperature, max_tokens=agent.max_tokens,
             top_p=agent.top_p, frequency_penalty=agent.frequency_penalty, presence_penalty=agent.presence_penalty)
     except RuntimeError as exc:
