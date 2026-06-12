@@ -9,7 +9,7 @@ import type {
   TemplateViewModel,
   ViewListItem,
 } from '../types'
-import { richTextToLines } from '../utils/content'
+import { richTextToInlineHtml, richTextToLines } from '../utils/content'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
@@ -167,7 +167,7 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
       title: resume.basic.title,
       contacts: getContacts(resume).map((item) => item.value),
     },
-    skills: richTextToLines(resume.skillContent),
+    skills: richTextToInlineHtml(resume.skillContent),
     education: mapItems(resume.education, (item) => ({
       itemId: item.id,
       title: item.school || '学校',
@@ -180,16 +180,16 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
       title: item.company || '公司',
       subtitle: item.position,
       meta: item.date,
-      lines: richTextToLines(item.details),
+      lines: richTextToInlineHtml(item.details),
     })),
     projects: mapItems(resume.projects, (item) => ({
       itemId: item.id,
       title: item.name || '项目',
       subtitle: item.role,
       meta: item.date,
-      lines: richTextToLines(item.description),
+      lines: richTextToInlineHtml(item.description),
     })),
-    selfEvaluation: richTextToLines(resume.selfEvaluationContent),
+    selfEvaluation: richTextToInlineHtml(resume.selfEvaluationContent),
   }
 }
 
@@ -595,7 +595,7 @@ function RichList({ lines, resume, inverse = false }: { lines: string[]; resume:
     >
       {lines.map((line, index) => (
         <li key={`${line}-${index}`} style={{ paddingLeft: 2 }}>
-          {line}
+          <span dangerouslySetInnerHTML={{ __html: line }} />
         </li>
       ))}
     </ul>
@@ -617,7 +617,7 @@ function Paragraphs({ lines, resume }: { lines: string[]; resume: ResumeData }) 
     >
       {lines.map((line, index) => (
         <p key={`${line}-${index}`} style={{ margin: 0 }}>
-          {line}
+          <span dangerouslySetInnerHTML={{ __html: line }} />
         </p>
       ))}
     </div>
@@ -700,7 +700,7 @@ function CustomEntries({ items, resume }: { items: CustomItem[]; resume: ResumeD
         title: item.title,
         subtitle: item.subtitle,
         meta: item.dateRange,
-        lines: richTextToLines(item.description),
+        lines: richTextToInlineHtml(item.description),
       }))}
     />
   )
@@ -809,7 +809,7 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
         ? null
         : lines.map((line, i) => (
             <div key={i} style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 2 }}>
-              {line}
+              <span dangerouslySetInnerHTML={{ __html: line }} />
             </div>
           ))
     const renderItem = (it: typeof model.experience[number]) => (
