@@ -67,26 +67,39 @@ export type TimelineSegment = TextSegment | ActionsSegment
 /** 将活动按类别聚合计数 */
 export function aggregateActions(activities: AgentActivity[]): string {
   const groups: Record<string, number> = {}
+  let failCount = 0
   for (const a of activities) {
     const cat = categorizeActivity(a.name, a.kind)
     groups[cat] = (groups[cat] || 0) + 1
+    const recovered = a.status === 'failed' && activities.some(
+      (candidate) => candidate.name === a.name && candidate.status === 'completed' && candidate.id > a.id,
+    )
+    if (a.status === 'failed' && !recovered) failCount++
   }
   const parts: string[] = []
-  const order = ['查阅资料', '搜索', '简历操作', 'Skill 调用', '核对未通过']
+  const order = ['查阅资料', '搜索', '简历操作', '调用技能', '处理']
   for (const cat of order) {
-    if (groups[cat]) parts.push(`已${cat} ${groups[cat]} 项`)
+    const count = groups[cat]
+    if (!count) continue
+    if (cat === '查阅资料') parts.push(`已查看 ${count} 项资料`)
+    else if (cat === '搜索') parts.push(`已搜索 ${count} 次`)
+    else if (cat === '简历操作') parts.push(`已完成 ${count} 项简历操作`)
+    else if (cat === '调用技能') parts.push(`已运行 ${count} 个技能`)
+    else parts.push(`已处理 ${count} 个步骤`)
   }
-  return parts.join(' · ') || '处理中…'
+  if (failCount > 0) parts.push(`${failCount} 项未完成`)
+  return parts.join('，') || '处理中…'
 }
 
 function categorizeActivity(name: string, kind: string): string {
   if (name === 'query_student_profile' || name === 'read_resume' || name === 'analyze_uploaded_file'
       || name === 'get_session_context' || kind === 'profile' || kind === 'resume'
       || kind === 'file' || kind === 'context') return '查阅资料'
-  if (name === 'web_search' || name === 'read_webpage' || kind === 'job' || kind === 'knowledge') return '搜索'
+  if (name === 'web_search' || name === 'read_webpage' || name === 'analyze_jd_match'
+      || kind === 'job' || kind === 'knowledge') return '搜索'
   if (name === 'generate_resume_data' || name === 'optimize_resume_data'
       || name === 'update_resume_data' || name === 'export_resume_pdf') return '简历操作'
-  if (name === 'skill' || kind === 'skill') return 'Skill 调用'
+  if (name.startsWith('skill__') || kind === 'skill' || kind === 'resume_skill') return '调用技能'
   return '处理'
 }
 
@@ -129,8 +142,8 @@ type Listener = () => void
 
 
 
-/** 按 content_offset 重建 segments 时间线（用于 snapshot 幂等恢复和历史回放） */
-function rebuildSegmentsFromSnapshot(fullContent: string, activities: AgentActivity[]): TimelineSegment[] {
+/** 按 content_offset 重建时间线，用于流式快照、断线恢复和历史回放。 */
+export function buildTimelineSegments(fullContent: string, activities: AgentActivity[]): TimelineSegment[] {
   if (!activities.length) return fullContent ? [{ type: 'text', content: fullContent }] : []
 
   // 按 content_offset 排序活动
@@ -349,6 +362,7 @@ class ChatRuntimeStore {
       let afterSeq = 0
       let retries = 0
       const MAX_RETRIES = 5
+      let gotDone = false
 
       while (retries < MAX_RETRIES) {
         if (controller.signal.aborted) break
@@ -371,7 +385,6 @@ class ChatRuntimeStore {
         const reader = eventsResp.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
-        let gotDone = false
 
         try {
           while (true) {
@@ -383,7 +396,7 @@ class ChatRuntimeStore {
             for (const block of blocks) {
               if (block.startsWith(':seq ')) {
                 const seq = parseInt(block.slice(5).trim(), 10)
-                if (!isNaN(seq)) afterSeq = seq
+                if (!isNaN(seq)) afterSeq = Math.max(afterSeq, seq)
                 continue
               }
               const parsed = parseSseBlock(block)
@@ -400,7 +413,7 @@ class ChatRuntimeStore {
               if (parsed.event === 'done') gotDone = true
             }
           }
-        } catch (_readError) {
+        } catch {
           // 流中断，准备重连
         } finally {
           reader.releaseLock()
@@ -413,8 +426,12 @@ class ChatRuntimeStore {
         await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, retries), 10000)))
       }
 
-      // 运行完成
-      this.updateState(sessionId, (s) => ({ ...s, streaming: false, status: 'completed' }))
+      // 循环退出：gotDone=true 表示正常完成，否则是重连耗尽或被中止
+      if (gotDone) {
+        this.updateState(sessionId, (s) => ({ ...s, streaming: false, status: 'completed' }))
+      } else if (!controller.signal.aborted) {
+        this.updateState(sessionId, (s) => ({ ...s, streaming: false, status: 'disconnected', error: '连接中断，请刷新查看结果' }))
+      }
     } catch (error) {
       if (!controller.signal.aborted) {
         const msg = error instanceof Error ? error.message : '回复失败'
@@ -504,6 +521,7 @@ class ChatRuntimeStore {
       const { authenticatedFetch } = await import('../shared/api')
       let afterSeq = 0
       let retries = 0
+      let gotDone = false
       while (retries < 3) {
         if (controller.signal.aborted) break
         const resp = await authenticatedFetch(
@@ -515,7 +533,6 @@ class ChatRuntimeStore {
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
-        let gotDone = false
         try {
           while (true) {
             const { value, done } = await reader.read()
@@ -526,7 +543,7 @@ class ChatRuntimeStore {
             for (const block of blocks) {
               if (block.startsWith(':seq ')) {
                 const seq = parseInt(block.slice(5).trim(), 10)
-                if (!isNaN(seq)) afterSeq = seq
+                if (!isNaN(seq)) afterSeq = Math.max(afterSeq, seq)
                 continue
               }
               const parsed = parseSseBlock(block)
@@ -541,7 +558,11 @@ class ChatRuntimeStore {
         retries++
         await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries), 10000)))
       }
-      this.updateState(sessionId, s => ({ ...s, streaming: false, status: 'completed' }))
+      if (gotDone) {
+        this.updateState(sessionId, s => ({ ...s, streaming: false, status: 'completed' }))
+      } else if (!controller.signal.aborted) {
+        this.updateState(sessionId, s => ({ ...s, streaming: false, status: 'disconnected', error: '连接中断，请刷新查看结果' }))
+      }
     } catch {
       this.updateState(sessionId, s => ({ ...s, streaming: false, status: 'disconnected' }))
     } finally {
@@ -583,23 +604,27 @@ class ChatRuntimeStore {
         if (idx >= 0) activities[idx] = activity
         else activities.push(activity)
 
-        // 构建 segments 时间线
-        const segments = [...s.segments]
-        if (event === 'activity.started') {
-          // 如果最后一个段是 actions 段，加入；否则新开
-          const last = segments[segments.length - 1]
-          if (last && last.type === 'actions') {
-            last.activities = [...last.activities, activity]
-          } else {
-            segments.push({ type: 'actions', activities: [activity], collapsed: false })
-          }
+        // 快照可能先于活动回放到达。只要已有正文，就用 content_offset
+        // 重新定位全部活动，避免活动被快照覆盖后只能追加到末尾。
+        let segments: TimelineSegment[]
+        if (s.assistantContent) {
+          segments = buildTimelineSegments(s.assistantContent, activities)
         } else {
-          // completed/failed: 在现有 segments 中找到并原位更新
-          for (const seg of segments) {
-            if (seg.type === 'actions') {
-              const i = seg.activities.findIndex((a) => a.id === activity.id)
-              if (i >= 0) { seg.activities = [...seg.activities]; seg.activities[i] = activity; break }
-            }
+          segments = s.segments.map((segment) => (
+            segment.type === 'actions'
+              ? { ...segment, activities: [...segment.activities] }
+              : { ...segment }
+          ))
+          const existingSegment = segments.find(
+            (segment) => segment.type === 'actions' && segment.activities.some((item) => item.id === activity.id),
+          )
+          if (existingSegment?.type === 'actions') {
+            const activityIndex = existingSegment.activities.findIndex((item) => item.id === activity.id)
+            existingSegment.activities[activityIndex] = activity
+          } else {
+            const last = segments[segments.length - 1]
+            if (last?.type === 'actions') last.activities.push(activity)
+            else segments.push({ type: 'actions', activities: [activity], collapsed: false })
           }
         }
 
@@ -648,7 +673,7 @@ class ChatRuntimeStore {
       const messageId = Number(data.message_id)
       this.updateState(sessionId, (s) => {
         // 按 content_offset 重建 segments
-        const segments = rebuildSegmentsFromSnapshot(content, s.activities)
+        const segments = buildTimelineSegments(content, s.activities)
         return {
           ...s,
           assistantContent: content,
@@ -663,22 +688,17 @@ class ChatRuntimeStore {
       const delta = String(data.delta ?? '')
       const messageId = Number(data.message_id)
       this.updateState(sessionId, (s) => {
-        const segments = [...s.segments]
+        const segments = s.segments.map((segment) => (
+          segment.type === 'actions'
+            ? { ...segment, activities: [...segment.activities] }
+            : { ...segment }
+        ))
         // 追加到末尾 text 段；末尾是 actions 段则新开 text 段
         const last = segments[segments.length - 1]
         if (last && last.type === 'text') {
           last.content += delta
         } else {
           segments.push({ type: 'text', content: delta })
-        }
-        // 自动折叠前一个 actions 段（如果有新的 text 段跟在后面）
-        for (let i = 0; i < segments.length - 1; i++) {
-          const seg = segments[i]
-          if (seg.type === 'actions' && !seg.collapsed) {
-            // 只折叠已完成的 actions 段（所有 activity 都不是 started）
-            const allDone = seg.activities.every((a) => a.status !== 'started')
-            if (allDone) seg.collapsed = true
-          }
         }
         return {
           ...s,

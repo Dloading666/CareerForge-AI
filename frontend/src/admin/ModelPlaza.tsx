@@ -33,7 +33,7 @@ export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null)
-  const lastAutoFilledUrlRef = useRef<string>('')
+  const [lastAutoFilledUrl, setLastAutoFilledUrl] = useState<string>('')
   const userTouchedBaseUrlRef = useRef<boolean>(false)
   const [form, setForm] = useState<ModelFormData>({ ...EMPTY_MODEL })
   const [submitting, setSubmitting] = useState(false)
@@ -119,9 +119,9 @@ export function ModelPlaza() {
           suggested = Object.values(preset)[0] || ''
         }
       }
-      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrlRef.current)
+      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrl)
       if (shouldAutoFill) {
-        lastAutoFilledUrlRef.current = suggested
+        setLastAutoFilledUrl(suggested)
         return { ...p, provider: v, base_url: suggested }
       }
       return { ...p, provider: v }
@@ -131,9 +131,9 @@ export function ModelPlaza() {
   const handleProtocolsChange = (v: string) => {
     setForm(p => {
       const suggested = lookupBaseUrl(p.provider, v)
-      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrlRef.current)
+      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrl)
       if (shouldAutoFill) {
-        lastAutoFilledUrlRef.current = suggested
+        setLastAutoFilledUrl(suggested)
         return { ...p, protocols: v, base_url: suggested }
       }
       return { ...p, protocols: v }
@@ -274,7 +274,7 @@ export function ModelPlaza() {
           <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
           <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
           <Form.Item label="协议"><Select value={form.protocols} onChange={handleProtocolsChange}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
-          <Form.Item label="Base URL" required extra={(form.base_url === '' || form.base_url === lastAutoFilledUrlRef.current) ? "根据供应商 + 协议自动填充，可手动修改" : "已手动修改，改变供应商/协议不再覆盖"}><Input value={form.base_url} onChange={handleBaseUrlChange} placeholder="https://api.deepseek.com/v1" /></Form.Item>
+          <Form.Item label="Base URL" required extra={(form.base_url === '' || form.base_url === lastAutoFilledUrl) ? "根据供应商 + 协议自动填充，可手动修改" : "已手动修改，改变供应商/协议不再覆盖"}><Input value={form.base_url} onChange={handleBaseUrlChange} placeholder="https://api.deepseek.com/v1" /></Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
           <Form.Item label="模型名称" required><Input value={form.model_identifier} onChange={v => setForm(p => ({...p, model_identifier: v}))} placeholder="deepseek-chat" /></Form.Item>
           <Form.Item label="超时(秒)"><InputNumber value={form.timeout_sec} onChange={v => setForm(p => ({...p, timeout_sec: v}))} placeholder="30" style={{ width: '100%' }} /></Form.Item>

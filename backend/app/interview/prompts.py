@@ -18,6 +18,10 @@ INTERVIEW_SYSTEM_PROMPT = """你是 CareerForge-AI 的 AI 面试官，负责进�
 - 如果候选人回答错误，要指出风险，并给一次补救机会。
 - 不要直接给标准答案，除非当前阶段是复盘。
 - 不要编造候选人没有说过的经历。
+- evidence_quotes.quote 必须来自用户回答原文，禁止编造用户没说过的话。
+- 每轮只问一个主问题。
+- 问题如果包含多个回答点，必须使用 Markdown 编号列表，每个编号单独换行。
+- 不要直接给标准答案，除非当前阶段是复盘。
 - 所有输出必须是 JSON。
 
 评分维度：
@@ -112,9 +116,12 @@ START_USER_PROMPT = """请先阅读 Harness 注入的最新在线简历、目标
 
 输出 JSON，格式如下：
 {
-  "resume_brief": "基于简历的候选人画像摘要",
+  "resume_brief": "基于简历和岗位的候选人画像摘要",
   "focus_points": ["最需要验证的点1", "最需要验证的点2"],
   "first_question": "第一轮问题，可以包含 Markdown 编号列表",
+  "question_reason": "为什么第一轮问这个问题",
+  "question_type": "resume_deep_dive",
+  "capability_tags": ["项目证据", "岗位匹配"],
   "knowledge_points": ["项目证据", "Java", "接口性能"]
 }
 """
@@ -259,10 +266,26 @@ FOLLOWUP_USER_PROMPT = """请根据以下信息生成下一轮面试追问。
     "job_fit": 3,
     "pressure_handling": 3
   },
+  "score_reasons": {
+    "technical_accuracy": "技术解释有方向，但没有展开关键边界",
+    "project_evidence": "提到负责优化，但没有说明个人动作和量化结果",
+    "problem_solving": "能描述问题，但没有拆解方案",
+    "communication": "表达基本连贯，但结构不够清晰",
+    "job_fit": "提到 Redis，和后端岗位相关",
+    "pressure_handling": "被追问时没有回避，但证据不足"
+  },
+  "evidence_quotes": [
+    {
+      "quote": "用户回答中的原文短句",
+      "reason": "为什么这句话影响评分"
+    }
+  ],
   "followup_strategy": "追问缓存设计细节和指标",
   "interviewer_tone": "strict",
   "next_question": "你刚才说使用 Redis 提升了查询性能，这个说法还不够具体。请按下面 3 点回答：\n\n1. 你缓存了哪些数据？\n2. key 是怎么设计的？\n3. 优化前后接口耗时分别是多少？",
+  "question_reason": "上一轮回答缺少量化指标，所以继续追问缓存 key 设计和性能数据",
   "question_type": "project_deep_dive",
+  "capability_tags": ["项目真实性", "技术细节", "量化结果"],
   "knowledge_points": ["Redis", "缓存设计", "性能优化"],
   "should_end": false
 }
@@ -306,6 +329,27 @@ REPORT_USER_PROMPT = """请基于以下评分 Rubric、候选人简历、岗位�
   "weaknesses": ["最薄弱问题必须放第1条，并写清楚为什么会被追问", "问题2"],
   "suggestions": ["针对最低分维度的训练动作必须放第1条", "建议2"],
   "next_questions": ["下一轮训练题1", "下一轮训练题2"],
+  "training_plan": [
+    {
+      "day": 1,
+      "focus": "最低分维度名称",
+      "tasks": ["复盘本轮最低分问题", "准备一个具体项目案例", "补充量化指标"],
+      "expected_output": "一段 2 分钟结构化回答"
+    }
+  ],
+  "rewrite_examples": [
+    {
+      "original_answer": "候选人原话（必须来自回答原文）",
+      "better_answer": "更好的表达方式",
+      "why_better": "新回答补充了哪些关键信息"
+    }
+  ],
+  "next_session_preset": {
+    "target_role": "目标岗位",
+    "interview_type": "second_round",
+    "interview_style": "strict",
+    "focus_tags": ["resume_project", "technical_principle"]
+  },
   "report_text": "一段完整、具体、严格但不羞辱人的中文复盘。必须包含：最低分维度、扣分证据、为什么是这个综合分、下一步训练动作。"
 }
 """

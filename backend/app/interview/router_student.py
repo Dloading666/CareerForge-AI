@@ -7,8 +7,9 @@ from app.auth.service import require_role
 from app.core.response import ok
 from app.infra.db import get_db
 from app.interview.schemas import InterviewStartRequest, InterviewTurnRequest
-from app.interview.knowledge import reload_knowledge_index
 from app.interview.service import (
+    delete_interview,
+    delete_report,
     generate_report,
     get_interview_detail,
     knowledge_status,
@@ -25,11 +26,6 @@ router = APIRouter(prefix="/student/interviews", tags=["student-interviews"])
 @router.get("/knowledge/status")
 def get_knowledge_status(current=Depends(require_role("student"))):
     return ok(knowledge_status())
-
-
-@router.post("/knowledge/reload")
-def reload_knowledge(current=Depends(require_role("student"))):
-    return ok(reload_knowledge_index())
 
 
 @router.post("/resume/extract")
@@ -69,6 +65,17 @@ def get_interview(
     return ok(get_interview_detail(db, identity, session_id))
 
 
+@router.delete("/{session_id}")
+def remove_interview(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    delete_interview(db, identity, session_id)
+    return ok({"deleted": True})
+
+
 @router.post("/{session_id}/turns")
 def answer_turn(
     session_id: int,
@@ -98,5 +105,17 @@ def get_report(
     current=Depends(require_role("student")),
 ):
     identity, _ = current
+    report = generate_report(db, identity, session_id)
+    return ok(serialize_report(report))
+
+
+@router.post("/{session_id}/report/regenerate")
+def regenerate_report(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    delete_report(db, identity, session_id)
     report = generate_report(db, identity, session_id)
     return ok(serialize_report(report))

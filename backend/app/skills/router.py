@@ -36,7 +36,8 @@ def admin_create_skill(
 ):
     identity, _ = current
     skill = create_skill(db, payload, admin_id=identity.user_id)
-    return ok(serialize_skill(skill), msg="created")
+    data = serialize_skill(skill)
+    return ok(data, msg=f"Skill「{data.get('name') or skill.id}」已创建")
 
 
 @router.get("/admin/skills/{skill_id}")
@@ -55,7 +56,9 @@ def admin_update_skill(
     db: Session = Depends(get_db),
     current=Depends(require_role("admin")),
 ):
-    return ok(serialize_skill(update_skill(db, skill_id, payload)))
+    skill = update_skill(db, skill_id, payload)
+    data = serialize_skill(skill)
+    return ok(data, msg=f"Skill「{data.get('name') or skill_id}」已更新")
 
 
 @router.patch("/admin/skills/{skill_id}/status")

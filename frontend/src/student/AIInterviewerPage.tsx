@@ -224,9 +224,9 @@ export function AIInterviewerPage() {
   const [reportProgress, setReportProgress] = useState<string[]>([])
   const [interviewProgress, setInterviewProgress] = useState<string[]>([])
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
-  const [progressTick, setProgressTick] = useState(0)
+  const [progressElapsed, setProgressElapsed] = useState(0)
   const [collapsedHistoryDates, setCollapsedHistoryDates] = useState<Set<string>>(() => new Set())
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<unknown>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const progressStartRef = useRef<number | null>(null)
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -249,8 +249,6 @@ export function AIInterviewerPage() {
     }
     return Object.entries(groups)
   }, [interviewSessions])
-  void progressTick
-  const progressElapsed = progressStartRef.current ? Date.now() - progressStartRef.current : 0
 
   const toggleHistoryDate = (date: string) => {
     setCollapsedHistoryDates((prev) => {
@@ -313,16 +311,21 @@ export function AIInterviewerPage() {
   }
 
   useEffect(() => {
+    let cancelled = false
     apiRequest<KnowledgeStatus>('/api/v1/student/interviews/knowledge/status')
-      .then(setKnowledge)
-      .catch(() => setKnowledge(null))
+      .then((data) => { if (!cancelled) setKnowledge(data) })
+      .catch(() => { if (!cancelled) setKnowledge(null) })
     apiRequest<AgentModelOption[]>('/api/v1/student/master/models')
       .then((list) => {
+        if (cancelled) return
         setModelOptions(list)
         if (list.length > 0) setSelectedModelId((prev) => prev ?? list[0].id)
       })
-      .catch(() => setModelOptions([]))
-    void loadInterviewSessions()
+      .catch(() => { if (!cancelled) setModelOptions([]) })
+    apiRequest<InterviewSession[]>('/api/v1/student/interviews')
+      .then((list) => { if (!cancelled) setInterviewSessions(list) })
+      .catch(() => { if (!cancelled) setInterviewSessions([]) })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -346,9 +349,13 @@ export function AIInterviewerPage() {
     setLoading(true)
     setReport(null)
     setReportProgress([])
-    progressStartRef.current = Date.now()
+    progressStartRef.current = null
+    setProgressElapsed(0)
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
-    progressTimerRef.current = setInterval(() => setProgressTick((tick) => tick + 1), 1000)
+    progressTimerRef.current = setInterval(() => {
+      if (!progressStartRef.current) progressStartRef.current = performance.now()
+      setProgressElapsed(Math.round(performance.now() - progressStartRef.current))
+    }, 1000)
     setInterviewProgress([`正在读取${resumeSource === 'upload' ? '本次上传简历' : '智能体可读取的在线简历'}，分析关键经历和技能匹配点…`])
     const progressTimers = [
       window.setTimeout(() => setInterviewProgress((prev) => [...prev, '正在检索岗位相关题库，筛选与简历经历匹配的追问素材。']), 500),
@@ -408,26 +415,34 @@ export function AIInterviewerPage() {
   }
 
   const toggleVoiceInput = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const SpeechRecognition = (window as unknown as Record<string, unknown>).SpeechRecognition
+      || (window as unknown as Record<string, unknown>).webkitSpeechRecognition
     if (!SpeechRecognition) {
       Message.warning('当前浏览器不支持语音识别，可以先用文字回答。')
       return
     }
     if (listening && recognitionRef.current) {
-      recognitionRef.current.stop()
+      ;(recognitionRef.current as { stop: () => void }).stop()
       setListening(false)
       return
     }
-    const recognition = new SpeechRecognition()
+    const recognition = new (SpeechRecognition as new () => {
+      lang: string; continuous: boolean; interimResults: boolean;
+      onresult: ((ev: unknown) => void) | null;
+      onerror: (() => void) | null;
+      onend: (() => void) | null;
+      start: () => void; stop: () => void;
+    })()
     recognition.lang = 'zh-CN'
     recognition.continuous = true
     recognition.interimResults = true
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: unknown) => {
+      const ev = event as { resultIndex: number; results: { length: number; [i: number]: { 0: { transcript?: string }; isFinal: boolean } } }
       let finalText = ''
       let interimText = ''
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const transcript = event.results[i][0]?.transcript ?? ''
-        if (event.results[i].isFinal) finalText += transcript
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+        const transcript = ev.results[i][0]?.transcript ?? ''
+        if (ev.results[i].isFinal) finalText += transcript
         else interimText += transcript
       }
       if (finalText) setAnswer((prev) => `${prev}${prev ? ' ' : ''}${finalText}`.trim())
@@ -446,9 +461,13 @@ export function AIInterviewerPage() {
   const submitAnswer = async () => {
     if (!session || !pendingTurn || !answer.trim()) return
     setLoading(true)
-    progressStartRef.current = Date.now()
+    progressStartRef.current = null
+    setProgressElapsed(0)
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
-    progressTimerRef.current = setInterval(() => setProgressTick((tick) => tick + 1), 1000)
+    progressTimerRef.current = setInterval(() => {
+      if (!progressStartRef.current) progressStartRef.current = performance.now()
+      setProgressElapsed(Math.round(performance.now() - progressStartRef.current))
+    }, 1000)
     try {
       const res = await apiRequest<{
         current_turn: InterviewTurn
@@ -488,9 +507,13 @@ export function AIInterviewerPage() {
   const loadReport = async (sessionId = session?.id) => {
     if (!sessionId) return
     setLoading(true)
-    progressStartRef.current = Date.now()
+    progressStartRef.current = null
+    setProgressElapsed(0)
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
-    progressTimerRef.current = setInterval(() => setProgressTick((tick) => tick + 1), 1000)
+    progressTimerRef.current = setInterval(() => {
+      if (!progressStartRef.current) progressStartRef.current = performance.now()
+      setProgressElapsed(Math.round(performance.now() - progressStartRef.current))
+    }, 1000)
     setReportProgress([
       '感谢你参加本轮面试，现在我会把你的回答、题库命中和评分维度整理成报告。',
       '正在回看你的项目细节和技术回答。',

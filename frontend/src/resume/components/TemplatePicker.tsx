@@ -1,7 +1,7 @@
 import { Button, Drawer, Typography } from '@arco-design/web-react'
 import { motion } from 'framer-motion'
 
-import { TEMPLATE_REGISTRY } from '../templates/registry'
+import { TEMPLATE_REGISTRY } from '../templates/templateRegistry'
 import type { TemplateId } from '../types'
 
 export function TemplatePicker({

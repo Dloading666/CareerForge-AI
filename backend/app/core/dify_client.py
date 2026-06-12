@@ -4,6 +4,20 @@ import json
 from app.admin.model_service import decrypt_api_key
 
 
+DIFY_HARNESS_POLICY = """CareerForge-AI 平台约束：你运行在 Agent = Model + Harness 原则下。你只负责理解、规划、分析和生成建议；权限、数据读取、工具执行、审计和高风险确认由平台 Harness 负责。禁止编造业务事实、简历经历、指标或执行结果；涉及新增、修改、删除、付款、审批、批量处理、外发消息等高风险动作时，只能输出待确认方案，不能声称已执行。"""
+
+
+def _inject_harness_policy(agent, user_message: str, inputs: dict) -> tuple[str, dict]:
+    """Pass platform Harness boundaries into external Dify apps when invoked via CareerForge-AI."""
+    policy = DIFY_HARNESS_POLICY
+    if getattr(agent, "name", None):
+        policy = f"{policy}\n当前智能体：{agent.name}"
+    enriched_inputs = dict(inputs or {})
+    enriched_inputs.setdefault("harness_policy", policy)
+    guarded_message = f"{policy}\n\n用户请求：\n{user_message}"
+    return guarded_message, enriched_inputs
+
+
 def _discover_dify_inputs(client: httpx.Client, base_url: str, headers: dict, user_message: str, variables: dict | None) -> tuple[str, dict, list[str]]:
     """Probe /info and /parameters to build correct inputs and endpoint order.
     Returns (app_mode, inputs_dict, endpoint_order).
@@ -85,10 +99,11 @@ def dify_chat_completion(agent, *, user_message: str, variables: dict | None = N
         app_mode, inputs, endpoint_order = _discover_dify_inputs(
             client, base_url, headers, user_message, variables
         )
+        guarded_message, inputs = _inject_harness_policy(agent, user_message, inputs)
 
         # Build endpoint bodies
         available_endpoints = {
-            "chat-messages": (f"{base_url}/chat-messages", {"inputs": inputs, "query": user_message, "response_mode": "blocking", "user": user_id}),
+            "chat-messages": (f"{base_url}/chat-messages", {"inputs": inputs, "query": guarded_message, "response_mode": "blocking", "user": user_id}),
             "completion-messages": (f"{base_url}/completion-messages", {"inputs": inputs, "response_mode": "blocking", "user": user_id}),
             "workflows/run": (f"{base_url}/workflows/run", {"inputs": inputs, "response_mode": "blocking", "user": user_id}),
         }

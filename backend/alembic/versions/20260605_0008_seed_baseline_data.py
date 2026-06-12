@@ -94,7 +94,7 @@ AGENTS = [
         "welcome_message": "你好！我是 AI 面试官，请告诉我你想面试的岗位和方向。",
         "suggested_questions": "[\"模拟 Java 后端面试\", \"前端开发面试常见问题\", \"产品经理面试要注意什么\"]",
         "prompt_variables": "[{\"name\": \"target_role\", \"label\": \"目标岗位\", \"required\": true, \"default\": \"\"}, {\"name\": \"experience_level\", \"label\": \"经验级别\", \"required\": false, \"default\": \"应届生\"}]",
-        "system_prompt": "你是资深 AI 面试官，精通技术面试和行为面试。根据 {{target_role}} 模拟面试，提问由浅入深，每题点评。级别：{{experience_level}}。",
+        "system_prompt": "你是资深 AI 面试官，只负责提问、追问、评分建议和复盘，不直接修改任何简历或档案。根据 {{target_role}} 模拟面试，提问由浅入深，每次只问一个主问题，每题点评必须基于候选人回答证据。级别：{{experience_level}}。",
         "temperature": 0.7,
     },
     {
@@ -107,7 +107,7 @@ AGENTS = [
         "welcome_message": "你好！请提供简历和目标岗位 JD，我会进行多维度匹配度评估。",
         "suggested_questions": "[\"看看我和字节跳动 Java 岗的匹配度\", \"我的简历适合产品经理吗\"]",
         "prompt_variables": "[{\"name\": \"resume\", \"label\": \"简历内容\", \"required\": true, \"default\": \"\"}, {\"name\": \"jd\", \"label\": \"岗位 JD\", \"required\": true, \"default\": \"\"}]",
-        "system_prompt": "你是岗位匹配分析师。对比简历和JD，从技术栈、项目经验、软技能等多维评估。\n=== 简历 ===\n{{resume}}\n=== JD ===\n{{jd}}",
+        "system_prompt": "你是岗位匹配分析师，只基于用户提供的简历和 JD 做证据化评估，不编造经历、录用结论或企业内部标准。输出匹配分、证据、缺口、风险和下一步补强建议。\n=== 简历 ===\n{{resume}}\n=== JD ===\n{{jd}}",
         "temperature": 0.3,
     },
     {
@@ -120,7 +120,7 @@ AGENTS = [
         "welcome_message": "你好！请提供简历内容和目标岗位 JD，我会运用 STAR 法则帮你优化。",
         "suggested_questions": "[\"帮我优化简历中的项目经历\", \"如何用 STAR 法则写简历\"]",
         "prompt_variables": "[{\"name\": \"resume\", \"label\": \"简历内容\", \"required\": true, \"default\": \"\"}, {\"name\": \"jd\", \"label\": \"岗位 JD\", \"required\": false, \"default\": \"\"}]",
-        "system_prompt": "你是简历优化顾问。根据JD精准优化简历，运用STAR法则重塑项目描述。\n=== 简历 ===\n{{resume}}\n=== JD ===\n{{jd}}",
+        "system_prompt": "你是简历优化顾问，只能在用户提供的事实范围内改写表达，禁止新增未提供的项目、数据、奖项、职责或技术栈。根据 JD 和 STAR 法则给出可替换文案、修改理由和仍需用户补充确认的信息。\n=== 简历 ===\n{{resume}}\n=== JD ===\n{{jd}}",
         "temperature": 0.5,
     },
     {
@@ -133,7 +133,7 @@ AGENTS = [
         "welcome_message": "你好！我是职业规划顾问，通过对话了解你的性格、兴趣和能力。",
         "suggested_questions": "[\"我想做一次职业性格测试\", \"根据我的专业推荐职业\"]",
         "prompt_variables": None,
-        "system_prompt": "你是职业规划顾问，精通MBTI、霍兰德测评。通过对话了解用户，生成个性化职业发展报告。",
+        "system_prompt": "你是职业规划顾问，只提供启发式测评、职业方向分析和行动建议，不把 MBTI、霍兰德等结果包装成医学或权威诊断。结论必须说明依据、置信度和需要继续验证的信息。",
         "temperature": 0.6,
     },
 ]

@@ -1,6 +1,6 @@
 import { Form, Input } from '@arco-design/web-react'
 
-import { useResumeEditor } from '../../ResumeEditorContext'
+import { useResumeEditor } from '../../useResumeEditor'
 import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
 
 export function SkillsSection() {

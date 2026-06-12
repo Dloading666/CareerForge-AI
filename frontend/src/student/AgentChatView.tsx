@@ -1,4 +1,4 @@
-import { Input, Skeleton, Tooltip } from '@arco-design/web-react'
+import { Input, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconAttachment,
   IconBook,
@@ -19,11 +19,11 @@ import {
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ApiError, apiRequest } from '../shared/api'
+import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
 import { AnnouncementBanner } from './StudentAnnouncementBar'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { useAuth } from '../shared/auth'
-import { chatRuntimeStore, type TimelineSegment, aggregateActions } from './chatRuntimeStore'
+import { buildTimelineSegments, chatRuntimeStore, type TimelineSegment } from './chatRuntimeStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ export type AgentChatSession = {
   title: string
   status: string
   agent_type: string
+  active_resume_id?: number | null
   created_at: string
   updated_at: string
 }
@@ -114,11 +115,6 @@ export type AgentModelOption = {
 
 type ReasoningEffort = 'low' | 'medium' | 'high'
 
-type StreamEvent = {
-  event: string
-  data: Record<string, unknown>
-}
-
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 export interface AgentChatViewProps {
@@ -134,11 +130,12 @@ export interface AgentChatViewProps {
   todayEvents: { id: number; title: string; event_time: string | null }[]
   remindersDismissed: boolean
   onDismissReminders: () => void
+  onOpenProfile?: () => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const MAX_RESUMES = 6
 
 const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
@@ -146,6 +143,14 @@ const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
 ]
+
+// ── Resume list types (for workspace selector) ────────────────────────────
+
+type ResumeSummary = {
+  id: number
+  title: string
+  updated_at: string | null
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -266,6 +271,166 @@ function ModelReasoningPicker({
 }
 
 
+function ResumeSelector({
+  activeResumeId,
+  onResumeChange,
+  disabled,
+}: {
+  activeResumeId: number | null
+  onResumeChange: (id: number | null) => void
+  disabled: boolean
+}) {
+  const [popupVisible, setPopupVisible] = useState(false)
+  const [resumes, setResumes] = useState<ResumeSummary[]>([])
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  const activeResume = resumes.find((r) => r.id === activeResumeId)
+  const fetchedRef = useRef(false)
+
+  const fetchResumes = async () => {
+    setLoading(true)
+    try {
+      const data = await apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
+      setResumes(data)
+    } catch {
+      // silent
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // P1-8: 加载历史会话后 activeResumeId 非空但列表为空时，主动 fetch 一次
+  useEffect(() => {
+    if (activeResumeId && resumes.length === 0 && !fetchedRef.current) {
+      fetchedRef.current = true
+      let cancelled = false
+      apiRequest<ResumeSummary[]>('/api/v1/student/resumes')
+        .then((data) => { if (!cancelled) setResumes(data) })
+        .catch(() => { /* silent */ })
+      return () => { cancelled = true }
+    }
+  }, [activeResumeId, resumes.length])
+
+  const handleOpen = () => {
+    if (disabled) return
+    setPopupVisible((v) => !v)
+    if (!popupVisible) void fetchResumes()
+  }
+
+  const handleSelect = (id: number) => {
+    onResumeChange(id)
+    setPopupVisible(false)
+  }
+
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onResumeChange(null)
+  }
+
+  if (activeResume) {
+    return (
+      <div style={{ position: 'relative' }}>
+        <span
+          className="attachment-chip"
+          style={{ cursor: disabled ? 'default' : 'pointer', background: '#EEF2FF', borderColor: '#C7D2FE', color: '#4338CA' }}
+          onClick={handleOpen}
+        >
+          📄
+          <span>正在编辑：《{activeResume.title}》</span>
+          <button type="button" onClick={handleClear} aria-label="解除绑定"><IconClose /></button>
+        </span>
+        {popupVisible && (
+          <div
+            className="composer-settings-menu"
+            style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 280 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="composer-settings-heading">
+              <IconFile />
+              <span>切换工作简历</span>
+            </div>
+            <div className="composer-settings-options">
+              {resumes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={`composer-settings-option${r.id === activeResumeId ? ' selected' : ''}`}
+                  onClick={() => handleSelect(r.id)}
+                >
+                  <span>{r.title}</span>
+                  {r.id === activeResumeId && <IconCheck />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className="attachment-chip"
+        style={{
+          cursor: disabled ? 'default' : 'pointer',
+          borderStyle: 'dashed',
+          background: 'transparent',
+          color: '#86909C',
+        }}
+        disabled={disabled}
+        onClick={handleOpen}
+      >
+        📄
+        <span>选择简历</span>
+      </button>
+      {popupVisible && (
+        <div
+          className="composer-settings-menu"
+          style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 280 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="composer-settings-heading">
+            <IconFile />
+            <span>选择工作简历</span>
+          </div>
+          {loading ? (
+            <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>加载中…</div>
+          ) : resumes.length === 0 ? (
+            <div style={{ padding: '12px 16px', fontSize: 13 }}>
+              <div style={{ color: '#86909C', marginBottom: 8 }}>还没有简历</div>
+              <button
+                type="button"
+                className="composer-settings-option"
+                onClick={() => { setPopupVisible(false); navigate('/student/resumes') }}
+              >
+                <span>去简历制作新建</span>
+              </button>
+            </div>
+          ) : (
+            <div className="composer-settings-options">
+              {resumes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="composer-settings-option"
+                  onClick={() => handleSelect(r.id)}
+                >
+                  <span>{r.title}</span>
+                  {r.updated_at && <span style={{ fontSize: 11, color: '#86909C' }}>{r.updated_at.slice(0, 10)}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 /** 根据当前运行状态返回状态栏的 phase 图标（emoji）和动画 class */
 
 const toolDisplayNames: Record<string, string> = {
@@ -279,6 +444,12 @@ const toolDisplayNames: Record<string, string> = {
   export_resume_pdf: '导出简历 PDF',
   read_webpage: '读取网页',
   web_search: '搜索网络信息',
+  analyze_jd_match: '分析 JD 匹配度',
+  save_session_note: '记下要点',
+}
+
+const skillDisplayNames: Record<string, string> = {
+  skill__evidence_backed_resume_tailor: '准备简历定制策略',
 }
 
 function formatDuration(durationMs?: number | null) {
@@ -287,9 +458,24 @@ function formatDuration(durationMs?: number | null) {
   return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)} 秒`
 }
 
+function activityDisplayName(activity: AgentActivity) {
+  const knownName = toolDisplayNames[activity.name] || skillDisplayNames[activity.name]
+  if (knownName) return knownName
+
+  const displayName = activity.detail?.display_name
+  if (typeof displayName === 'string' && displayName.trim() && !displayName.includes('_')) {
+    return displayName.trim()
+  }
+
+  if (activity.name.startsWith('skill__') || activity.kind === 'skill' || activity.kind === 'resume_skill') {
+    return '运行专业技能'
+  }
+  return '处理任务'
+}
+
 function activityAction(activity: AgentActivity) {
-  const action = toolDisplayNames[activity.name] || activity.name
-  if (activity.status === 'started') return activity.summary || `正在${action}…`
+  const action = activityDisplayName(activity)
+  if (activity.status === 'started') return `正在${action}…`
   if (activity.status === 'failed') return `${action}未完成`
   return `已${action}`
 }
@@ -312,124 +498,208 @@ function formatTokens(chars: number): string {
 
 /** Resolve the statusline label with priority rules. */
 
-/** 图标映射：工具/阶段 → /activity-icons/*.png */
-const ACTIVITY_ICON_MAP: Record<string, string> = {
-  query_student_profile: '/activity-icons/view.png',
-  read_resume:           '/activity-icons/view.png',
-  analyze_uploaded_file: '/activity-icons/attach.png',
-  get_session_context:   '/activity-icons/view.png',
-  generate_resume_data:  '/activity-icons/edit.png',
-  optimize_resume_data:  '/activity-icons/pencil.png',
-  update_resume_data:    '/activity-icons/pencil.png',
-  export_resume_pdf:     '/activity-icons/edit.png',
-  read_webpage:          '/activity-icons/web.png',
-  web_search:            '/activity-icons/search.png',
+type ActivityIconSpec = {
+  src: string
+  tone: string
 }
 
-const ACTIVITY_ANIM_MAP: Record<string, string> = {
-  query_student_profile: 'act-browse',
-  read_resume:           'act-browse',
-  analyze_uploaded_file: 'act-analyze',
-  get_session_context:   'act-browse',
-  generate_resume_data:  'act-write',
-  optimize_resume_data:  'act-write',
-  update_resume_data:    'act-write',
-  export_resume_pdf:     'act-write',
-  read_webpage:          'act-browse',
-  web_search:            'act-search',
+const ACTIVITY_ICON_BASE = '/activity-icons-v2'
+
+const ACTIVITY_ICON_MAP: Record<string, ActivityIconSpec> = {
+  query_student_profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
+  read_resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
+  analyze_uploaded_file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
+  get_session_context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
+  generate_resume_data: { src: `${ACTIVITY_ICON_BASE}/generate-resume.png`, tone: 'generate' },
+  optimize_resume_data: { src: `${ACTIVITY_ICON_BASE}/optimize-resume.png`, tone: 'optimize' },
+  update_resume_data: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'edit' },
+  export_resume_pdf: { src: `${ACTIVITY_ICON_BASE}/export-pdf.png`, tone: 'export' },
+  read_webpage: { src: `${ACTIVITY_ICON_BASE}/read-webpage.png`, tone: 'web' },
+  web_search: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
+  analyze_jd_match: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
+  save_session_note: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'note' },
 }
 
-const KIND_ICON_MAP: Record<string, string> = {
-  profile:   '/activity-icons/view.png',
-  resume:    '/activity-icons/attach.png',
-  file:      '/activity-icons/attach.png',
-  job:       '/activity-icons/search.png',
-  knowledge: '/activity-icons/search.png',
-  skill:     '/activity-icons/setting.png',
+const KIND_ICON_MAP: Record<string, ActivityIconSpec> = {
+  profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
+  resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
+  file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
+  context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
+  job: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
+  knowledge: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
+  skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
+  resume_skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
 }
 
-const KIND_ANIM_MAP: Record<string, string> = {
-  profile:   'act-browse',
-  resume:    'act-browse',
-  file:      'act-analyze',
-  job:       'act-search',
-  knowledge: 'act-search',
-  skill:     'act-think',
+type SessionMemory = {
+  constraints?: string[]
+  facts?: string[]
+  preferences?: string[]
 }
 
-function activityPhaseIcon(name: string, kind: string): { src: string; anim: string } {
-  const src = ACTIVITY_ICON_MAP[name] || KIND_ICON_MAP[kind] || '/activity-icons/setting.png'
-  const anim = ACTIVITY_ANIM_MAP[name] || KIND_ANIM_MAP[kind] || 'act-process'
-  return { src, anim }
-}
+function MemoryPanel({
+  sessionId,
+  visible,
+}: {
+  sessionId: number | null
+  visible: boolean
+}) {
+  const [memory, setMemory] = useState<SessionMemory>({})
+  const [loading, setLoading] = useState(false)
 
-function ActivityStep({ activity }: { activity: AgentActivity }) {
-  const running = activity.status === 'started'
-  const failed = activity.status === 'failed'
-  const isFactCheck = failed && activity.display_summary?.includes('事实核对')
-  const duration = formatDuration(Number(activity.detail?.duration_ms) || null)
-  const { src, anim } = activityPhaseIcon(activity.name, activity.kind)
-
-  const iconContent = running
-    ? <img className={`activity-inline-icon ${anim}`} src={src} alt="" />
-    : failed
-      ? <img className="activity-inline-icon" src="/activity-icons/delete.png" alt="" />
-      : <img className="activity-inline-icon activity-done" src={src} alt="" />
-
-  return (
-    <div className={`activity-inline-row${running ? ' running' : ''}${failed ? (isFactCheck ? ' fact-check' : ' failed') : ''}`}>
-      {iconContent}
-      <span className="activity-inline-label">{activityAction(activity)}</span>
-      {duration && <span className="activity-inline-duration">{duration}</span>}
-      {failed && activity.display_summary && (
-        <span className="activity-inline-detail">{activity.display_summary}</span>
-      )}
-    </div>
-  )
-}
-
-/** 动作胶囊：聚合显示，点击展开明细 */
-function ActionsCapsule({ segment, running }: { segment: { activities: AgentActivity[]; collapsed: boolean }; running: boolean }) {
-  const [expanded, setExpanded] = useState(!segment.collapsed && running)
-  const toolActivities = segment.activities
-  if (toolActivities.length === 0) return null
-
-  const allDone = toolActivities.every((a) => a.status !== 'started')
-  const hasFailures = toolActivities.some((a) => a.status === 'failed')
-  const summary = aggregateActions(toolActivities)
-
-  // 正在运行时自动展开，完成后自动折叠
   useEffect(() => {
-    if (running && !allDone) setExpanded(true)
-    if (allDone && expanded) setExpanded(false)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, allDone])
+    if (!visible || !sessionId) return
+    let cancelled = false
+    apiRequest<{ session: { memory_json?: string | null } }>(`/api/v1/student/master/sessions/${sessionId}/messages?limit=0`)
+      .then((data) => {
+        if (cancelled) return
+        setLoading(true)
+        try {
+          setMemory(JSON.parse(data.session.memory_json || '{}'))
+        } catch { setMemory({}) }
+      })
+      .catch(() => { if (!cancelled) setMemory({}) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [visible, sessionId])
+
+  const handleDelete = async (type: 'constraints' | 'facts' | 'preferences', index?: number) => {
+    const updated: SessionMemory = { ...memory, constraints: [...(memory.constraints || [])], facts: [...(memory.facts || [])], preferences: [...(memory.preferences || [])] }
+    if (type === 'preferences' && index !== undefined) {
+      updated.preferences = updated.preferences!.filter((_, i) => i !== index)
+    } else if (type === 'constraints' && index !== undefined) {
+      updated.constraints = updated.constraints!.filter((_, i) => i !== index)
+    } else if (type === 'facts' && index !== undefined) {
+      updated.facts = updated.facts!.filter((_, i) => i !== index)
+    }
+    setMemory(updated)
+    if (sessionId) {
+      try {
+        await authenticatedFetch(`/api/v1/student/master/sessions/${sessionId}/memory`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        })
+      } catch { /* silent */ }
+    }
+  }
+
+  if (!visible) return null
+
+  const constraints = memory.constraints || []
+  const facts = memory.facts || []
+  const prefs = memory.preferences || []
+  const total = constraints.length + facts.length + prefs.length
 
   return (
-    <div className={`actions-capsule${hasFailures ? ' has-failures' : ''}`}>
-      <button
-        type="button"
-        className="capsule-trigger"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-      >
-        <span className="capsule-dot" />
-        <span className="capsule-text">{summary}</span>
-        <span className={`capsule-chevron${expanded ? ' expanded' : ''}`}>›</span>
-      </button>
-      {expanded && (
-        <div className="capsule-detail">
-          {toolActivities.map((a) => (
-            <ActivityStep key={a.id} activity={a} />
-          ))}
+    <div
+      className="composer-settings-menu"
+      style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 300, maxHeight: 360, overflow: 'auto' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="composer-settings-heading">
+        <IconMindMapping />
+        <span>本次对话记住的内容</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#86909C' }}>{total} 条</span>
+      </div>
+      {loading ? (
+        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>加载中…</div>
+      ) : total === 0 ? (
+        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>暂无记忆内容</div>
+      ) : (
+        <div style={{ padding: '4px 0' }}>
+          {constraints.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>约束</div>
+              {constraints.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>🚫 {c}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('constraints', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {facts.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>事实</div>
+              {facts.map((f, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>📝 {f}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('facts', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {prefs.length > 0 && (
+            <div style={{ padding: '4px 16px' }}>
+              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>偏好</div>
+              {prefs.map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
+                  <span style={{ flex: 1 }}>⚙️ {p}</span>
+                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('preferences', i)}><IconClose style={{ fontSize: 12 }} /></button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
+
+function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
+  if (name.startsWith('skill__')) return { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' }
+  return ACTIVITY_ICON_MAP[name]
+    || KIND_ICON_MAP[kind]
+    || { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'neutral' }
+}
+
+/** 工具动作像普通消息一样嵌入对话时间线，不再呈现为面板或列表。 */
+function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; collapsed: boolean } }) {
+  const toolActivities = segment.activities
+
+  const isRecoveredFailure = (activity: AgentActivity) => (
+    activity.status === 'failed'
+    && toolActivities.some((candidate) => (
+      candidate.name === activity.name
+      && candidate.status === 'completed'
+      && candidate.id > activity.id
+    ))
+  )
+  const visibleActivities = toolActivities.filter((activity) => !isRecoveredFailure(activity))
+  const primaryActivity = [...visibleActivities].reverse().find((activity) => activity.status === 'started')
+    || visibleActivities[visibleActivities.length - 1]
+  const hasFailures = visibleActivities.some((activity) => activity.status === 'failed')
+
+  if (!primaryActivity) return null
+
+  const { src, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
+  const isRunning = visibleActivities.some((activity) => activity.status === 'started')
+
+  return (
+    <div className={`activity-trace${isRunning ? ' is-running' : ''}${hasFailures ? ' has-failures' : ''}`}>
+      <Tooltip content={activityDisplayName(primaryActivity)} mini>
+        <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
+          <img className="activity-trace-image" src={src} alt="" />
+        </span>
+      </Tooltip>
+      <span className="activity-trace-copy">
+        {visibleActivities.map((activity, index) => (
+          <span key={activity.id}>
+            {index > 0 && <span className="activity-trace-separator"> · </span>}
+            <span className={`activity-trace-action status-${activity.status}`}>
+              {activityAction(activity)}
+            </span>
+          </span>
+        ))}
+      </span>
+    </div>
+  )
+}
+
 /** 时间线渲染：text 和 actions 段交错 */
-function TimelineRenderer({ segments, running }: { segments: TimelineSegment[]; running: boolean }) {
+function TimelineRenderer({ segments }: { segments: TimelineSegment[] }) {
   return (
     <div className="timeline-container">
       {segments.map((seg, i) => {
@@ -440,7 +710,7 @@ function TimelineRenderer({ segments, running }: { segments: TimelineSegment[]; 
             </div>
           ) : null
         }
-        return <ActionsCapsule key={`a${i}`} segment={seg} running={running} />
+        return <ActivityTrace key={`a${i}`} segment={seg} />
       })}
     </div>
   )
@@ -454,7 +724,6 @@ function RuntimeStatusline({
   runtimeInfo,
   activities,
   streamStartMs,
-  elapsedTick,
 }: {
   pending: boolean
   heartbeat?: { output_chars: number; phase: string }
@@ -462,9 +731,13 @@ function RuntimeStatusline({
   runtimeInfo?: RuntimeInfo
   activities: AgentActivity[]
   streamStartMs: number | null
-  elapsedTick: number
 }) {
-  void elapsedTick  // triggers re-render each second for elapsed time
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!streamStartMs || !pending) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [streamStartMs, pending])
   if (!pending && !runtimeInfo) return null
 
   // Completed state -> static footer
@@ -485,7 +758,7 @@ function RuntimeStatusline({
   }
 
   // Streaming state
-  const elapsed = streamStartMs ? Date.now() - streamStartMs : 0
+  const elapsed = streamStartMs ? now - streamStartMs : 0
   const outputChars = heartbeat?.output_chars ?? 0
   // Resolve label from active tool or heartbeat phase
   const activeTool = activities.find((a) => a.status === 'started')
@@ -513,8 +786,10 @@ function RuntimeStatusline({
 }
 
 function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
+  const navigate = useNavigate()
+  const [reverting, setReverting] = useState<number | null>(null)
   const editorLinks = useMemo(() => {
-    const links: { resumeId: number; label: string }[] = []
+    const links: { resumeId: number; label: string; activityName: string; revisionId?: number }[] = []
     for (const a of activities) {
       if (a.status !== 'completed') continue
       const detail = a.detail || {}
@@ -523,30 +798,79 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
           : a.name === 'optimize_resume_data' ? '查看优化后的简历'
           : a.name === 'update_resume_data' ? '查看修改后的简历'
           : '查看简历'
-        links.push({ resumeId: detail.resume_id as number, label })
+        links.push({ resumeId: detail.resume_id as number, label, activityName: a.name, revisionId: typeof detail?.revision_id === 'number' ? detail.revision_id as number : undefined })
       }
     }
     return links
   }, [activities])
+
+  const handleRevert = async (resumeId: number, revisionId: number | undefined, e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!window.confirm('确定撤销本次修改？简历将恢复到修改前的状态。')) return
+    setReverting(resumeId)
+    try {
+      let targetRevisionId = revisionId
+      if (!targetRevisionId) {
+        // 兜底：获取最近的 revision
+        const revisions = await apiRequest<{ id: number }[]>(`/api/v1/student/resumes/${resumeId}/revisions`)
+        if (revisions.length === 0) {
+          alert('没有可撤销的快照')
+          return
+        }
+        targetRevisionId = revisions[0].id
+      }
+      const resp = await authenticatedFetch(`/api/v1/student/resumes/${resumeId}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision_id: targetRevisionId }),
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        alert(err.detail || '撤销失败，请重试')
+        return
+      }
+      alert('已撤销修改')
+    } catch {
+      alert('撤销失败，请重试')
+    } finally {
+      setReverting(null)
+    }
+  }
+
   if (editorLinks.length === 0) return null
   return (
-    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
       {editorLinks.map((link) => (
-        <a
-          key={link.resumeId}
-          href={`/student/resumes/${link.resumeId}`}
-          onClick={(e) => { e.preventDefault(); window.location.href = `/student/resumes/${link.resumeId}` }}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '8px 14px', borderRadius: 10,
-            border: '1px solid #C7D2FE', background: '#EEF2FF',
-            color: '#4338CA', fontSize: 13, fontWeight: 600, textDecoration: 'none',
-          }}
-        >
-          <IconFile />
-          <span>{link.label}</span>
-          <IconCaretRight />
-        </a>
+        <span key={link.resumeId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <a
+            href={`/student/resumes/${link.resumeId}`}
+            onClick={(e) => { e.preventDefault(); navigate(`/student/resumes/${link.resumeId}`) }}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '8px 14px', borderRadius: 10,
+              border: '1px solid #C7D2FE', background: '#EEF2FF',
+              color: '#4338CA', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+            }}
+          >
+            <IconFile />
+            <span>{link.label}</span>
+            <IconCaretRight />
+          </a>
+          {link.activityName === 'update_resume_data' && (
+            <button
+              type="button"
+              onClick={(e) => void handleRevert(link.resumeId, link.revisionId, e)}
+              disabled={reverting === link.resumeId}
+              style={{
+                padding: '6px 10px', borderRadius: 8,
+                border: '1px solid #FCA5A5', background: '#FEF2F2',
+                color: '#DC2626', fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              {reverting === link.resumeId ? '撤销中…' : '撤销本次修改'}
+            </button>
+          )}
+        </span>
       ))}
     </div>
   )
@@ -582,7 +906,7 @@ function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
 }
 
 function AssistantMessage({
-  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, elapsedTick, segments,
+  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, segments,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
@@ -592,16 +916,21 @@ function AssistantMessage({
   runtimeInfo?: RuntimeInfo
   heartbeat?: { output_chars: number; phase: string }
   streamStartMs?: number | null
-  elapsedTick?: number
   segments?: TimelineSegment[]
 }) {
-  // 如果有 segments，用时间线渲染；否则回退到旧方式
-  const hasSegments = segments && segments.length > 0
+  // 流式阶段使用 store 时间线；历史消息依据持久化 activity 的
+  // content_offset 重建，保证工具轨迹不会随临时流式组件卸载而消失。
+  const timelineSegments = segments?.length
+    ? segments
+    : activities.length
+      ? buildTimelineSegments(message.content, activities)
+      : []
+  const hasSegments = timelineSegments.length > 0
   return (
     <div className="message-row assistant">
       <div className="assistant-message">
         {hasSegments ? (
-          <TimelineRenderer segments={segments} running={pending} />
+          <TimelineRenderer segments={timelineSegments} />
         ) : (
           <>
             {message.content ? (
@@ -639,7 +968,6 @@ function AssistantMessage({
             runtimeInfo={runtimeInfo}
             activities={activities}
             streamStartMs={streamStartMs ?? null}
-            elapsedTick={elapsedTick ?? 0}
           />
         )}
       </div>
@@ -657,21 +985,6 @@ function activitiesForAssistant(
   const previousUser = [...messages.slice(0, assistantIndex)].reverse().find((m) => m.role === 'user')
   if (!previousUser) return []
   return activities.filter((a) => a.message_id === previousUser.id)
-}
-
-export function parseSseBlock(block: string): StreamEvent | null {
-  let event = 'message'
-  const dataLines: string[] = []
-  for (const line of block.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-  }
-  if (dataLines.length === 0) return null
-  try {
-    return { event, data: JSON.parse(dataLines.join('\n')) as Record<string, unknown> }
-  } catch {
-    return null
-  }
 }
 
 function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
@@ -723,6 +1036,7 @@ export function AgentChatView({
   todayEvents,
   remindersDismissed,
   onDismissReminders,
+  onOpenProfile,
 }: AgentChatViewProps) {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -737,8 +1051,6 @@ export function AgentChatView({
   const [heartbeats, setHeartbeats] = useState<Record<number, { output_chars: number; phase: string }>>({})
   const [storeSegments, setStoreSegments] = useState<TimelineSegment[]>([])
   const streamStartRef = useRef<number | null>(null)
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [elapsedTick, setElapsedTick] = useState(0)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -747,11 +1059,24 @@ export function AgentChatView({
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium')
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
+  const [activeResumeId, setActiveResumeId] = useState<number | null>(null)
+  const [memoryPanelVisible, setMemoryPanelVisible] = useState(false)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
-  const abortRef = useRef<AbortController | null>(null)
+  // G2: 新手引导 — 档案完整度
+  const [completeness, setCompleteness] = useState<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean } | null>(null)
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => localStorage.getItem('onboarding_dismissed') === '1')
+
+  useEffect(() => {
+    if (agentType !== 'resume' || messages.length > 0 || onboardingDismissed) return
+    apiRequest<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean }>('/api/v1/student/profile/completeness')
+      .then(setCompleteness)
+      .catch(() => {})
+  }, [agentType, messages.length, onboardingDismissed])
+
+
   const sessionCache = useRef<Map<number, SavedSessionState>>(new Map())  // 并行对话：缓存各 session 的 UI 状态
   const pendingResumeNavRef = useRef<number | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
@@ -837,7 +1162,7 @@ export function AgentChatView({
       setHistoryLoading(false)
       // 需要从 API 获取 session 元数据（title 等可能更新了）
       apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages?limit=0`)
-        .then((history) => { setAgentSession(history.session) })
+        .then((history) => { setAgentSession(history.session); setActiveResumeId(history.session.active_resume_id ?? null) })
         .catch(() => {
           // 兜底：构造一个最小 session 对象
           setAgentSession({ id: sessionToLoad.id, title: sessionToLoad.title, status: 'active', agent_type: agentType, created_at: '', updated_at: '' })
@@ -863,6 +1188,7 @@ export function AgentChatView({
     apiRequest<AgentHistory>(`/api/v1/student/master/sessions/${sessionToLoad.id}/messages`)
       .then((history) => {
         setAgentSession(history.session)
+        setActiveResumeId(history.session.active_resume_id ?? null)
         setMessages(history.messages)
         setActivities(history.activities)
         setRuntimeInfo(Object.fromEntries(
@@ -924,18 +1250,20 @@ export function AgentChatView({
     setHeartbeats({})
     setStoreSegments([])
     streamStartRef.current = null
-    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setPendingAttachments([])
     setGeneratedFiles({})
     setInputValue('')
     setNotice(null)
+    setActiveResumeId(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newChatTrigger])
 
   const createAgentSession = useCallback(async () => {
+    const body: Record<string, unknown> = { title: '新对话', agent_type: agentType }
+    if (activeResumeId) body.active_resume_id = activeResumeId
     const created = await apiRequest<AgentChatSession>('/api/v1/student/master/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: '新对话', agent_type: agentType }),
+      body: JSON.stringify(body),
     })
     setAgentSession(created)
     setMessages([])
@@ -944,11 +1272,37 @@ export function AgentChatView({
     setRuntimeInfo({})
     setHeartbeats({})
     streamStartRef.current = null
-    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setPendingAttachments([])
     setGeneratedFiles({})
     return created
-  }, [agentType])
+  }, [agentType, activeResumeId])
+
+  // 工作简历切换：已有 session 走 PATCH，否则只存 state
+  const handleResumeChange = useCallback(async (resumeId: number | null) => {
+    setActiveResumeId(resumeId)
+    if (agentSession?.id) {
+      try {
+        await apiRequest<AgentChatSession>(`/api/v1/student/master/sessions/${agentSession.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ active_resume_id: resumeId }),
+        })
+      } catch {
+        // silent — state already updated locally
+      }
+    }
+  }, [agentSession?.id])
+
+  // 从 activity.completed 事件同步 activeResumeId（AI 生成/优化简历后自动绑定）
+  useEffect(() => {
+    for (const a of activities) {
+      if (a.status !== 'completed') continue
+      const detail = a.detail || {}
+      if ((a.name === 'generate_resume_data' || a.name === 'optimize_resume_data' || a.name === 'update_resume_data')
+        && typeof detail?.resume_id === 'number') {
+        setActiveResumeId(detail.resume_id as number)
+      }
+    }
+  }, [activities])
 
 
   const ensureResumeCapacity = async () => {
@@ -971,9 +1325,30 @@ export function AgentChatView({
   }
 
   const startResumeOptimization = async () => {
-    if (!(await ensureResumeCapacity())) return
-    setInputValue('请帮我优化简历，我会上传简历 PDF 和目标岗位 JD。')
-    fileInputRef.current?.click()
+    try {
+      const list = await apiRequest<{ id: number; title: string }[]>('/api/v1/student/resumes')
+      if (list.length === 0) {
+        // 0 份简历：引导去简历中心导入
+        Modal.confirm({
+          title: '还没有在线简历',
+          content: '先把简历上传到简历中心，AI 就能直接优化它。',
+          okText: '去导入简历',
+          cancelText: '取消',
+          onOk: () => navigate('/student/resumes?import=1'),
+        })
+        return
+      }
+      if (list.length === 1) {
+        // 1 份：自动绑定为工作简历
+        await handleResumeChange(list[0].id)
+        setInputValue('请优化这份简历。目标岗位 JD：\n（在这里粘贴 JD）')
+      } else {
+        // 多份：预填提示，用户通过 ResumeSelector 选择
+        setInputValue('请优化我的工作简历。目标岗位 JD：\n（在这里粘贴 JD）')
+      }
+    } catch {
+      // silent
+    }
   }
 
   const submitMessage = async (preset?: string) => {
@@ -1001,9 +1376,8 @@ export function AgentChatView({
     setStreaming(true)
     setRuntimeStatuses({})
     setHeartbeats({})
+    setStoreSegments([])
     streamStartRef.current = Date.now()
-    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current)
-    elapsedTimerRef.current = setInterval(() => setElapsedTick((t) => t + 1), 1000)
     const sendingAttachments = [...pendingAttachments]
     setPendingAttachments([])
     setMessages((prev) => [
@@ -1027,7 +1401,6 @@ export function AgentChatView({
     onSessionUpdated(sessionForParent)
 
     // Store-driven streaming: chatRuntimeStore manages the SSE connection
-    abortRef.current = new AbortController() // kept for stopStreaming compat
     try {
       await chatRuntimeStore.startRun(
         currentSession.id,
@@ -1074,8 +1447,6 @@ export function AgentChatView({
       setPendingAttachments((prev) => [...sendingAttachments, ...prev])
     } finally {
       setStreaming(false)
-      abortRef.current = null
-      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     }
   }
 
@@ -1094,10 +1465,8 @@ export function AgentChatView({
   }
 
   const stopStreaming = () => {
-    abortRef.current?.abort()
-    chatRuntimeStore.abort()
+    if (agentSession?.id != null) chatRuntimeStore.abortSession(agentSession.id)
     setStreaming(false)
-    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
     setMessages((prev) => {
       const last = prev[prev.length - 1]
       if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
@@ -1118,13 +1487,9 @@ export function AgentChatView({
       for (const file of files.slice(0, 8)) {
         const form = new FormData()
         form.append('file', file)
-        const response = await fetch(
-          `${API_BASE_URL}/api/v1/student/master/sessions/${sess.id}/attachments`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${session?.access ?? ''}` },
-            body: form,
-          },
+        const response = await authenticatedFetch(
+          `/api/v1/student/master/sessions/${sess.id}/attachments`,
+          { method: 'POST', body: form },
         )
         const payload = await response.json()
         if (!response.ok || payload.code !== 0) {
@@ -1295,14 +1660,69 @@ export function AgentChatView({
     for (const [msgId, atts] of storeState.userAttachments) {
       setUserMessageAttachments((prev) => ({ ...prev, [msgId]: atts as AgentAttachment[] }))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeTick, agentSession?.id])
 
   // ── Render ──
 
+  const allOnboardingDone = completeness && completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills && completeness.has_resume && activeResumeId
+
   const emptyState = agentType === 'resume' ? (
     <section className="agent-empty-state agent-home-workbench">
       <div className="agent-home-grid">
+        {/* G2: 新手引导卡 */}
+        {completeness && !allOnboardingDone && !onboardingDismissed && (
+          <div style={{
+            background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12,
+            padding: '16px 20px', marginBottom: 16, fontSize: 13, lineHeight: 1.8,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>新手引导</span>
+              <button
+                type="button"
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C', fontSize: 12 }}
+                onClick={() => { localStorage.setItem('onboarding_dismissed', '1'); setOnboardingDismissed(true) }}
+              >不再显示</button>
+            </div>
+            {/* Step 1: 完善档案 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '✓' : '1'}
+              </span>
+              <span style={{ flex: 1 }}>完善个人档案</span>
+              {!(completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills) && (
+                <button
+                  type="button"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
+                  onClick={() => onOpenProfile?.()}
+                >去完善</button>
+              )}
+            </div>
+            {/* Step 2: 准备简历 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.has_resume ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {completeness.has_resume ? '✓' : '2'}
+              </span>
+              <span style={{ flex: 1 }}>准备一份简历</span>
+              {!completeness.has_resume && (
+                <button
+                  type="button"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
+                  onClick={() => navigate('/student/resumes?import=1')}
+                >去导入</button>
+              )}
+            </div>
+            {/* Step 3: 选择工作简历 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 10, background: activeResumeId ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                {activeResumeId ? '✓' : '3'}
+              </span>
+              <span style={{ flex: 1 }}>选择工作简历，开始对话</span>
+              {!activeResumeId && completeness.has_resume && (
+                <span style={{ color: '#86909C', fontSize: 12 }}>点击输入框上方的「📄 选择简历」</span>
+              )}
+            </div>
+          </div>
+        )}
         <div className="agent-home-badge">
           <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
         </div>
@@ -1323,7 +1743,7 @@ export function AgentChatView({
             onClick={() => void startResumeOptimization()}
           >
             <strong>简历优化</strong>
-            <span>上传简历 PDF + 粘贴目标岗位 JD，AI 给出优化建议并保存到简历制作。</span>
+            <span>选择一份在线简历 + 粘贴目标岗位 JD，AI 直接优化并保存。</span>
           </button>
         </div>
       </div>
@@ -1417,7 +1837,7 @@ export function AgentChatView({
               runtimeInfo={runtimeInfo[message.id]}
               heartbeat={heartbeats[message.id]}
               streamStartMs={streamStartRef.current}
-              elapsedTick={elapsedTick}
+              segments={index === messages.length - 1 ? storeSegments : undefined}
             />
           ),
         )}
@@ -1429,7 +1849,6 @@ export function AgentChatView({
             runtimeStatus={Object.values(runtimeStatuses).at(-1)}
             heartbeat={Object.values(heartbeats).at(-1)}
             streamStartMs={streamStartRef.current}
-            elapsedTick={elapsedTick}
             pending
             segments={storeSegments}
           />
@@ -1463,8 +1882,15 @@ export function AgentChatView({
           </div>
         )}
 
-        {pendingAttachments.length > 0 && (
+        {(agentType === 'resume' || pendingAttachments.length > 0) && (
           <div className="attachment-chip-row">
+            {agentType === 'resume' && (
+              <ResumeSelector
+                activeResumeId={activeResumeId}
+                onResumeChange={(id) => void handleResumeChange(id)}
+                disabled={streaming}
+              />
+            )}
             {pendingAttachments.map((a) =>
               a.content_type?.startsWith('image/') && a.download_url ? (
                 <div key={a.id} className="composer-image-preview" title={a.original_name}>
@@ -1509,6 +1935,24 @@ export function AgentChatView({
                 {uploadingAttachment ? <IconLoading /> : <IconPlus />}
               </button>
             </Tooltip>
+            {agentType === 'resume' && agentSession?.id && (
+              <div style={{ position: 'relative' }}>
+                <Tooltip content="查看本次对话记住的内容">
+                  <button
+                    type="button"
+                    className="composer-add-btn"
+                    onClick={() => setMemoryPanelVisible((v) => !v)}
+                    style={memoryPanelVisible ? { background: '#EEF2FF', color: '#4338CA' } : undefined}
+                  >
+                    <IconMindMapping />
+                  </button>
+                </Tooltip>
+                <MemoryPanel
+                  sessionId={agentSession.id}
+                  visible={memoryPanelVisible}
+                />
+              </div>
+            )}
             <input
               ref={fileInputRef}
               type="file"

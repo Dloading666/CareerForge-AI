@@ -305,3 +305,220 @@ def test_fact_guard_no_whitelist_still_works():
     result = _fact_guard_failure("optimize_resume_data", violations)
     assert result["status"] == "failed"
     assert "字节跳动" in result["summary"]
+
+
+# ── 防线1: 程度词阶梯检测测试 ─────────────────────────────────────────────────
+
+from app.student.agent_runtime import _check_role_escalation
+
+
+def test_role_escalation_participation_to_lead_blocked():
+    """「参与」→「主导」应被拦截。"""
+    args = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 主导后端服务架构设计，带领 3 人小组完成重构",
+            }
+        ],
+    }
+    violations = _check_role_escalation(args, [PROFILE])
+    assert len(violations) == 1
+    assert "主导" in violations[0]
+    assert "参与" in violations[0]
+
+
+def test_role_escalation_same_level_allowed():
+    """相同等级的角色词应通过。"""
+    args = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 参与后端服务开发，优化接口性能",
+            }
+        ],
+    }
+    violations = _check_role_escalation(args, [PROFILE])
+    assert violations == []
+
+
+def test_role_escalation_downgrade_allowed():
+    """降级使用角色词应通过（如「主导」→「参与」）。"""
+    PROFILE_WITH_LEAD = {
+        "work_experiences": [
+            {
+                "company": "阿里巴巴",
+                "position": "前端开发",
+                "description": "- 主导电商平台前端重构",
+            }
+        ],
+    }
+    args = {
+        "experience": [
+            {
+                "company": "阿里巴巴",
+                "details": "- 参与电商平台前端开发",
+            }
+        ],
+    }
+    violations = _check_role_escalation(args, [PROFILE_WITH_LEAD])
+    assert violations == []
+
+
+def test_role_escalation_independent_blocked():
+    """「参与」→「独立完成」应被拦截。"""
+    args = {
+        "projects": [
+            {
+                "name": "合同审查助手",
+                "details": "- 独立完成合同审查助手的全栈开发",
+            }
+        ],
+    }
+    violations = _check_role_escalation(args, [DIRTY_PROFILE])
+    assert len(violations) == 1
+    assert "独立完成" in violations[0]
+
+
+# ── 防线2: 条目归属校验测试 ─────────────────────────────────────────────────
+
+from app.student.agent_runtime import _check_item_attribution
+
+
+def test_attribution_cross_item_number_blocked():
+    """把项目 A 的数字安到项目 B → 应被检测到。"""
+    EVIDENCE = {
+        "work_experiences": [
+            {
+                "company": "腾讯",
+                "description": "- 优化接口性能，QPS 提升 30%",
+            },
+            {
+                "company": "阿里巴巴",
+                "description": "- 开发推荐系统，DAU 提升 50%",
+            },
+        ],
+    }
+    args = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 优化接口性能，DAU 提升 50%",  # 50% 是阿里巴巴的数字
+            }
+        ],
+    }
+    violations = _check_item_attribution(args, [EVIDENCE])
+    assert any("50%" in v for v in violations)
+
+
+def test_attribution_same_item_number_allowed():
+    """同一段经历的数字应通过。"""
+    args = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 优化接口性能，QPS 提升 30%",
+            }
+        ],
+    }
+    violations = _check_item_attribution(args, [PROFILE])
+    assert violations == []
+
+
+# ── 防线3: JD GAP 铁律测试 ─────────────────────────────────────────────────
+
+from app.student.agent_runtime import _check_gap_violations
+
+
+def test_gap_keyword_in_resume_blocked():
+    """GAP 项出现在简历中应被拦截。"""
+    args = {
+        "skills": "Python, Java, Kubernetes, Elasticsearch",
+        "experience": [
+            {"details": "- 使用 Kubernetes 部署微服务"}
+        ],
+    }
+    gap_keywords = ["Kubernetes", "Elasticsearch"]
+    violations = _check_gap_violations(args, gap_keywords)
+    assert len(violations) == 2
+    assert any("Kubernetes" in v for v in violations)
+    assert any("Elasticsearch" in v for v in violations)
+
+
+def test_gap_keyword_not_in_resume_allowed():
+    """GAP 项未出现在简历中应通过。"""
+    args = {
+        "skills": "Python, MySQL",
+        "experience": [
+            {"details": "- 使用 Python 开发后端服务"}
+        ],
+    }
+    gap_keywords = ["Kubernetes", "Elasticsearch"]
+    violations = _check_gap_violations(args, gap_keywords)
+    assert violations == []
+
+
+def test_no_gap_keywords_allowed():
+    """没有 GAP 关键词时应通过。"""
+    args = {"skills": "Python"}
+    violations = _check_gap_violations(args, [])
+    assert violations == []
+
+
+# ── 集成测试 ─────────────────────────────────────────────────────────────────
+
+def test_combined_defenses():
+    """三道防线协同工作：程度词升级 + 条目归属 + GAP 铁律。"""
+    EVIDENCE = {
+        "work_experiences": [
+            {
+                "company": "腾讯",
+                "position": "后端开发实习生",
+                "start_date": "2024.06",
+                "end_date": "2024.12",
+                "description": "- 参与后端服务开发，优化接口性能，QPS 提升 30%",
+            }
+        ],
+    }
+    gap_keywords = ["Kubernetes", "Elasticsearch"]
+
+    # 测试1：程度词升级应被拦截
+    args1 = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 主导后端服务架构设计，QPS 提升 30%",
+            }
+        ],
+    }
+    violations1 = _check_role_escalation(args1, [EVIDENCE])
+    assert len(violations1) == 1
+    assert "主导" in violations1[0]
+
+    # 测试2：GAP 项应被拦截
+    args2 = {
+        "skills": "Python, Kubernetes",
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 参与后端服务开发，使用 Kubernetes 部署",
+            }
+        ],
+    }
+    violations2 = _check_gap_violations(args2, gap_keywords)
+    assert len(violations2) == 1
+    assert "Kubernetes" in violations2[0]
+
+    # 测试3：正常内容应通过
+    args3 = {
+        "experience": [
+            {
+                "company": "腾讯",
+                "details": "- 参与后端服务开发，优化接口性能，QPS 提升 30%",
+            }
+        ],
+    }
+    violations3 = _check_role_escalation(args3, [EVIDENCE])
+    assert violations3 == []
+    violations4 = _check_item_attribution(args3, [EVIDENCE])
+    assert violations4 == []

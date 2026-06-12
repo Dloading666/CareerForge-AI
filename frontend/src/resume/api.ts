@@ -61,6 +61,16 @@ export async function uploadResume(file: File) {
   })
 }
 
+export async function importResumeFile(file: File, title?: string) {
+  const form = new FormData()
+  form.append('file', file)
+  if (title) form.append('title', title)
+  return apiRequest<{ resume_id: number; title: string; sections_summary: Record<string, number | boolean> }>('/api/v1/student/resumes/import/file', {
+    method: 'POST',
+    body: form,
+  })
+}
+
 export async function getResume(resumeId: number) {
   const detail = await apiRequest<ResumeDetailEnvelope>(`/api/v1/student/resumes/${resumeId}`)
   return normalizeResume(detail)

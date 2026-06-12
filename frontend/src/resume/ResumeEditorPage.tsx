@@ -3,8 +3,9 @@ import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
-import { ResumeEditorProvider, useResumeEditor } from './ResumeEditorContext'
-import { TEMPLATE_REGISTRY } from './templates/registry'
+import { ResumeEditorProvider } from './ResumeEditorContext'
+import { useResumeEditor } from './useResumeEditor'
+import { TEMPLATE_REGISTRY } from './templates/templateRegistry'
 import { createResume, getResume, updateResume } from './api'
 import { EditPanel } from './components/EditPanel'
 import { PreviewPanel } from './components/PreviewPanel'
@@ -201,6 +202,25 @@ function ResumeEditorInner() {
 
   return (
     <div className="wb-root">
+      {/* 导入提醒 banner */}
+      {searchParams.get('imported') === '1' && (
+        <div style={{
+          background: '#FFF7E6', border: '1px solid #FFD591', borderRadius: 8,
+          padding: '8px 16px', margin: '8px 16px 0', fontSize: 13, color: '#D46B08',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span>以下内容由 AI 从你上传的文件解析而来，请核对无误后保存。</span>
+          <button
+            type="button"
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#D46B08', fontSize: 16, padding: 0 }}
+            onClick={() => {
+              const url = new URL(window.location.href)
+              url.searchParams.delete('imported')
+              window.history.replaceState(null, '', url.toString())
+            }}
+          >×</button>
+        </div>
+      )}
       {/* Header */}
       <header className="wb-header">
         <div className="wb-header-left">

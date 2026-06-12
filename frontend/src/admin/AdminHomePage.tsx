@@ -1,4 +1,4 @@
-﻿import {
+import {
   Alert,
   Avatar,
   Button,
@@ -36,7 +36,7 @@ import {
   IconSettings,
   IconUser,
 } from '@arco-design/web-react/icon'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiRequest, ApiError } from '../shared/api'
 import { useAuth } from '../shared/auth'
@@ -712,28 +712,16 @@ export function AdminHomePage() {
   }
 
   useEffect(() => {
-    if (!session?.access) {
-      setAgentOptions(FALLBACK_AGENT_OPTIONS)
-      return
-    }
-
+    if (!session?.access) return
     let alive = true
-    setAgentOptionsLoading(true)
-    fetchAgentOptions(session.access)
-      .then((options) => {
-        if (alive) {
-          setAgentOptions(options)
-        }
-      })
-      .finally(() => {
-        if (alive) {
-          setAgentOptionsLoading(false)
-        }
-      })
-
-    return () => {
-      alive = false
-    }
+    const timer = setTimeout(() => {
+      setAgentOptionsLoading(true)
+      fetchAgentOptions(session.access)
+        .then((options) => { if (alive) setAgentOptions(options) })
+        .catch(() => { if (alive) setAgentOptions(FALLBACK_AGENT_OPTIONS) })
+        .finally(() => { if (alive) setAgentOptionsLoading(false) })
+    }, 0)
+    return () => { alive = false; clearTimeout(timer) }
   }, [session?.access])
 
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
@@ -795,26 +783,20 @@ export function AdminHomePage() {
     }
   }, [session?.access, session?.role])
 
-  useEffect(() => {
-    if (session?.role !== 'admin' || !session.access) {
-      return
-    }
-    loadMcpData()
-  }, [session?.access, session?.role])
-
   function authHeaders() {
     return {
       Authorization: `Bearer ${session?.access ?? ''}`,
     }
   }
 
-  async function loadMcpData() {
+  const loadMcpData = useCallback(async () => {
     setMcpLoading(true)
     try {
+      const headers = { Authorization: `Bearer ${session?.access ?? ''}` }
       const [serviceData, logData, poolData] = await Promise.all([
-        apiRequest<McpServiceRecord[]>('/api/v1/admin/mcp-services', { headers: authHeaders() }),
-        apiRequest<McpCallLogRecord[]>('/api/v1/admin/mcp-call-logs?limit=50', { headers: authHeaders() }),
-        apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers: authHeaders() }),
+        apiRequest<McpServiceRecord[]>('/api/v1/admin/mcp-services', { headers }),
+        apiRequest<McpCallLogRecord[]>('/api/v1/admin/mcp-call-logs?limit=50', { headers }),
+        apiRequest<ToolPoolResponse>('/api/v1/admin/mcp-tool-pool', { headers }),
       ])
       setMcps(serviceData)
       setMcpLogs(logData)
@@ -837,7 +819,13 @@ export function AdminHomePage() {
     } finally {
       setMcpLoading(false)
     }
-  }
+  }, [session])
+
+  useEffect(() => {
+    if (session?.role !== 'admin' || !session.access) return
+    const timer = setTimeout(() => { loadMcpData() }, 0)
+    return () => { clearTimeout(timer) }
+  }, [session?.access, session?.role, loadMcpData])
 
   function openNewMcpDrawer() {
     setEditingMcpId(null)

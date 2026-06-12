@@ -4,10 +4,11 @@ import json
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
@@ -24,6 +25,7 @@ from app.auth.service import require_role
 from app.core.response import ok
 from app.infra.db import get_db
 from app.student.resume_models import StudentResume
+from app.student.revision_models import StudentResumeRevision
 from app.student.profile_details_models import (
     StudentEducation,
     StudentProject,
@@ -618,7 +620,244 @@ def import_resume(
     return ok(_serialize_detail(row).model_dump(mode="json"), msg="created")
 
 
-@router.post("/upload", status_code=201)
+@router.post("/import/file", status_code=201)
+async def import_resume_file(
+    file: UploadFile,
+    title: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """导入简历文件（PDF/DOCX/JSON）。PDF/DOCX 通过 LLM 结构化解析，JSON 直接校验。"""
+    from fastapi.concurrency import run_in_threadpool
+    from app.student.resume_import_service import extract_resume_file, parse_resume_text_to_data, _SCANNER_THRESHOLD
+
+    identity, student = current
+    _ensure_resume_limit(db, identity.user_id, identity.tenant_id)
+
+    original_name = file.filename or "resume"
+    ext = Path(original_name).suffix.lower()
+    if ext not in {".pdf", ".docx", ".json"}:
+        raise HTTPException(status_code=400, detail="仅支持 PDF、DOCX、JSON 格式")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件不能超过 10MB")
+
+    parsed_data: dict[str, Any] = {}
+
+    if ext == ".json":
+        # JSON 分支：直接解析校验
+        try:
+            raw = json.loads(content.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="JSON 文件格式错误，请检查后重试")
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON 文件应为对象格式")
+        parsed_data = _normalize_import_json(raw)
+    else:
+        # PDF/DOCX 分支：抽取文本 → LLM 结构化
+        text = extract_resume_file(content, original_name, "")
+        if len(text) < _SCANNER_THRESHOLD:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF 似乎是扫描件或图片型 PDF，无法提取文字。请上传文字版 PDF，或下载 JSON 模板填写后导入。",
+            )
+        try:
+            parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)[:300])
+
+    # 标题：传入 > 解析出的姓名+岗位 > 文件名
+    resolved_title = (
+        _normalize_title(title)
+        if title
+        else _infer_title(parsed_data, original_name)
+    )
+    template_id = DEFAULT_TEMPLATE_ID
+
+    # 转为完整编辑器 data_json
+    document = _build_import_document(parsed_data, resolved_title, template_id, student)
+
+    row = StudentResume(
+        tenant_id=identity.tenant_id,
+        student_id=identity.user_id,
+        title=resolved_title,
+        template_id=template_id,
+        visibility=False,
+        data_json=json.dumps(document, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # 返回简历摘要
+    sections = _compute_sections_summary(parsed_data)
+    return ok({"resume_id": row.id, "title": resolved_title, "sections_summary": sections}, msg="imported")
+
+
+def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
+    """规范化导入的 JSON 数据，提取 LLM 解析同构的子集。"""
+    basic = raw.get("basic") or {}
+    return {
+        "basic": {
+            "name": str(basic.get("name") or raw.get("name") or "").strip(),
+            "target_position": str(basic.get("target_position") or basic.get("title") or "").strip(),
+            "email": str(basic.get("email") or "").strip(),
+            "phone": str(basic.get("phone") or "").strip(),
+            "location": str(basic.get("location") or "").strip(),
+            "birth_date": str(basic.get("birth_date") or basic.get("birthDate") or "").strip(),
+        },
+        "education": [
+            {
+                "school": str(e.get("school") or "").strip(),
+                "major": str(e.get("major") or "").strip(),
+                "degree": str(e.get("degree") or "").strip(),
+                "start_date": str(e.get("start_date") or e.get("startDate") or "").strip(),
+                "end_date": str(e.get("end_date") or e.get("endDate") or "").strip(),
+                "gpa": str(e.get("gpa") or "").strip(),
+                "description": str(e.get("description") or "").strip(),
+            }
+            for e in (raw.get("education") or [])
+            if isinstance(e, dict)
+        ][:10],
+        "experience": [
+            {
+                "company": str(e.get("company") or "").strip(),
+                "position": str(e.get("position") or "").strip(),
+                "date": str(e.get("date") or "").strip(),
+                "details": str(e.get("details") or e.get("description") or "").strip(),
+            }
+            for e in (raw.get("experience") or [])
+            if isinstance(e, dict)
+        ][:10],
+        "projects": [
+            {
+                "name": str(p.get("name") or "").strip(),
+                "role": str(p.get("role") or "").strip(),
+                "date": str(p.get("date") or "").strip(),
+                "description": str(p.get("description") or "").strip(),
+            }
+            for p in (raw.get("projects") or [])
+            if isinstance(p, dict)
+        ][:10],
+        "skills": str(raw.get("skills") or raw.get("skillContent") or "").strip()[:2000],
+        "self_evaluation": str(raw.get("self_evaluation") or raw.get("selfEvaluationContent") or "").strip()[:2000],
+    }
+
+
+def _infer_title(data: dict[str, Any], filename: str) -> str:
+    """从解析数据推断简历标题。"""
+    basic = data.get("basic") or {}
+    name = (basic.get("name") or "").strip()
+    position = (basic.get("target_position") or "").strip()
+    if name and position:
+        return _normalize_title(f"{name}-{position}简历")
+    if name:
+        return _normalize_title(f"{name}的简历")
+    return _normalize_title(Path(filename).stem)
+
+
+def _build_import_document(
+    parsed: dict[str, Any],
+    title: str,
+    template_id: str,
+    student: Any,
+) -> dict[str, Any]:
+    """将 LLM 解析的结构化数据转为完整编辑器 data_json。"""
+    import uuid
+
+    basic = parsed.get("basic") or {}
+    education = [
+        {
+            "id": f"edu-{uuid.uuid4().hex[:8]}",
+            "school": e.get("school", ""),
+            "major": e.get("major", ""),
+            "degree": e.get("degree", ""),
+            "startDate": e.get("start_date", ""),
+            "endDate": e.get("end_date", ""),
+            "gpa": e.get("gpa", ""),
+            "description": e.get("description", ""),
+            "visible": True,
+        }
+        for e in (parsed.get("education") or [])
+    ]
+    experience = [
+        {
+            "id": f"exp-{uuid.uuid4().hex[:8]}",
+            "company": e.get("company", ""),
+            "position": e.get("position", ""),
+            "date": e.get("date", ""),
+            "details": e.get("details", ""),
+            "visible": True,
+        }
+        for e in (parsed.get("experience") or [])
+    ]
+    projects = [
+        {
+            "id": f"proj-{uuid.uuid4().hex[:8]}",
+            "name": p.get("name", ""),
+            "role": p.get("role", ""),
+            "date": p.get("date", ""),
+            "description": p.get("description", ""),
+            "visible": True,
+            "link": "",
+            "linkLabel": "",
+        }
+        for p in (parsed.get("projects") or [])
+    ]
+    return {
+        "title": title,
+        "templateId": template_id,
+        "visibility": False,
+        "basic": {
+            "name": basic.get("name") or student.name or "",
+            "title": basic.get("target_position") or "",
+            "employementStatus": "",
+            "email": basic.get("email") or student.email or "",
+            "phone": basic.get("phone") or student.phone or "",
+            "location": basic.get("location") or "",
+            "birthDate": basic.get("birth_date") or "",
+            "photo": student.resume_avatar_url or "",
+            "icons": dict(DEFAULT_BASIC_ICONS),
+            "photoConfig": dict(DEFAULT_PHOTO_CONFIG),
+            "fieldOrder": [dict(item) for item in DEFAULT_BASIC_FIELD_ORDER],
+            "customFields": [],
+            "githubKey": "",
+            "githubUseName": "",
+            "githubContributionsVisible": False,
+        },
+        "education": education,
+        "experience": experience,
+        "projects": projects,
+        "certificates": [],
+        "customData": {},
+        "skillContent": parsed.get("skills") or "",
+        "selfEvaluationContent": parsed.get("self_evaluation") or "",
+        "activeSection": "basic",
+        "draggingProjectId": None,
+        "globalSettings": {
+            "themeColor": "#0f172a",
+            "baseFontSize": 14,
+            "pagePadding": 32,
+            "lineHeight": 1.65,
+            "sectionSpacing": 24,
+        },
+        "menuSections": [
+            {"id": section_id, "title": section_title, "icon": icon, "enabled": True, "order": index}
+            for index, (section_id, section_title, icon) in enumerate(DEFAULT_SECTION_ORDER)
+        ],
+    }
+
+
+def _compute_sections_summary(data: dict[str, Any]) -> dict[str, Any]:
+    """计算各板块摘要（条数/是否非空）。"""
+    return {
+        "education": len(data.get("education") or []),
+        "experience": len(data.get("experience") or []),
+        "projects": len(data.get("projects") or []),
+        "skills": bool((data.get("skills") or "").strip()),
+        "self_evaluation": bool((data.get("self_evaluation") or "").strip()),
+    }
 async def upload_resume_file(
     file: UploadFile,
     db: Session = Depends(get_db),
@@ -699,6 +938,69 @@ def get_resume(
     identity, _ = current
     row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
     return ok(_serialize_detail(row).model_dump(mode="json"))
+
+
+class RevertRequest(BaseModel):
+    revision_id: int
+
+
+@router.post("/{resume_id}/revert")
+def revert_resume(
+    resume_id: int,
+    payload: RevertRequest,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
+    revision = db.scalar(
+        select(StudentResumeRevision).where(
+            StudentResumeRevision.id == payload.revision_id,
+            StudentResumeRevision.resume_id == resume_id,
+            StudentResumeRevision.tenant_id == identity.tenant_id,
+            StudentResumeRevision.student_id == identity.user_id,
+        )
+    )
+    if not revision:
+        raise HTTPException(status_code=404, detail="快照不存在或无权限")
+    row.data_json = revision.data_json
+    row.title = revision.title
+    row.template_id = revision.template_id
+    db.commit()
+    return ok(_serialize_detail(row).model_dump(mode="json"), msg="已撤销")
+
+
+@router.get("/{resume_id}/revisions")
+def list_revisions(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    # 校验简历归属
+    _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
+    revisions = list(
+        db.scalars(
+            select(StudentResumeRevision)
+            .where(
+                StudentResumeRevision.resume_id == resume_id,
+                StudentResumeRevision.tenant_id == identity.tenant_id,
+                StudentResumeRevision.student_id == identity.user_id,
+            )
+            .order_by(StudentResumeRevision.id.desc())
+            .limit(20)
+        ).all()
+    )
+    return ok([
+        {
+            "id": r.id,
+            "title": r.title,
+            "source": r.source,
+            "session_id": r.session_id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in revisions
+    ])
 
 
 @router.put("/{resume_id}")

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.admin.agent_service import (create_agent, delete_agent, get_agent, get_agent_dict, list_agents, toggle_agent, update_agent)
+from app.admin.agent_service import build_agent_harness_system_prompt
 from app.admin.agent_schemas import AgentChatRequest, AgentChatResponse, AgentCreate, AgentToggle, AgentUpdate
 from app.auth.service import require_role
 from app.core.llm_client import chat_completion
@@ -191,7 +192,7 @@ def api_agent_chat(agent_id: int, payload: AgentChatRequest, db: Session = Depen
     if not agent.model_config.api_key_cipher:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Model [{agent.model_config.display_name}] has no API Key configured")
     try:
-        result = chat_completion(agent.model_config, system_prompt=agent.system_prompt, variables=payload.variables,
+        result = chat_completion(agent.model_config, system_prompt=build_agent_harness_system_prompt(agent), variables=payload.variables,
             memory=[], user_message=payload.message, temperature=agent.temperature, max_tokens=agent.max_tokens,
             top_p=agent.top_p, frequency_penalty=agent.frequency_penalty, presence_penalty=agent.presence_penalty)
     except RuntimeError as exc:

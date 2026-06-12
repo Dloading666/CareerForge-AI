@@ -1,4 +1,4 @@
-import { Button, Form, Input, Message, Modal, Popconfirm, Select, Typography } from '@arco-design/web-react'
+import { Button, DatePicker, Form, Input, Message, Modal, Popconfirm, Select, TimePicker, Typography } from '@arco-design/web-react'
 import { IconLeft, IconRight, IconArrowLeft } from '@arco-design/web-react/icon'
 import { useEffect, useState } from 'react'
 import { apiRequest } from '../shared/api'
@@ -20,13 +20,13 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
   const year = currentDate.getFullYear()
   const month = currentDate.getMonth()
 
-  const fetchEvents = async () => {
-    try {
-      const res = await apiRequest<Event[]>('/api/v1/student/events')
-      setEvents(res)
-    } catch (e) { console.error(e) }
-  }
-  useEffect(() => { fetchEvents() }, [year, month])
+  useEffect(() => {
+    let cancelled = false
+    apiRequest<Event[]>('/api/v1/student/events')
+      .then((res) => { if (!cancelled) setEvents(res) })
+      .catch((e) => { if (!cancelled) console.error(e) })
+    return () => { cancelled = true }
+  }, [year, month])
 
   const prevMonth = () => setCurrentDate(new Date(year, month - 1))
   const nextMonth = () => setCurrentDate(new Date(year, month + 1))
@@ -36,17 +36,20 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
 
   const dateStr = (d: number) => year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0')
   const dayEvents = (d: number) => events.filter(e => e.event_date === dateStr(d))
-  const displayEvents = filterDate ? events.filter(e => e.event_date === filterDate) : events
+  const displayEvents = filterDate
+    ? events.filter(e => e.event_date === filterDate)
+    : events.filter(e => e.event_date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`))
 
-  const openCreate = (d: number) => { setSelectedDate(new Date(year, month, d)); setEditingEvent(null); form.resetFields(); setModalVisible(true) }
-  const openEdit = (evt: Event) => { setEditingEvent(evt); form.setFieldsValue({title:evt.title,description:evt.description??'',color:evt.color,event_time:evt.event_time??''}); setModalVisible(true) }
+  const openCreate = (d: number) => { setSelectedDate(new Date(year, month, d)); setEditingEvent(null); form.resetFields(); form.setFieldsValue({ event_date: dateStr(d) }); setModalVisible(true) }
+  const openEdit = (evt: Event) => { setEditingEvent(evt); form.setFieldsValue({title:evt.title,description:evt.description??'',color:evt.color,event_date:evt.event_date,event_time:evt.event_time??''}); setModalVisible(true) }
 
   const handleSave = async () => {
     try {
       const values = await form.validate(); setLoading(true)
+      const eventDate = values.event_date || (selectedDate ? dateStr(selectedDate.getDate()) : '')
       const body = { title: values.title, description: values.description || null, color: values.color || '#165dff',
-        event_date: editingEvent ? editingEvent.event_date : selectedDate ? dateStr(selectedDate.getDate()) : values.event_date,
-        event_time: values.event_time || null }
+        event_date: String(eventDate).slice(0, 10),
+        event_time: values.event_time ? String(values.event_time).slice(0, 5) : null }
       if (editingEvent) {
         await apiRequest('/api/v1/student/events/' + editingEvent.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         Message.success('已更新')
@@ -54,12 +57,17 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
         await apiRequest('/api/v1/student/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         Message.success('已添加')
       }
-      setModalVisible(false); fetchEvents()
+      setModalVisible(false)
+      apiRequest<Event[]>('/api/v1/student/events').then(setEvents).catch(() => {})
     } catch { Message.error('操作失败') } finally { setLoading(false) }
   }
 
   const handleDelete = async (id: number) => {
-    try { await apiRequest('/api/v1/student/events/' + id, { method: 'DELETE' }); Message.success('已删除'); fetchEvents() }
+    try {
+      await apiRequest('/api/v1/student/events/' + id, { method: 'DELETE' })
+      Message.success('已删除')
+      apiRequest<Event[]>('/api/v1/student/events').then(setEvents).catch(() => {})
+    }
     catch { Message.error('删除失败') }
   }
 
@@ -131,8 +139,12 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
           <Form.Item label="颜色标记" field="color">
             <Select placeholder="选择颜色">{COLORS.map(c => <Select.Option key={c.value} value={c.value}><span style={{display:'flex',alignItems:'center',gap:8}}><span style={{width:12,height:12,borderRadius:3,background:c.value,display:'inline-block'}}/>{c.label}</span></Select.Option>)}</Select>
           </Form.Item>
-          {!editingEvent && <Form.Item label="日期" field="event_date"><Input placeholder="如：2026-06-05"/></Form.Item>}
-          <Form.Item label="时间" field="event_time"><Input placeholder="如：14:30（可选）"/></Form.Item>
+          <Form.Item label="日期" field="event_date" rules={[{required:true,message:'请选择日期'}]}>
+            <DatePicker format="YYYY-MM-DD" placeholder="选择日期" />
+          </Form.Item>
+          <Form.Item label="时间" field="event_time">
+            <TimePicker format="HH:mm" placeholder="选择时间（可选）" />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

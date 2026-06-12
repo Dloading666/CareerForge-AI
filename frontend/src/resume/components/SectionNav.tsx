@@ -1,7 +1,7 @@
 import { Slider } from '@arco-design/web-react'
 import { Reorder, useDragControls } from 'framer-motion'
 
-import { useResumeEditor } from '../ResumeEditorContext'
+import { useResumeEditor } from '../useResumeEditor'
 import type { MenuSection, ResumeSectionId } from '../types'
 
 const PRESET_COLORS = [

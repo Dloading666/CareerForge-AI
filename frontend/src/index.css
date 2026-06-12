@@ -958,9 +958,17 @@ textarea {
   overflow: hidden;
 }
 
+.student-shell--interview-focus .topbar {
+  display: none;
+}
+
 .student-shell .content-panel {
   height: 100%;
   min-height: 0;
+}
+
+.student-shell--interview-focus .interview-page {
+  height: 100vh;
 }
 
 .agent-thread {
@@ -2420,131 +2428,6 @@ textarea {
 
 .agent-error-line {
   color: #c93535;
-}
-
-/* ── Activity block (Codex-style) ─────────────────────────────────── */
-
-/* ── 内嵌活动步骤（对话流中展示，像 Codex） ── */
-.activity-inline-block {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 0 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid #f0f1f3;
-}
-
-.activity-inline-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 13.5px;
-  color: #5a6070;
-  animation: activity-inline-enter 0.2s ease-out both;
-}
-
-.activity-inline-row.running {
-  color: #2255c4;
-  font-weight: 500;
-}
-
-.activity-inline-row.failed {
-  color: #b22222;
-}
-
-.activity-inline-row.fact-check {
-  color: #8b6914;
-}
-
-.activity-inline-icon {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-  flex-shrink: 0;
-  display: inline-block;
-  vertical-align: middle;
-}
-
-.activity-inline-icon.activity-done {
-  opacity: 0.55;
-  filter: grayscale(0.3);
-}
-
-.activity-inline-label {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.activity-inline-duration {
-  flex-shrink: 0;
-  color: #a0a5af;
-  font-size: 11.5px;
-}
-
-.activity-inline-detail {
-  display: block;
-  width: 100%;
-  margin-top: 2px;
-  color: #8b909b;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-@keyframes activity-inline-enter {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ── 内嵌活动图标动画 ── */
-/* 思考：上下浮动 */
-.act-think { animation: act-float 2s ease-in-out infinite; }
-@keyframes act-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
-}
-
-/* 浏览/查看：左右扫描 */
-.act-browse { animation: act-scan 2.4s ease-in-out infinite; }
-@keyframes act-scan {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(2px); }
-  75% { transform: translateX(-2px); }
-}
-
-/* 搜索：旋转 */
-.act-search { animation: act-spin 3s linear infinite; }
-@keyframes act-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* 写作/编辑：脉冲缩放 */
-.act-write { animation: act-pulse 1.6s ease-in-out infinite; }
-@keyframes act-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.7; }
-  50% { transform: scale(1.25); opacity: 1; }
-}
-
-/* 处理：旋转脉冲 */
-.act-process { animation: act-gear 2s linear infinite; }
-@keyframes act-gear {
-  0% { transform: rotate(0deg) scale(1); }
-  50% { transform: rotate(180deg) scale(1.1); }
-  100% { transform: rotate(360deg) scale(1); }
-}
-
-/* 分析：呼吸 */
-.act-analyze { animation: act-breathe 2s ease-in-out infinite; }
-@keyframes act-breathe {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .activity-inline-icon { animation: none !important; }
 }
 
 @keyframes activity-live {
@@ -6095,7 +5978,7 @@ textarea {
   }
 }
 
-/* ── Actions Capsule（Codex 式胶囊）────────────────────────────────── */
+/* ── Tool activity trace（像普通消息一样嵌在对话流里）────────────── */
 
 .timeline-container {
   display: flex;
@@ -6108,86 +5991,119 @@ textarea {
   margin: 0;
 }
 
-.actions-capsule {
-  margin: 8px 0;
-}
-
-.capsule-trigger {
+.activity-trace {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: #f5f6f8;
-  border: 1px solid #eaebef;
+  gap: 10px;
+  width: min(980px, 100%);
+  min-height: 36px;
+  margin: 9px auto 12px;
+  padding: 2px 0;
+  color: #8b919d;
+  animation: activity-trace-enter 0.18s ease-out both;
+}
+
+.activity-trace-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  color: #6b7280;
-  width: 100%;
-  text-align: left;
-  transition: background 0.15s, border-color 0.15s;
+  background: #f2f4f7;
 }
 
-.capsule-trigger:hover {
-  background: #edeef1;
-  border-color: #d5d7dc;
+.activity-trace-image {
+  width: 25px;
+  height: 25px;
+  display: block;
+  object-fit: contain;
 }
 
-.actions-capsule.has-failures .capsule-trigger {
-  border-color: #f5c6c6;
-  background: #fef8f8;
-}
-
-.capsule-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #9ca3af;
-  flex-shrink: 0;
-}
-
-.actions-capsule.has-failures .capsule-dot {
-  background: #ef4444;
-}
-
-.capsule-text {
-  flex: 1;
+.activity-trace-copy {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.65;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
-.capsule-chevron {
-  font-size: 14px;
-  color: #9ca3af;
-  transition: transform 0.2s;
-  flex-shrink: 0;
+.activity-trace-separator {
+  color: #c1c5cc;
 }
 
-.capsule-chevron.expanded {
-  transform: rotate(90deg);
+.activity-trace-action.status-started {
+  color: #5e6f91;
 }
 
-.capsule-detail {
-  padding: 4px 0 4px 16px;
-  border-left: 2px solid #e5e7eb;
-  margin-left: 9px;
-  margin-top: 4px;
+.activity-trace-action.status-failed {
+  color: #c93535;
 }
 
-.capsule-detail .activity-inline-row {
-  padding: 3px 0;
-  font-size: 12.5px;
+.activity-trace.is-running .activity-trace-icon {
+  animation: activity-trace-breathe 1.8s ease-in-out infinite;
 }
 
-.capsule-detail .activity-inline-icon {
-  width: 16px;
-  height: 16px;
+.activity-trace.has-failures .activity-trace-icon {
+  background: #fff1f0;
+}
+
+.activity-trace-icon.tone-profile,
+.activity-trace-icon.tone-resume,
+.activity-trace-icon.tone-web {
+  background: #eef4ff;
+}
+
+.activity-trace-icon.tone-file,
+.activity-trace-icon.tone-search {
+  background: #eaf8fb;
+}
+
+.activity-trace-icon.tone-context,
+.activity-trace-icon.tone-analysis {
+  background: #f0f1ff;
+}
+
+.activity-trace-icon.tone-edit {
+  background: #fff6e8;
+}
+
+.activity-trace-icon.tone-generate,
+.activity-trace-icon.tone-optimize,
+.activity-trace-icon.tone-skill {
+  background: #eaf8f1;
+}
+
+.activity-trace-icon.tone-export {
+  background: #fff1f0;
+}
+
+@keyframes activity-trace-enter {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes activity-trace-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 93, 255, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(22, 93, 255, 0.08); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .capsule-chevron { transition: none; }
+  .activity-trace,
+  .activity-trace-icon { animation: none !important; }
+}
+
+@media (max-width: 640px) {
+  .activity-trace {
+    align-items: flex-start;
+  }
+
+  .activity-trace-copy {
+    padding-top: 4px;
+    font-size: 14px;
+  }
 }
 
 /* AI interviewer MVP */
@@ -6255,13 +6171,96 @@ textarea {
   font-size: 22px;
 }
 
+/* ── Interview advanced settings (collapsible) ──────────── */
+.interview-advanced-settings {
+  margin: 16px 0;
+  border: 1px solid #e5e8ef;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.interview-advanced-settings > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+  background: #f7f8fa;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.interview-advanced-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.interview-advanced-settings > summary::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 16px;
+  color: #86909c;
+  transition: transform 0.2s;
+}
+
+.interview-advanced-settings[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.interview-advanced-settings > summary:hover {
+  background: #eef1f6;
+}
+
+.interview-advanced-settings > summary svg {
+  color: #165dff;
+  font-size: 15px;
+}
+
+.interview-advanced-settings > summary small {
+  font-weight: 400;
+  color: #86909c;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.interview-advanced-body {
+  padding: 14px;
+}
+
+/* ── Interview section headers ─────────────────────────────── */
+.interview-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e8ef;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.interview-section-header:first-of-type {
+  margin-top: 0;
+}
+
+.interview-section-header svg {
+  color: #165dff;
+  font-size: 16px;
+}
+
 .interview-field {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 7px;
   margin-bottom: 14px;
   font-size: 13px;
   font-weight: 600;
+  overflow: visible;
 }
 
 .interview-field-row {
@@ -6309,10 +6308,6 @@ textarea {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid #eef0f5;
-}
-
-.interview-config-toggle {
-  flex: 0 0 auto;
 }
 
 .interview-dialogue {
@@ -6451,27 +6446,58 @@ textarea {
 .interview-loading {
   display: flex;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
+  width: min(680px, 100%);
+  margin: 14px auto 22px;
+  border: 1px solid rgba(219, 230, 243, 0.92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
   color: #6b778c;
-  padding: 8px 0;
+  padding: 14px 18px;
+  text-align: center;
+  box-shadow: 0 14px 34px rgba(30, 41, 59, 0.08);
 }
 
 .interview-loading small {
   width: 100%;
-  padding-left: 26px;
   color: #94a3b8;
   font-size: 12px;
 }
 
 .interview-answer-box {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: end;
+  align-items: stretch;
   padding: 14px 18px;
   border-top: 1px solid #eef0f5;
   background: #fbfcff;
+}
+
+.interview-answer-input {
+  align-self: stretch;
+}
+
+.interview-answer-actions {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 8px;
+  min-width: 360px;
+}
+
+.interview-answer-actions-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.interview-answer-actions-row .arco-btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 8px;
+  font-weight: 600;
 }
 
 .voice-button--active {
@@ -6556,68 +6582,112 @@ textarea {
   gap: 14px;
   padding: 14px;
   background:
-    linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+    linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
 }
 
 .interview-config-panel,
 .interview-room {
-  border-color: rgba(203, 213, 225, 0.9);
-  box-shadow: 0 18px 48px rgba(30, 41, 59, 0.08);
+  border-color: rgba(214, 221, 232, 0.88);
+  box-shadow:
+    0 22px 54px rgba(30, 41, 59, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .interview-config-panel {
-  background: #fbfcff;
+  background: rgba(251, 252, 255, 0.86);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  scrollbar-width: thin;
 }
 
 .interview-brand {
-  padding-bottom: 14px;
-  border-bottom: 1px solid #e6ebf2;
+  position: relative;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid rgba(219, 230, 243, 0.9);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.88));
+  box-shadow: 0 14px 28px rgba(30, 41, 59, 0.06);
 }
 
 .interview-avatar {
-  background: #172033;
-  box-shadow: 0 10px 22px rgba(23, 32, 51, 0.18);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #101828, #263244);
+  box-shadow: 0 12px 24px rgba(23, 32, 51, 0.2);
+}
+
+.interview-brand h3 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.interview-brand p {
+  max-width: 250px;
+  color: #596579;
+  line-height: 1.6;
 }
 
 .interview-mode-strip {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 6px;
   margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid rgba(219, 230, 243, 0.9);
+  border-radius: 8px;
+  background: rgba(239, 244, 249, 0.86);
 }
 
 .interview-mode-card {
-  min-height: 82px;
-  border: 1px solid #d8e0eb;
-  border-radius: 8px;
-  background: #fff;
+  min-height: 54px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   color: #334155;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 12px;
+  column-gap: 8px;
+  row-gap: 1px;
+  padding: 9px 10px;
   text-align: left;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.interview-mode-card:not(:disabled):hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .interview-mode-card svg {
   font-size: 20px;
+  grid-row: span 2;
 }
 
 .interview-mode-card span {
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .interview-mode-card small {
   color: #64748b;
   font-size: 12px;
+  line-height: 1.2;
 }
 
 .interview-mode-card.active {
-  border-color: rgba(22, 93, 255, 0.45);
-  background: #eef4ff;
+  border-color: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
   color: #174ea6;
+  box-shadow:
+    0 10px 24px rgba(22, 93, 255, 0.12),
+    inset 0 0 0 1px rgba(22, 93, 255, 0.08);
 }
 
 .interview-harness-card {
@@ -6903,8 +6973,49 @@ textarea {
   color: #64748b;
 }
 
+.interview-history-item-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.interview-history-item-wrap .interview-history-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.interview-history-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: #c2c6cc;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.interview-history-delete:hover {
+  color: #f53f3f;
+  background: #fff0f0;
+}
+
 .interview-room-header {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+.interview-room-header--session {
+  justify-content: center;
+  text-align: center;
+}
+
+.interview-room-header--session > div {
+  min-width: 0;
 }
 
 .interview-empty {
@@ -6945,11 +7056,13 @@ textarea {
 .interview-progress-stream {
   width: min(640px, 100%);
   margin: -58px auto 28px;
-  padding: 14px 16px;
-  border: 1px solid #dbe6f3;
+  padding: 16px 18px;
+  border: 1px solid rgba(219, 230, 243, 0.92);
   border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 16px 34px rgba(30, 41, 59, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 42px rgba(30, 41, 59, 0.1);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .interview-progress-head {
@@ -7020,7 +7133,17 @@ textarea {
 }
 
 .interview-message.candidate {
-  background: #172033;
+  background: #e8f3ff;
+  border-color: #c9ddff;
+  color: #1f2329;
+}
+
+.interview-message.candidate .bubble-content {
+  color: #1f2329;
+}
+
+.interview-message.candidate .bubble-title {
+  color: #3370ff;
 }
 
 .interview-feedback {
@@ -7029,7 +7152,10 @@ textarea {
 }
 
 .interview-answer-box {
-  background: #ffffff;
+  grid-template-columns: minmax(0, 1fr) auto;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .interview-answer-box textarea {
@@ -7266,6 +7392,10 @@ textarea {
   .score-grid {
     grid-template-columns: 1fr;
   }
+
+  .interview-answer-actions {
+    min-width: 0;
+  }
 }
 
 /* ── NativeSelect custom dropdown ──────────────────────────────── */
@@ -7274,16 +7404,17 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 36px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 14px;
   border: 1px solid #dcdfe6;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
   font-size: 14px;
   color: #1d2129;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s;
   user-select: none;
+  line-height: 38px;
 }
 
 .native-select-trigger:hover:not(.native-select-disabled) {
@@ -7328,15 +7459,15 @@ textarea {
 .native-select-popup {
   background: #fff;
   border: 1px solid #e5e6eb;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  max-height: 260px;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  max-height: 280px;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 4px;
 }
 
 .native-select-option {
-  padding: 8px 12px;
+  padding: 10px 14px;
   font-size: 14px;
   color: #1d2129;
   cursor: pointer;
@@ -7344,6 +7475,7 @@ textarea {
   align-items: center;
   gap: 8px;
   transition: background 0.1s;
+  border-radius: 6px;
 }
 
 .native-select-option:hover {
@@ -7423,6 +7555,11 @@ textarea {
   padding: 20px 14px;
   gap: 8px;
   overflow: hidden;
+  transition:
+    width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .global-rail-brand {
@@ -7430,6 +7567,33 @@ textarea {
   align-items: center;
   gap: 10px;
   padding: 4px 4px 16px;
+}
+
+.global-rail-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+  margin: -6px 0 8px;
+  border: 1px solid rgba(217, 222, 238, 0.86);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #64748b;
+  cursor: pointer;
+  font-size: 16px;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.global-rail-collapse-btn:hover {
+  color: #165dff;
+  border-color: rgba(22, 93, 255, 0.24);
+  background: #eef4ff;
+  transform: translateY(-1px);
 }
 
 .global-rail-logo {
@@ -7611,6 +7775,12 @@ textarea {
 
 .global-rail--collapsed .global-rail-menu {
   align-items: center;
+}
+
+.global-rail--collapsed .global-rail-collapse-btn {
+  width: 40px;
+  min-height: 36px;
+  margin-top: -2px;
 }
 
 .global-rail--collapsed .global-rail-item {
