@@ -8,7 +8,7 @@ import { ApiError } from '../shared/api'
 import { deleteResume, downloadResumePdf, getResume, importResumeFile, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { ResumeTemplatePreview } from './templates/registry'
-import { TEMPLATE_REGISTRY } from './templates/templateRegistry'
+import { TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
 
 const MAX_RESUMES = 6

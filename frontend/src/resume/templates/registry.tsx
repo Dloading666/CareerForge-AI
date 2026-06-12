@@ -137,7 +137,7 @@ function getBasicFieldValue(resume: ResumeData, key: string) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function getContacts(resume: ResumeData) {
+export function getContacts(resume: ResumeData) {
   const ordered = (resume.basic.fieldOrder ?? [])
     .filter((field) => field.visible !== false && field.key !== 'name' && field.key !== 'title')
     .map((field) => ({
