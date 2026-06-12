@@ -13,7 +13,7 @@ import { SidePanel } from './components/SectionNav'
 import { TemplatePicker } from './components/TemplatePicker'
 import { ApiError } from '../shared/api'
 import type { TemplateId } from './types'
-import { printResumeElement } from './utils/printResume'
+import { exportResumeElementToPdf } from './utils/exportResumePdf'
 
 // → 简历编辑器自动保存 debounce：半分钟。改动后重置定时器，到期才推送 updateResume。
 const AUTOSAVE_DEBOUNCE_MS = 30_000
@@ -171,10 +171,32 @@ function ResumeEditorInner() {
     navigate('/student/resumes')
   }
 
-  const handleExport = () => {
+  const [exporting, setExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [exportMessage, setExportMessage] = useState('正在生成 PDF…')
+
+  const handleExport = async () => {
     const node = previewRef.current?.querySelector('[data-resume-print-root]')
-    if (node instanceof HTMLElement) {
-      printResumeElement(node)
+    if (!(node instanceof HTMLElement)) return
+    setExporting(true)
+    setExportProgress(5)
+    setExportMessage('正在准备资源…')
+    try {
+      await exportResumeElementToPdf(node, {
+        filename: resume?.title || '简历',
+        scale: 2,
+        onProgress: (state) => {
+          setExportMessage(state.message)
+          setExportProgress(Math.round((state.current / state.total) * 100))
+        },
+      })
+      setExportProgress(100)
+      setExportMessage('已下载')
+      window.setTimeout(() => setExporting(false), 600)
+    } catch (err) {
+      console.error('export pdf failed', err)
+      setExporting(false)
+      Modal.error({ title: '导出 PDF 失败', content: (err as Error)?.message || '请重试' })
     }
   }
 
@@ -320,6 +342,31 @@ function ResumeEditorInner() {
         <p style={{ margin: 0, color: '#4b5563' }}>
           检测到当前简历还有未保存的修改，返回前请选择是否保存。也可以点「取消」继续编辑。
         </p>
+      </Modal>
+
+      <Modal
+        visible={exporting}
+        title={null}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        style={{ width: 420 }}
+        className="resume-export-modal"
+      >
+        <div className="resume-export-modal-body">
+          <div className="resume-export-modal-icon" aria-hidden>
+            <IconExport />
+          </div>
+          <div className="resume-export-modal-title">正在生成 PDF</div>
+          <div className="resume-export-modal-sub">{exportMessage}</div>
+          <div className="resume-export-modal-progress">
+            <div
+              className="resume-export-modal-progress-bar"
+              style={{ width: `${exportProgress}%` }}
+            />
+          </div>
+          <div className="resume-export-modal-percent">{exportProgress}%</div>
+        </div>
       </Modal>
     </div>
   )

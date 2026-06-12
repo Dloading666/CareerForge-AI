@@ -8511,3 +8511,65 @@ textarea {
   border-radius: 14px;
 }
 
+.resume-export-modal .arco-modal {
+  border-radius: 20px;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 247, 255, 0.92) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.18);
+}
+.resume-export-modal .arco-modal-content {
+  padding: 0;
+}
+.resume-export-modal-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 28px 28px;
+  text-align: center;
+}
+.resume-export-modal-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #165DFF 0%, #0E3FB8 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 12px 28px rgba(22, 93, 255, 0.32);
+}
+.resume-export-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: 0.2px;
+}
+.resume-export-modal-sub {
+  font-size: 13px;
+  color: #64748b;
+  min-height: 18px;
+}
+.resume-export-modal-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.resume-export-modal-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #165DFF 0%, #4F8BFF 100%);
+  border-radius: 999px;
+  transition: width 220ms ease-out;
+}
+.resume-export-modal-percent {
+  font-size: 12px;
+  color: #165DFF;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
