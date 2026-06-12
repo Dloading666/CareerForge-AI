@@ -8370,3 +8370,144 @@ textarea {
     display: none;
   }
 }
+
+
+/* === Resume center: rounded buttons & tags ============================= */
+.resume-center-page .arco-btn,
+.resume-card-item-footer .arco-btn {
+  border-radius: 999px;
+}
+
+.resume-center-page .arco-tag,
+.resume-card-item-head .arco-tag,
+.resume-center-block-head .arco-tag {
+  border-radius: 999px;
+}
+
+.resume-center-actions .arco-btn {
+  padding: 0 18px;
+}
+
+.resume-card-item-footer .arco-btn {
+  padding: 0 16px;
+}
+
+.resume-center-page .arco-modal .arco-btn {
+  border-radius: 999px;
+}
+
+
+/* === Resume editor: rounded controls =================================== */
+.wb-header .wb-back-btn {
+  border-radius: 999px;
+  padding: 0 14px;
+}
+.wb-header .wb-save-chip {
+  border-radius: 999px;
+}
+.wb-header .wb-panel-toggle {
+  border-radius: 999px;
+  width: 32px;
+}
+.wb-header-right .arco-btn {
+  border-radius: 999px;
+}
+
+.wb-layout-item {
+  border-radius: 999px;
+  padding: 0 4px;
+}
+
+.canvas-mode-btn,
+.canvas-reset-btn {
+  border-radius: 999px;
+}
+
+/* Edit panel buttons (section add/remove) */
+.wb-edit .arco-btn,
+.wb-edit-section-header .arco-btn {
+  border-radius: 999px;
+}
+.wb-edit input.arco-input,
+.wb-edit .arco-input {
+  border-radius: 12px;
+}
+.wb-edit textarea.arco-textarea,
+.wb-edit .arco-textarea {
+  border-radius: 12px;
+}
+
+/* Side panel layout item active state pill */
+.wb-layout-item.active {
+  border-radius: 999px;
+}
+
+/* Theme color rows: keep swatches round but tidy grid */
+.wb-color-grid {
+  border-radius: 14px;
+}
+
+
+/* === Interview page: rounded controls ================================= */
+.interview-page .interview-config-panel,
+.interview-page .interview-room {
+  border-radius: 16px;
+}
+
+.interview-page .interview-harness-card,
+.interview-page .interview-advanced-settings,
+.interview-page .knowledge-status,
+.interview-page .interview-empty-orbit,
+.interview-page .interview-progress-stream {
+  border-radius: 16px;
+}
+
+.interview-page .interview-resume-card {
+  border-radius: 14px;
+}
+
+.interview-page .interview-message {
+  border-radius: 16px;
+}
+
+.interview-page .interview-empty-checks span {
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+
+.interview-page .interview-room {
+  border-radius: 16px;
+}
+
+.interview-page .interview-room-header {
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+
+/* Form controls inside interview page */
+.interview-page .arco-input,
+.interview-page .arco-textarea,
+.interview-page .arco-select-view {
+  border-radius: 12px;
+}
+
+/* Buttons inside interview page */
+.interview-page .arco-btn {
+  border-radius: 999px;
+}
+
+/* Tags inside interview page */
+.interview-page .arco-tag {
+  border-radius: 999px;
+}
+
+/* RAG knowledge status block */
+.interview-page .knowledge-status {
+  border-radius: 16px;
+}
+
+/* Avatar block in header */
+.interview-page .interview-avatar {
+  border-radius: 14px;
+}
+
