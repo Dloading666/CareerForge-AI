@@ -1,7 +1,7 @@
-import { Form, Input } from '@arco-design/web-react'
+import { Form } from '@arco-design/web-react'
 
 import { useResumeEditor } from '../../useResumeEditor'
-import { richTextToTextarea, textareaToParagraphHtml } from '../../utils/content'
+import { RichTextEditor } from '../RichTextEditor'
 
 export function SelfEvaluationSection() {
   const { resume, setSelfEvaluationContent } = useResumeEditor()
@@ -11,12 +11,12 @@ export function SelfEvaluationSection() {
     <div className="resume-form-stack">
       <Form layout="vertical">
         <Form.Item label="自我评价">
-          <Input.TextArea
-            value={richTextToTextarea(resume.selfEvaluationContent)}
-            onChange={(value) => setSelfEvaluationContent(textareaToParagraphHtml(value))}
-            autoSize={{ minRows: 8 }}
-            placeholder="建议按一行一个观点填写，例如：沟通协作强、执行力强、学习速度快。"
-          />
+          <RichTextEditor
+                value={resume.selfEvaluationContent}
+                onChange={(value) => setSelfEvaluationContent(value)}
+                placeholder="每行一条，例如：前端框架：熟悉 React、Vue.js、Next.js"
+                minRows={8}
+              />
         </Form.Item>
       </Form>
     </div>

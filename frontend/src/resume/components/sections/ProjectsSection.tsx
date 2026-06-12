@@ -2,7 +2,7 @@ import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
 import { useResumeEditor } from '../../useResumeEditor'
-import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
+import { RichTextEditor } from '../RichTextEditor'
 
 export function ProjectsSection() {
   const { resume, addProject, removeProject, updateProject } = useResumeEditor()
@@ -41,11 +41,11 @@ export function ProjectsSection() {
               <Input value={item.linkLabel} onChange={(value) => updateProject(item.id, { linkLabel: value })} placeholder="如 在线访问" />
             </Form.Item>
             <Form.Item label="项目亮点">
-              <Input.TextArea
-                value={richTextToTextarea(item.description)}
-                onChange={(value) => updateProject(item.id, { description: textareaToListHtml(value) })}
-                autoSize={{ minRows: 5 }}
+              <RichTextEditor
+                value={item.description ?? ""}
+                onChange={(value) => updateProject(item.id, { description: value })}
                 placeholder="每行一条，保存后会按魔方简历的列表结构写入"
+                minRows={5}
               />
             </Form.Item>
             <Form.Item label="显示在简历中">

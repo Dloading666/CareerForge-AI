@@ -11,15 +11,19 @@
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.15",
+    "@tiptap/extension-placeholder": "^2.27.2",
+    "@tiptap/html": "^2.27.2",
+    "@tiptap/react": "^2.27.2",
+    "@tiptap/starter-kit": "^2.27.2",
     "framer-motion": "^12.40.0",
+    "html2canvas": "^1.4.1",
+    "html2pdf.js": "^0.10.2",
+    "jspdf": "^2.5.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.6.2",
-    "remark-gfm": "^4.0.1",
-    "html2pdf.js": "^0.10.2",
-    "html2canvas": "^1.4.1",
-    "jspdf": "^2.5.2"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

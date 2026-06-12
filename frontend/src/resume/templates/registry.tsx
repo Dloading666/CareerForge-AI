@@ -5,6 +5,7 @@ import type {
   CustomItem,
   ResumeData,
   ResumeTemplateConfig,
+  TemplateId,
   TemplateViewModel,
   ViewListItem,
 } from '../types'

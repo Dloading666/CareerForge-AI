@@ -1,7 +1,7 @@
-import { Form, Input } from '@arco-design/web-react'
+import { Form } from '@arco-design/web-react'
 
 import { useResumeEditor } from '../../useResumeEditor'
-import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
+import { RichTextEditor } from '../RichTextEditor'
 
 export function SkillsSection() {
   const { resume, setSkillContent } = useResumeEditor()
@@ -11,12 +11,12 @@ export function SkillsSection() {
     <div className="resume-form-stack">
       <Form layout="vertical">
         <Form.Item label="专业技能">
-          <Input.TextArea
-            value={richTextToTextarea(resume.skillContent)}
-            onChange={(value) => setSkillContent(textareaToListHtml(value))}
-            autoSize={{ minRows: 10 }}
-            placeholder="每行一条，例如：前端框架：熟悉 React、Vue.js、Next.js"
-          />
+          <RichTextEditor
+                value={resume.skillContent}
+                onChange={(value) => setSkillContent(value)}
+                placeholder="每行一条，例如：前端框架：熟悉 React、Vue.js、Next.js"
+                minRows={10}
+              />
         </Form.Item>
       </Form>
     </div>

@@ -2,7 +2,7 @@ import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
 import { useResumeEditor } from '../../useResumeEditor'
-import { richTextToTextarea, textareaToListHtml } from '../../utils/content'
+import { RichTextEditor } from '../RichTextEditor'
 
 export function EducationSection() {
   const { resume, addEducation, removeEducation, updateEducation } = useResumeEditor()
@@ -55,11 +55,11 @@ export function EducationSection() {
               <Input value={item.gpa} onChange={(value) => updateEducation(item.id, { gpa: value })} />
             </Form.Item>
             <Form.Item label="亮点描述">
-              <Input.TextArea
-                value={richTextToTextarea(item.description ?? '')}
-                onChange={(value) => updateEducation(item.id, { description: textareaToListHtml(value) })}
-                autoSize={{ minRows: 4 }}
+              <RichTextEditor
+                value={item.description ?? ''}
+                onChange={(value) => updateEducation(item.id, { description: value })}
                 placeholder="每行一条，保存后会按魔方简历的列表结构写入"
+                minRows={4}
               />
             </Form.Item>
             <Form.Item label="显示在简历中">
