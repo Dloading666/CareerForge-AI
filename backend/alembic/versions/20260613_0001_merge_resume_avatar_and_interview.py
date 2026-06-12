@@ -5,7 +5,7 @@ Revises: 20260611_0021, 20260612_0022
 """
 
 revision = "20260613_0001"
-down_revision = ("20260611_0021", "20260612_0022")
+down_revision = ("20260611_0021", "20260613_0002")
 branch_labels = None
 depends_on = None
 
