@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.service import require_role
+from app.auth.service import change_student_email, require_role
 from app.core.response import ok, error
 from app.infra.db import get_db
 from app.student.agent_runtime import (
@@ -55,6 +55,7 @@ JOB_SEARCH_STATUS_VALUES = {
 
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
+    nickname: Optional[str] = Field(default=None, max_length=64)
     gender: Optional[str] = None
     age: Optional[int] = None
     birth_date: Optional[str] = Field(default=None, max_length=16)
@@ -294,6 +295,7 @@ def _serialize_profile(student) -> dict:
         "account": student.account,
         "email": student.email,
         "name": student.name,
+        "nickname": student.nickname,
         "gender": student.gender,
         "age": age,
         "birth_date": student.birth_date or "",
@@ -333,6 +335,11 @@ def update_student_profile(
         value = update_data["job_search_status"]
         if value is not None and value not in JOB_SEARCH_STATUS_VALUES:
             return error("job_search_status 取值不合法")
+    if "nickname" in update_data:
+        nickname = (update_data["nickname"] or "").strip()
+        if len(nickname) > 64:
+            return error("昵称长度不能超过 64 个字符")
+        update_data["nickname"] = nickname or None
     if "birth_date" in update_data:
         birth_date = update_data["birth_date"] or ""
         if birth_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", birth_date):
@@ -359,6 +366,24 @@ def update_student_profile(
     db.commit()
     db.refresh(student)
     return ok(_serialize_profile(student))
+
+
+class StudentChangeEmailPayload(BaseModel):
+    new_email: str = Field(max_length=255)
+    code: str = Field(min_length=4, max_length=8)
+
+
+@router.put("/profile/email")
+def change_student_email_endpoint(
+    payload: StudentChangeEmailPayload,
+    current=Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    _, student = current
+    from app.auth.schemas import StudentChangeEmailRequest
+    req = StudentChangeEmailRequest(new_email=payload.new_email, code=payload.code)
+    data = change_student_email(db, student=student, payload=req)
+    return ok({**data, **_serialize_profile(student)})
 
 
 @router.post("/profile/avatar")

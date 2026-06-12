@@ -136,6 +136,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return nextSession
         })
       },
+      async refreshProfile() {
+        const current = session
+        if (!current) return
+        try {
+          const me = await fetchMe(current.access)
+          setSession((prev) => {
+            if (!prev) return prev
+            const nextSession: AuthSession = { ...prev, profile: me.profile }
+            persistSession(nextSession)
+            return nextSession
+          })
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 401) {
+            try {
+              const refreshed = await refreshAccess(current.refresh)
+              const me = await fetchMe(refreshed.access)
+              setSession((prev) => {
+                if (!prev) return prev
+                const nextSession: AuthSession = {
+                  ...prev,
+                  access: refreshed.access,
+                  profile: me.profile,
+                }
+                persistSession(nextSession)
+                return nextSession
+              })
+            } catch {
+              // ignore
+            }
+          }
+        }
+      },
     }),
     [bootstrapping, session],
   )

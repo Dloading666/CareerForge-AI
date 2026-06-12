@@ -24,6 +24,7 @@ from app.auth.schemas import (
     AdminLoginRequest,
     StudentEmailCodeSendRequest,
     StudentLoginRequest,
+    StudentChangeEmailRequest,
     StudentRegisterRequest,
     StudentResetPasswordRequest,
 )
@@ -73,6 +74,7 @@ def build_profile(user, role: str):
         "role": role,
         "profile": {
             "name": user.name or "同学",
+            "nickname": getattr(user, "nickname", None),
             "email": user.email,
             "college": user.college,
             "major": user.major,
@@ -399,6 +401,32 @@ def reset_student_password(
         user_agent=user_agent,
     )
     return {"msg": "密码重置成功，请使用新密码登录"}
+
+def change_student_email(
+    db: Session,
+    *,
+    student: StudentUser,
+    payload: StudentChangeEmailRequest,
+) -> dict:
+    new_email = normalize_email(payload.new_email)
+    if new_email == normalize_email(student.email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新邮箱不能与当前邮箱相同")
+    existing = db.scalar(
+        select(StudentUser).where(
+            StudentUser.email == new_email,
+            StudentUser.id != student.id,
+            StudentUser.is_deleted.is_(False),
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被其他账号使用")
+    verify_student_email_code(db, email=new_email, scene="change_email", code=payload.code)
+    student.email = new_email
+    student.email_verified_at = utcnow()
+    db.commit()
+    db.refresh(student)
+    return {"email": student.email, "email_verified_at": student.email_verified_at.isoformat() if student.email_verified_at else None}
+
 
 
 def login_student(

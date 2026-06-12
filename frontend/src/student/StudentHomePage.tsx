@@ -1,6 +1,7 @@
 import { Button, Checkbox, Dropdown, Modal, Popconfirm } from '@arco-design/web-react'
 import {
   IconBook,
+  IconCamera,
   IconBug,
   IconCalendar,
   IconClose,
@@ -100,12 +101,19 @@ function SessionHistoryPanel({
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function StudentHomePage() {
-  const { session, logout } = useAuth()
+  const { session, logout, refreshProfile } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const studentName = (session?.profile.name as string) || '同学'
+  const studentNickname = (session?.profile.nickname as string) || studentName
   const studentAvatar = (session?.profile.avatar_url as string) || ''
   const studentEmail = (session?.profile.email as string) || ''
+
+  // Pull the latest profile on mount so fields added after login (e.g. nickname)
+  // are populated without requiring the user to manually re-login.
+  useEffect(() => {
+    if (session) void refreshProfile()
+  }, [])
 
   const [announcement, setAnnouncement] = useState<{ text: string; visible: boolean }>({ text: '', visible: false })
   const [dontShowAgain, setDontShowAgain] = useState(false)
@@ -297,8 +305,11 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
   const userMenu = (
     <div className="user-card-menu">
       <div className="user-card-menu-header">
-        <IconUser className="user-card-menu-avatar-icon" />
-        <span className="user-card-menu-email">{studentEmail}</span>
+        <UserAvatar src={studentAvatar} name={studentNickname} size={40} />
+        <div className="user-card-menu-info">
+          <span className="user-card-menu-name">{studentNickname}</span>
+          <span className="user-card-menu-email">{studentEmail}</span>
+        </div>
       </div>
       <div className="user-card-menu-divider" />
       <button type="button" className="user-card-menu-item" onClick={() => setProfileModalVisible(true)}>
@@ -358,11 +369,11 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
         </div>
 
         <Dropdown trigger="click" position="tl" droplist={userMenu}>
-          <div className="global-rail-user" title={studentName}>
-            <UserAvatar src={studentAvatar} name={studentName} size={railCollapsed ? 32 : 36} />
+          <div className="global-rail-user" title={studentNickname}>
+            <UserAvatar src={studentAvatar} name={studentNickname} size={railCollapsed ? 32 : 36} />
             {!railCollapsed && (
               <div className="global-rail-user-info">
-                <span className="global-rail-user-name">{studentName}</span>
+                <span className="global-rail-user-name">{studentNickname}</span>
                 <span className="global-rail-user-email">{studentEmail}</span>
               </div>
             )}
@@ -526,6 +537,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
             {[
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
+              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号设置', color: '#e6fffa' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
               { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },

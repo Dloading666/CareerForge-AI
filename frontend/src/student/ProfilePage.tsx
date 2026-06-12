@@ -101,6 +101,7 @@ type Profile = {
   account: string
   email: string
   name: string | null
+  nickname: string | null
   gender: string | null
   age: number | null
   birth_date: string | null
@@ -538,7 +539,7 @@ function ListSection<T>({
 // ---------- Page ----------
 
 export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange }: { onAvatarChange?: (url: string) => void; activeTab?: string; onTabChange?: (tab: string) => void }) {
-  const { session } = useAuth()
+  const { session, refreshProfile } = useAuth()
   const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -564,10 +565,23 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
   const [pwdCaptchaId, setPwdCaptchaId] = useState('')
   const [pwdCaptchaImage, setPwdCaptchaImage] = useState('')
   const [pwdCaptcha, setPwdCaptcha] = useState('')
+  const [nicknameDraft, setNicknameDraft] = useState('')
+  const [savingNickname, setSavingNickname] = useState(false)
+  const [changeEmailVisible, setChangeEmailVisible] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailCode, setEmailCode] = useState('')
+  const [emailCountdown, setEmailCountdown] = useState(0)
+  const [sendingEmailCode, setSendingEmailCode] = useState(false)
+  const [changingEmail, setChangingEmail] = useState(false)
+  const [acctCaptchaId, setAcctCaptchaId] = useState('')
+  const [acctCaptchaImage, setAcctCaptchaImage] = useState('')
+  const [acctCaptcha, setAcctCaptcha] = useState('')
   const [basicForm] = Form.useForm()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resumeFileInputRef = useRef<HTMLInputElement>(null)
+  const accountAvatarInputRef = useRef<HTMLInputElement>(null)
   const bannerInputRef = useRef<HTMLInputElement>(null)
+  const lastAccountTabRef = useRef(false)
   const hydratedProfileIdRef = useRef<number | null>(null)
   const inModal = !!activeTab
 
@@ -1009,6 +1023,128 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       setUploadingBanner,
     )
     e.target.value = ''
+  }
+
+
+  const loadAcctCaptcha = async () => {
+    try {
+      const data = await apiRequest<{ captcha_id: string; image: string }>('/api/v1/auth/captcha')
+      setAcctCaptchaId(data.captcha_id)
+      setAcctCaptchaImage(data.image)
+      setAcctCaptcha('')
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    if (emailCountdown <= 0) return
+    const t = window.setTimeout(() => setEmailCountdown((c) => c - 1), 1000)
+    return () => window.clearTimeout(t)
+  }, [emailCountdown])
+
+  useEffect(() => {
+    const isAccount = activeTab === 'account'
+    // Only seed the draft on the transition into the account tab.
+    // Depending on nicknameDraft would re-fire on every keystroke and
+    // reset an intentionally-empty draft back to the saved value.
+    if (isAccount && !lastAccountTabRef.current && profile) {
+      setNicknameDraft(profile.nickname ?? '')
+    }
+    lastAccountTabRef.current = isAccount
+  }, [activeTab, profile])
+
+  const openChangeEmail = () => {
+    setNewEmail('')
+    setEmailCode('')
+    setEmailCountdown(0)
+    setAcctCaptcha('')
+    setChangeEmailVisible(true)
+    void loadAcctCaptcha()
+  }
+
+  const handleSaveNickname = async () => {
+    const trimmed = nicknameDraft.trim()
+    if (trimmed.length > 64) {
+      Message.warning('昵称长度不能超过 64 个字符')
+      return
+    }
+    if ((profile?.nickname ?? '') === trimmed) {
+      Message.info('昵称未发生变化')
+      return
+    }
+    setSavingNickname(true)
+    try {
+      await apiRequest('/api/v1/student/profile', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${session?.access}` },
+        body: JSON.stringify({ nickname: trimmed || null }),
+      })
+      setProfile((p) => (p ? { ...p, nickname: trimmed || null } : p))
+      void refreshProfile()
+      Message.success('昵称保存成功')
+    } catch (e) {
+      Message.error(e instanceof Error ? e.message : '保存失败')
+    } finally {
+      setSavingNickname(false)
+    }
+  }
+
+  const handleSendEmailCode = async () => {
+    if (!newEmail.trim()) {
+      Message.warning('请输入新邮箱')
+      return
+    }
+    if (!acctCaptcha.trim()) {
+      Message.warning('请先完成图形验证码')
+      return
+    }
+    setSendingEmailCode(true)
+    try {
+      const res = await apiRequest<{ cooldown_sec: number; debug_code?: string }>(
+        '/api/v1/auth/student/email/send-code',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: newEmail.trim(),
+            scene: 'change_email',
+            captcha_id: acctCaptchaId,
+            captcha_code: acctCaptcha.trim(),
+          }),
+        },
+      )
+      setEmailCountdown(res.cooldown_sec || 60)
+      if (res.debug_code) Message.info(`开发环境验证码：${res.debug_code}`)
+      else Message.success('验证码已发送至新邮箱，请查收')
+    } catch (e) {
+      Message.error(e instanceof Error ? e.message : '验证码发送失败')
+      void loadAcctCaptcha()
+    } finally {
+      setSendingEmailCode(false)
+    }
+  }
+
+  const handleChangeEmail = async () => {
+    if (!newEmail.trim() || !emailCode.trim()) {
+      Message.warning('请填写新邮箱和验证码')
+      return
+    }
+    setChangingEmail(true)
+    try {
+      await apiRequest('/api/v1/student/profile/email', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${session?.access}` },
+        body: JSON.stringify({ new_email: newEmail.trim(), code: emailCode.trim() }),
+      })
+      setProfile((p) => (p ? { ...p, email: newEmail.trim(), email_verified_at: new Date().toISOString() } : p))
+      void refreshProfile()
+      Message.success('邮箱修改成功')
+      setChangeEmailVisible(false)
+    } catch (e) {
+      Message.error(e instanceof Error ? e.message : '邮箱修改失败')
+    } finally {
+      setChangingEmail(false)
+    }
   }
 
   if (loading) {
@@ -1912,6 +2048,120 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           </div>
         )}
 
+        {inModal && activeTab === 'account' && (
+          <div style={{ padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: '#1d2129' }}>账号设置</h3>
+            <div style={{ fontSize: 13, color: '#86909c', marginTop: -16 }}>管理你的账号头像、个人昵称以及邮箱地址。</div>
+            <div
+              style={{
+                background: '#fff',
+                border: '1px solid var(--surface-border)',
+                borderRadius: 12,
+                padding: 20,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 20,
+              }}
+            >
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: '50%',
+                  overflow: 'hidden',
+                  background: 'linear-gradient(135deg, #165dff, #2c73ff)',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 28,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {profile?.avatar_url ? (
+                  <img src={profile.avatar_url} alt="账号头像" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span>{(profile?.nickname || profile?.name || profile?.email || '?')[0].toUpperCase()}</span>
+                )}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#1d2129', marginBottom: 4 }}>账号头像</div>
+                <div style={{ fontSize: 13, color: '#86909c', marginBottom: 12 }}>仅用于账号与聊天区显示，不影响简历模板。JPG / PNG / WebP，2MB 以内。</div>
+                <Button icon={<IconCamera />} loading={uploading} onClick={() => accountAvatarInputRef.current?.click()}>
+                  上传头像
+                </Button>
+                <input
+                  ref={accountAvatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={handleAvatarChange}
+                />
+              </div>
+            </div>
+            <div
+              style={{
+                background: '#fff',
+                border: '1px solid var(--surface-border)',
+                borderRadius: 12,
+                padding: 20,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+              }}
+            >
+              <FieldRow label="个人昵称" required>
+                <Input
+                  size="large"
+                  value={nicknameDraft}
+                  onChange={setNicknameDraft}
+                  placeholder="请输入个人昵称，用于聊天区、评论与社区展示"
+                  maxLength={64}
+                  showWordLimit
+                  prefix={<IconUser />}
+                />
+              </FieldRow>
+              <Button
+                type="primary"
+                size="default"
+                loading={savingNickname}
+                disabled={(profile?.nickname ?? '') === nicknameDraft.trim()}
+                onClick={handleSaveNickname}
+                style={{ alignSelf: 'flex-start', minWidth: 120 }}
+              >
+                保存昵称
+              </Button>
+            </div>
+            <div
+              style={{
+                background: '#fff',
+                border: '1px solid var(--surface-border)',
+                borderRadius: 12,
+                padding: 20,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+              }}
+            >
+              <FieldRow label="邮箱地址">
+                <Input
+                  size="large"
+                  value={profile?.email || ''}
+                  disabled
+                  prefix={<IconSafe />}
+                />
+              </FieldRow>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {profile?.email_verified_at ? '邮箱已身份验证，修改后需重新验证。' : '邮箱未验证，你可以更换为可接收的新邮箱。'}
+              </Typography.Text>
+              <Button size="default" onClick={openChangeEmail} style={{ alignSelf: 'flex-start' }}>
+                更换邮箱
+              </Button>
+            </div>
+          </div>
+        )}
+
         {inModal && activeTab === 'about' && (
           <div style={{ padding: '40px 36px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
             <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" style={{ width: 64, height: 64, margin: '0 auto 16px' }} />
@@ -1924,6 +2174,75 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           </div>
         )}
       </div>
+      <Modal
+        title="账号设置 · 更换邮箱"
+        visible={changeEmailVisible}
+        onCancel={() => setChangeEmailVisible(false)}
+        onOk={handleChangeEmail}
+        confirmLoading={changingEmail}
+        okText="确认修改"
+        cancelText="取消"
+        unmountOnExit
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+          <Typography.Text type="secondary">
+            通过新邮箱接收验证码，验证后将会把账号邮箱切换到新地址。
+          </Typography.Text>
+          <Input
+            size="large"
+            placeholder="请输入新邮箱地址"
+            value={newEmail}
+            onChange={setNewEmail}
+            prefix={<IconSafe />}
+          />
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Input
+              size="large"
+              placeholder="输入图形验证码"
+              value={acctCaptcha}
+              onChange={setAcctCaptcha}
+              style={{ flex: 1 }}
+            />
+            <img
+              src={acctCaptchaImage || undefined}
+              alt="图形验证码"
+              title="点击刷新"
+              onClick={() => void loadAcctCaptcha()}
+              style={{
+                height: 40,
+                width: 112,
+                borderRadius: 8,
+                cursor: 'pointer',
+                border: '1px solid var(--surface-border)',
+                objectFit: 'cover',
+                flexShrink: 0,
+                background: '#f5f7fc',
+              }}
+            />
+          </div>
+          <Input
+            size="large"
+            placeholder="输入邮箱验证码"
+            value={emailCode}
+            onChange={setEmailCode}
+            addAfter={
+              <Button
+                type="text"
+                size="small"
+                loading={sendingEmailCode}
+                disabled={emailCountdown > 0}
+                onClick={handleSendEmailCode}
+              >
+                {emailCountdown > 0 ? `${emailCountdown}s` : '发送验证码'}
+              </Button>
+            }
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            验证码有效期 10 分钟，请在验证码到期前完成验证。
+          </Typography.Text>
+        </div>
+      </Modal>
+
       <Modal
         title="账号安全 · 修改登录密码"
         visible={!inModal && securityVisible}

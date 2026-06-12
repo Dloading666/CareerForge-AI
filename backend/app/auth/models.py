@@ -46,6 +46,7 @@ class StudentUser(TimestampMixin, Base):
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    nickname: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     college: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     major: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     grade: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
