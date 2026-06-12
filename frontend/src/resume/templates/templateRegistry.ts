@@ -2,17 +2,8 @@ import type { ResumeData, TemplateId, ResumeTemplateConfig, TemplateViewModel, V
 import { richTextToLines } from '../utils/content'
 
 export function getTemplateConfig(id: TemplateId | null | undefined): ResumeTemplateConfig {
-  return {
-    id: (id || 'classic') as TemplateId,
-    name: 'Classic',
-    description: 'Classic',
-    accentColor: '#0f172a',
-    secondaryColor: '#475569',
-    background: '#ffffff',
-    textColor: '#0e172b',
-    thumbnailSrc: '',
-    layout: 'single',
-  } as ResumeTemplateConfig
+  const found = TEMPLATE_REGISTRY.find((t) => t.id === (id || 'classic'))
+  return (found ?? TEMPLATE_REGISTRY[0]) as ResumeTemplateConfig
 }
 
 export function getContacts(resume: ResumeData): { key: string; value: string; custom: boolean; label: string }[] {
@@ -53,8 +44,9 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
 }
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
-  { id: 'classic', name: 'Classic', description: 'Classic', accentColor: '#0f172a', secondaryColor: '#475569', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '', layout: 'single' },
-  { id: 'modern', name: 'Modern', description: 'Modern', accentColor: '#165dff', secondaryColor: '#64748b', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '', layout: 'single' },
-  { id: 'elegant', name: 'Elegant', description: 'Elegant', accentColor: '#7c3aed', secondaryColor: '#475569', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '', layout: 'single' },
+  { id: 'blank', name: 'Blank', description: 'Blank', accentColor: '#111827', secondaryColor: '#6b7280', background: '#ffffff', textColor: '#111827', thumbnailSrc: '/resume-template-thumbs/blank.png', layout: 'single' },
+  { id: 'classic', name: 'Classic', description: 'Classic', accentColor: '#0f172a', secondaryColor: '#475569', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '/resume-template-thumbs/classic.png', layout: 'single' },
+  { id: 'modern', name: 'Modern', description: 'Modern', accentColor: '#165dff', secondaryColor: '#64748b', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '/resume-template-thumbs/modern.png', layout: 'single' },
+  { id: 'elegant', name: 'Elegant', description: 'Elegant', accentColor: '#7c3aed', secondaryColor: '#475569', background: '#ffffff', textColor: '#0e172b', thumbnailSrc: '/resume-template-thumbs/elegant.png', layout: 'single' },
 ]
 

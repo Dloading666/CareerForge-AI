@@ -141,6 +141,21 @@ export function createCustomItem(): CustomItem {
 }
 
 export function getDefaultGlobalSettings(templateId: ResumeData['templateId'] = 'classic'): GlobalSettings {
+  if (templateId === 'blank') {
+    return {
+      themeColor: '#111827',
+      fontFamily: '"Alibaba PuHuiTi", sans-serif',
+      baseFontSize: 14,
+      pagePadding: 32,
+      lineHeight: 1.55,
+      sectionSpacing: 12,
+      paragraphSpacing: 8,
+      headerSize: 18,
+      subheaderSize: 14,
+      useIconMode: false,
+      centerSubtitle: false,
+    }
+  }
   if (templateId === 'modern') {
     return {
       themeColor: '#000000',
