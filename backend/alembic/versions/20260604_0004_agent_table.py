@@ -33,7 +33,6 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    op.create_foreign_key("fk_agent_model_config", "agent", "model_config", ["model_config_id"], ["id"])
 
 def downgrade():
     op.drop_table("agent")

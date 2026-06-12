@@ -16,10 +16,100 @@ depends_on = None
 
 def _has_column(table: str, column: str) -> bool:
     inspector = sa.inspect(op.get_bind())
+    if table not in inspector.get_table_names():
+        return False
     return any(item["name"] == column for item in inspector.get_columns(table))
 
 
+def _has_table(table: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return table in inspector.get_table_names()
+
+
+def _create_interview_tables_if_missing():
+    if not _has_table("interview_sessions"):
+        op.create_table(
+            "interview_sessions",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("tenant_id", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("student_id", sa.Integer(), nullable=False),
+            sa.Column("target_role", sa.String(128), nullable=False),
+            sa.Column("job_description", sa.Text(), nullable=True),
+            sa.Column("interview_type", sa.String(32), nullable=False, server_default="technical"),
+            sa.Column("interview_style", sa.String(32), nullable=False, server_default="strict"),
+            sa.Column("difficulty", sa.String(32), nullable=False, server_default="normal"),
+            sa.Column("round_limit", sa.Integer(), nullable=False, server_default="8"),
+            sa.Column("model_config_id", sa.Integer(), nullable=True),
+            sa.Column("status", sa.String(24), nullable=False, server_default="active"),
+            sa.Column("resume_snapshot", sa.Text(), nullable=True),
+            sa.Column("company_name", sa.String(128), nullable=True),
+            sa.Column("seniority_level", sa.String(32), nullable=True),
+            sa.Column("job_skills_json", sa.Text(), nullable=True),
+            sa.Column("job_profile_json", sa.Text(), nullable=True),
+            sa.Column("current_stage", sa.String(32), nullable=False, server_default="opening"),
+            sa.Column("stage_plan_json", sa.Text(), nullable=True),
+            sa.Column("coverage_json", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
+        )
+        op.create_index("ix_interview_sessions_tenant_id", "interview_sessions", ["tenant_id"])
+        op.create_index("ix_interview_sessions_student_id", "interview_sessions", ["student_id"])
+
+    if not _has_table("interview_turns"):
+        op.create_table(
+            "interview_turns",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("session_id", sa.Integer(), nullable=False),
+            sa.Column("student_id", sa.Integer(), nullable=False),
+            sa.Column("turn_index", sa.Integer(), nullable=False),
+            sa.Column("question", sa.Text(), nullable=False),
+            sa.Column("answer", sa.Text(), nullable=True),
+            sa.Column("answer_assessment", sa.Text(), nullable=True),
+            sa.Column("score_json", sa.Text(), nullable=True),
+            sa.Column("followup_reason", sa.Text(), nullable=True),
+            sa.Column("retrieved_chunks_json", sa.Text(), nullable=True),
+            sa.Column("knowledge_points_json", sa.Text(), nullable=True),
+            sa.Column("stage", sa.String(32), nullable=True),
+            sa.Column("question_type", sa.String(64), nullable=True),
+            sa.Column("question_reason", sa.Text(), nullable=True),
+            sa.Column("capability_tags_json", sa.Text(), nullable=True),
+            sa.Column("retrieval_query", sa.Text(), nullable=True),
+            sa.Column("retrieval_hit_count", sa.Integer(), nullable=True),
+            sa.Column("top_sources_json", sa.Text(), nullable=True),
+            sa.Column("score_reasons_json", sa.Text(), nullable=True),
+            sa.Column("evidence_quotes_json", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        )
+        op.create_index("ix_interview_turns_session_id", "interview_turns", ["session_id"])
+        op.create_index("ix_interview_turns_student_id", "interview_turns", ["student_id"])
+
+    if not _has_table("interview_reports"):
+        op.create_table(
+            "interview_reports",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("session_id", sa.Integer(), nullable=False),
+            sa.Column("student_id", sa.Integer(), nullable=False),
+            sa.Column("overall_score", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("dimension_scores_json", sa.Text(), nullable=False),
+            sa.Column("strengths_json", sa.Text(), nullable=False),
+            sa.Column("weaknesses_json", sa.Text(), nullable=False),
+            sa.Column("suggestions_json", sa.Text(), nullable=False),
+            sa.Column("next_questions_json", sa.Text(), nullable=False),
+            sa.Column("comparison_json", sa.Text(), nullable=True),
+            sa.Column("report_text", sa.Text(), nullable=False),
+            sa.Column("training_plan_json", sa.Text(), nullable=True),
+            sa.Column("rewrite_examples_json", sa.Text(), nullable=True),
+            sa.Column("next_session_preset_json", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        )
+        op.create_index("ix_interview_reports_session_id", "interview_reports", ["session_id"])
+        op.create_index("ix_interview_reports_student_id", "interview_reports", ["student_id"])
+
+
 def upgrade():
+    _create_interview_tables_if_missing()
+
     # ── interview_sessions: 岗位画像 + 阶段状态机 ──
     if not _has_column("interview_sessions", "company_name"):
         op.add_column("interview_sessions", sa.Column("company_name", sa.String(128), nullable=True))
