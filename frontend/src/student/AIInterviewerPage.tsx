@@ -1,25 +1,31 @@
 import { Button, Input, InputNumber, Message, Select, Spin, Tag } from '@arco-design/web-react'
 import {
   IconBulb,
+  IconCheck,
   IconCheckCircle,
+  IconDelete,
   IconExclamationCircle,
-  IconLeft,
   IconPlayArrow,
   IconRefresh,
-  IconRobot,
   IconSend,
   IconSettings,
-  IconStop,
   IconThunderbolt,
   IconVideoCamera,
-  IconVoice,
 } from '@arco-design/web-react/icon'
+import type { MouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
+import aiInterviewerIcon from '../assets/interview-icons/cute-ai-interviewer.png'
+import harnessIcon from '../assets/interview-icons/cute-harness-shield.png'
+import knowledgeIcon from '../assets/interview-icons/cute-knowledge-base.png'
+import reportIcon from '../assets/interview-icons/cute-score-report.png'
+import resumeIcon from '../assets/interview-icons/cute-resume.png'
+import retryIcon from '../assets/interview-icons/cute-retry.png'
+import voiceIcon from '../assets/interview-icons/cute-voice.png'
 
 type KnowledgeStatus = {
-  root: string
+  root?: string
   document_count: number
   chunk_count: number
   retriever: string
@@ -57,7 +63,7 @@ type InterviewTurn = {
     is_vague?: boolean
     risk_points?: string[]
     positive_points?: string[]
-    llm?: { used?: boolean; model?: string | null; error?: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+    llm?: { used?: boolean; model?: string | null; error?: string; fallback_used?: boolean; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
     retrieval?: { hit_count?: number; top_sources?: string[] }
   } | null
   score?: Record<string, number> | null
@@ -199,7 +205,7 @@ const scoreLevel = (value: number) => {
   return 'weak'
 }
 
-export function AIInterviewerPage() {
+export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActiveChange?: (active: boolean) => void } = {}) {
   const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null)
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([])
   const [selectedModelId, setSelectedModelId] = useState<number | undefined>(undefined)
@@ -226,6 +232,9 @@ export function AIInterviewerPage() {
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
   const [progressElapsed, setProgressElapsed] = useState(0)
   const [collapsedHistoryDates, setCollapsedHistoryDates] = useState<Set<string>>(() => new Set())
+  const [modelError, setModelError] = useState<string | null>(null)
+  const [optimisticAnswer, setOptimisticAnswer] = useState<{ turnId: number; text: string } | null>(null)
+  const [resumePickerVisible, setResumePickerVisible] = useState(false)
   const recognitionRef = useRef<unknown>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const progressStartRef = useRef<number | null>(null)
@@ -233,6 +242,12 @@ export function AIInterviewerPage() {
   const resumeInputRef = useRef<HTMLInputElement | null>(null)
 
   const pendingTurn = useMemo(() => turns.find((turn) => !turn.answer) ?? null, [turns])
+
+  // Notify parent when interview active state changes
+  useEffect(() => {
+    onInterviewActiveChange?.(session?.status === 'active')
+  }, [session?.status, onInterviewActiveChange])
+
   const sortedDimensions = useMemo(
     () => Object.entries(report?.dimension_scores ?? {}).sort((a, b) => a[1] - b[1]),
     [report],
@@ -241,6 +256,9 @@ export function AIInterviewerPage() {
   const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
   const normalizedRoundLimit = Math.max(3, Math.min(20, Number(roundLimit) || 8))
   const promptPreview = `${selectedModel?.display_name ?? '默认模型'} · ${INTERVIEW_TYPE_META[interviewType] ?? '综合能力'} · ${INTERVIEW_STYLE_TONE[interviewStyle] ?? ''} · ${focusTags.map((tag) => FOCUS_OPTIONS.find((item) => item.value === tag)?.label ?? tag).join('、') || '默认'} · ${normalizedRoundLimit} 轮`
+  const resumeSourceLabel = resumeSource === 'upload'
+    ? (uploadedResumeName ? `本次上传：《${uploadedResumeName}》` : '本次上传简历')
+    : '选择在线简历'
   const historyGroups = useMemo(() => {
     const groups: Record<string, InterviewSession[]> = {}
     for (const item of interviewSessions) {
@@ -310,6 +328,25 @@ export function AIInterviewerPage() {
     }
   }
 
+  const deleteInterviewSession = async (event: MouseEvent, item: InterviewSession) => {
+    event.stopPropagation()
+    if (!window.confirm(`删除「${item.target_role || '未填写目标岗位'}」这条面试记录？`)) return
+    try {
+      await apiRequest(`/api/v1/student/interviews/${item.id}`, { method: 'DELETE' })
+      if (session?.id === item.id) {
+        setSession(null)
+        setTurns([])
+        setReport(null)
+        setAnswer('')
+        setConfigCollapsed(false)
+      }
+      await loadInterviewSessions()
+      Message.success('面试记录已删除')
+    } catch (error) {
+      Message.error(error instanceof Error ? error.message : '删除面试记录失败')
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     apiRequest<KnowledgeStatus>('/api/v1/student/interviews/knowledge/status')
@@ -319,9 +356,15 @@ export function AIInterviewerPage() {
       .then((list) => {
         if (cancelled) return
         setModelOptions(list)
+        setModelError(null)
         if (list.length > 0) setSelectedModelId((prev) => prev ?? list[0].id)
       })
-      .catch(() => { if (!cancelled) setModelOptions([]) })
+      .catch((err) => {
+        if (!cancelled) {
+          setModelOptions([])
+          setModelError(err instanceof Error ? err.message : '模型列表加载失败，请检查管理员模型广场配置和后端日志。')
+        }
+      })
     apiRequest<InterviewSession[]>('/api/v1/student/interviews')
       .then((list) => { if (!cancelled) setInterviewSessions(list) })
       .catch(() => { if (!cancelled) setInterviewSessions([]) })
@@ -339,6 +382,18 @@ export function AIInterviewerPage() {
   }, [turns.length, loading, report, reportProgress.length, interviewProgress.length])
 
   const startInterview = async () => {
+    if (!targetRole.trim()) {
+      Message.warning('请填写目标岗位')
+      return
+    }
+    if (!jobDescription.trim()) {
+      Message.warning('请填写岗位 JD')
+      return
+    }
+    if (modelOptions.length === 0) {
+      Message.warning('暂无可用模型，请管理员在模型广场开启「对学生开放」并配置 API Key。')
+      return
+    }
     if (resumeSource === 'upload' && !uploadedResumeText.trim()) {
       Message.warning('请先上传并解析一份简历，或切换为读取在线简历。')
       return
@@ -460,6 +515,10 @@ export function AIInterviewerPage() {
 
   const submitAnswer = async () => {
     if (!session || !pendingTurn || !answer.trim()) return
+    const currentAnswer = answer.trim()
+    // 乐观展示：立即显示用户气泡
+    setOptimisticAnswer({ turnId: pendingTurn.id, text: currentAnswer })
+    setAnswer('')
     setLoading(true)
     progressStartRef.current = null
     setProgressElapsed(0)
@@ -475,12 +534,17 @@ export function AIInterviewerPage() {
         is_finished: boolean
       }>(`/api/v1/student/interviews/${session.id}/turns`, {
         method: 'POST',
-        body: JSON.stringify({ answer: answer.trim() }),
+        body: JSON.stringify({
+          answer: currentAnswer,
+          turn_id: pendingTurn.id,
+          request_id: crypto.randomUUID(),
+        }),
       })
       setTurns((prev) => {
         const updated = prev.map((turn) => (turn.id === res.current_turn.id ? res.current_turn : turn))
         return res.next_turn ? [...updated, res.next_turn] : updated
       })
+      setOptimisticAnswer(null)
       setAnswer('')
       if (res.is_finished) {
         setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
@@ -488,6 +552,8 @@ export function AIInterviewerPage() {
       }
       await loadInterviewSessions()
     } catch (error) {
+      setOptimisticAnswer(null)
+      setAnswer(currentAnswer) // 恢复答案，允许重试
       Message.error(error instanceof Error ? error.message : '提交回答失败')
     } finally {
       if (progressTimerRef.current) {
@@ -538,28 +604,20 @@ export function AIInterviewerPage() {
   return (
     <main className={`interview-page${configCollapsed ? ' interview-page--immersive' : ''}`}>
       <section className="interview-config-panel">
-        <div className="interview-brand">
-          <div className="interview-avatar"><IconRobot /></div>
-          <div>
-            <h3>AI 面试官</h3>
-            <p>Model 负责追问与评分，Harness 负责流程、证据、边界和复盘。</p>
-          </div>
-        </div>
-
         <div className="interview-mode-strip">
           <button type="button" className="interview-mode-card active">
-            <IconVoice />
+            <img className="interview-inline-icon" src={voiceIcon} alt="" aria-hidden="true" />
             <span>文字面试</span>
             <small>当前可用</small>
           </button>
-          <button type="button" className="interview-mode-card" disabled>
+          <button type="button" className="interview-mode-card" disabled title="语音面试需要服务端 ASR 和 TTS 支持，暂未上线">
             <IconVideoCamera />
-            <span>通话面试</span>
-            <small>预留 RTC / 数字人</small>
+            <span>语音面试：暂未上线</span>
+            <small>暂未上线</small>
           </button>
         </div>
 
-        <label className="interview-field">
+        <div className="interview-field">
           <span>大模型</span>
           <Select
             value={selectedModelId ? String(selectedModelId) : undefined}
@@ -572,75 +630,90 @@ export function AIInterviewerPage() {
               <Select.Option key={m.id} value={String(m.id)}>{`${m.display_name} · ${m.model_identifier}`}</Select.Option>
             ))}
           </Select>
-        </label>
+          {modelError && <small className="interview-warning-text">{modelError}</small>}
+          {modelOptions.length === 0 && !modelError && (
+            <small className="interview-warning-text">暂无对学生开放的模型，请管理员在模型广场开启「对学生开放」并配置 API Key。</small>
+          )}
+        </div>
 
-        <label className="interview-field">
-          <span>目标岗位</span>
+        <div className="interview-field">
+          <span>目标岗位 <em className="interview-field-required">*</em></span>
           <Input value={targetRole} onChange={setTargetRole} disabled={session?.status === 'active'} placeholder="Java 后端开发工程师 / 产品经理 / 算法实习生" />
-        </label>
+        </div>
 
-        <label className="interview-field">
-          <span>岗位 JD</span>
-          <Input.TextArea value={jobDescription} onChange={setJobDescription} autoSize={{ minRows: 4, maxRows: 8 }} disabled={session?.status === 'active'} placeholder="粘贴目标岗位要求、职责描述、技术栈或公司招聘 JD。留空时会按目标岗位做通用模拟。" />
-        </label>
+        <div className="interview-field">
+          <span>岗位 JD <em className="interview-field-required">*</em></span>
+          <Input.TextArea value={jobDescription} onChange={setJobDescription} autoSize={{ minRows: 4, maxRows: 8 }} disabled={session?.status === 'active'} placeholder="粘贴目标岗位要求、职责描述、技术栈或公司招聘 JD。" />
+        </div>
 
         <div className="interview-resume-source">
           <span>简历来源</span>
-          <div className="interview-resume-cards">
+          <div className="interview-resume-picker">
             <button
               type="button"
-              className={`interview-resume-card${resumeSource === 'online' ? ' active' : ''}`}
+              className={`attachment-chip interview-resume-select${resumePickerVisible ? ' active' : ''}`}
               disabled={session?.status === 'active'}
-              onClick={() => setResumeSource('online')}
+              onClick={() => setResumePickerVisible((visible) => !visible)}
             >
-              <span className="interview-resume-card-radio" />
-              <div className="interview-resume-card-body">
-                <strong>智能体可读取简历</strong>
-                <small>读取「简历制作」中勾选了「智能体可读取」的简历</small>
-              </div>
-              <span className="interview-resume-card-badge">在线</span>
+              <img className="interview-inline-icon" src={resumeIcon} alt="" aria-hidden="true" />
+              <span>{resumeSourceLabel}</span>
             </button>
-            <button
-              type="button"
-              className={`interview-resume-card${resumeSource === 'upload' ? ' active' : ''}`}
-              disabled={session?.status === 'active'}
-              onClick={() => setResumeSource('upload')}
-            >
-              <span className="interview-resume-card-radio" />
-              <div className="interview-resume-card-body">
-                <strong>本次上传简历</strong>
-                <small>{uploadedResumeName || '支持 PDF / DOCX / TXT / MD'}</small>
+            {resumePickerVisible && (
+              <div className="composer-settings-menu interview-resume-menu" onClick={(event) => event.stopPropagation()}>
+                <div className="composer-settings-heading">
+                  <img className="interview-inline-icon interview-inline-icon--sm" src={resumeIcon} alt="" aria-hidden="true" />
+                  <span>选择简历来源</span>
+                </div>
+                <div className="composer-settings-options">
+                  <button
+                    type="button"
+                    className={`composer-settings-option${resumeSource === 'online' ? ' selected' : ''}`}
+                    onClick={() => {
+                      setResumeSource('online')
+                      setResumePickerVisible(false)
+                    }}
+                  >
+                    <span>在线简历</span>
+                    {resumeSource === 'online' && <IconCheck />}
+                  </button>
+                  <button
+                    type="button"
+                    className={`composer-settings-option${resumeSource === 'upload' ? ' selected' : ''}`}
+                    onClick={() => {
+                      setResumeSource('upload')
+                      setResumePickerVisible(false)
+                    }}
+                  >
+                    <span>{uploadedResumeName || '本次上传简历'}</span>
+                    {resumeSource === 'upload' && <IconCheck />}
+                  </button>
+                </div>
+                <div className="composer-settings-divider" />
+                <Button
+                  icon={<IconRefresh />}
+                  loading={uploadingResume}
+                  disabled={session?.status === 'active'}
+                  onClick={() => resumeInputRef.current?.click()}
+                  long
+                >
+                  上传并读取简历
+                </Button>
               </div>
-              {uploadedResumeText && (
-                <span className="interview-resume-card-badge success">
-                  已解析
-                </span>
-              )}
-            </button>
+            )}
           </div>
-          {resumeSource === 'upload' && (
-            <div className="interview-upload-row">
-              <Button
-                icon={<IconRefresh />}
-                loading={uploadingResume}
-                disabled={session?.status === 'active'}
-                onClick={() => resumeInputRef.current?.click()}
-              >
-                上传并读取简历
-              </Button>
-              <input
-                ref={resumeInputRef}
-                type="file"
-                hidden
-                accept=".pdf,.docx,.txt,.md"
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  event.target.value = ''
-                  if (file) void handleResumeUpload(file)
-                }}
-              />
-              {uploadedResumeText && <Tag color="green">已解析约 {uploadedResumeText.length.toLocaleString()} 字符</Tag>}
-            </div>
+          <input
+            ref={resumeInputRef}
+            type="file"
+            hidden
+            accept=".pdf,.docx,.txt,.md"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (file) void handleResumeUpload(file)
+            }}
+          />
+          {resumeSource === 'upload' && uploadedResumeText && (
+            <Tag color="green">已解析约 {uploadedResumeText.length.toLocaleString()} 字符</Tag>
           )}
           <p className="interview-field-hint">
             在线简历会优先读取「简历制作」中勾选了「智能体可读取」的简历；未勾选时回退到最新保存版本。选择上传时，仅使用本次解析出的简历文本。
@@ -648,13 +721,13 @@ export function AIInterviewerPage() {
         </div>
 
         <div className="interview-field-row">
-          <label className="interview-field">
+          <div className="interview-field">
             <span>面试类型</span>
             <Select value={interviewType} onChange={setInterviewType} disabled={session?.status === 'active'} style={{ width: '100%' }}>
               {INTERVIEW_TYPE_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
             </Select>
-          </label>
-          <label className="interview-field">
+          </div>
+          <div className="interview-field">
             <span>轮次</span>
             <InputNumber
               value={Number(roundLimit) || 8}
@@ -666,10 +739,10 @@ export function AIInterviewerPage() {
               onChange={(value) => setRoundLimit(String(value ?? 8))}
             />
             {normalizedRoundLimit < 8 && <small className="interview-warning-text">少于 8 轮时，综合评分报告可能不够准确。</small>}
-          </label>
+          </div>
         </div>
 
-        <label className="interview-field">
+        <div className="interview-field">
           <span>面试风格</span>
           <Select value={interviewStyle} onChange={setInterviewStyle} disabled={session?.status === 'active'} style={{ width: '100%' }}>
             <Select.Option value="strict">严格追问</Select.Option>
@@ -678,117 +751,127 @@ export function AIInterviewerPage() {
             <Select.Option value="coach">教练式引导</Select.Option>
             <Select.Option value="executive">高管式审视</Select.Option>
           </Select>
-        </label>
+        </div>
 
-        <label className="interview-field">
+        <div className="interview-field">
           <span>面试重点（可多选）</span>
           <Select mode="multiple" value={focusTags} onChange={setFocusTags} disabled={session?.status === 'active'} placeholder="选择你希望重点练习的方向" style={{ width: '100%' }}>
             {FOCUS_OPTIONS.map((o) => <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>)}
           </Select>
-        </label>
-
-        <label className="interview-field">
-          <span>自定义追问要求</span>
-          <Input.TextArea value={customInstruction} onChange={setCustomInstruction} autoSize={{ minRows: 2, maxRows: 5 }} disabled={session?.status === 'active'} placeholder="例如：多问数据库事务；少问八股；每轮都要追问量化结果。" />
-        </label>
-
-        <div className="interview-prompt-preview">
-          <div>
-            <strong>当前提示词策略</strong>
-            <p>{promptPreview}</p>
-          </div>
-          <Tag color={interviewStyle === 'friendly' ? 'green' : interviewStyle === 'stress' ? 'red' : 'blue'}>
-            {INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}
-          </Tag>
         </div>
-
-        <div className="interview-harness-card">
-          <div className="interview-harness-title">
-            <IconSettings />
-            <strong>面试 Harness</strong>
-          </div>
-          <div className="interview-harness-steps">
-            <span>开场</span>
-            <span>简历深挖</span>
-            <span>岗位题</span>
-            <span>反问</span>
-            <span>复盘</span>
-          </div>
-          <p>一次只问一个问题，回答越空泛，追问越具体；报告优先指出最低分维度。</p>
-        </div>
-
-        <div className="knowledge-status">
-          <div>
-            <strong>RAG 知识库</strong>
-            <p>{knowledge ? `${knowledge.document_count} 个文档，${knowledge.chunk_count} 个知识块` : '正在检查知识库'}</p>
-          </div>
-          <Tag color={knowledge?.vector_ready ? 'green' : 'orange'}>{knowledge?.retriever ?? 'checking'}</Tag>
-        </div>
-
-        <Button icon={<IconRefresh />} onClick={reloadKnowledge} long style={{ marginBottom: 12 }}>
-          重新索引知识库
-        </Button>
 
         <Button type="primary" icon={session?.status === 'active' ? <IconRefresh /> : <IconPlayArrow />} loading={loading && !pendingTurn} onClick={startInterview} long>
           {session?.status === 'active' ? '重新开始一场' : '开始面试'}
         </Button>
 
-        <div className="interview-history-panel">
-          <div className="interview-history-head">
-            <strong>面试记录</strong>
-            <button type="button" onClick={() => void loadInterviewSessions()}>刷新</button>
-          </div>
-          {historyGroups.length === 0 ? (
-            <p className="interview-history-empty">暂无历史面试</p>
-          ) : (
-            historyGroups.map(([date, items]) => (
-              <div key={date} className="interview-history-day">
-                <button type="button" className="interview-history-date" onClick={() => toggleHistoryDate(date)}>
-                  <span>{collapsedHistoryDates.has(date) ? '›' : '⌄'}</span>
-                  <strong>{date}</strong>
-                  <small>{items.length}</small>
-                </button>
-                {!collapsedHistoryDates.has(date) && items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`interview-history-item${session?.id === item.id ? ' active' : ''}`}
-                      onClick={() => void loadInterviewDetail(item.id)}
-                    >
-                      <b>{formatTimeLabel(item.created_at)}</b>
-                      <em>{item.target_role || '未填写目标岗位'}</em>
-                      <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.round_limit} 轮</small>
-                    </button>
-                  ))}
+        <details className="interview-advanced-settings">
+          <summary>
+            <IconSettings />
+            <span>高级设置</span>
+            <small>追问要求、策略、知识库与记录</small>
+          </summary>
+          <div className="interview-advanced-body">
+            <div className="interview-field">
+              <span>自定义追问要求</span>
+              <Input.TextArea value={customInstruction} onChange={setCustomInstruction} autoSize={{ minRows: 2, maxRows: 5 }} disabled={session?.status === 'active'} placeholder="例如：多问数据库事务；少问八股；每轮都要追问量化结果。" />
+            </div>
+
+            <div className="interview-prompt-preview">
+              <div>
+                <strong>当前提示词策略</strong>
+                <p>{promptPreview}</p>
               </div>
-            ))
-          )}
-        </div>
+              <Tag color={interviewStyle === 'friendly' ? 'green' : interviewStyle === 'stress' ? 'red' : 'blue'}>
+                {INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}
+              </Tag>
+            </div>
+
+            <div className="interview-harness-card">
+              <div className="interview-harness-title">
+                <img className="interview-card-icon" src={harnessIcon} alt="" aria-hidden="true" />
+                <strong>面试 Harness</strong>
+              </div>
+              <div className="interview-harness-steps">
+                <span>开场</span>
+                <span>简历深挖</span>
+                <span>岗位题</span>
+                <span>反问</span>
+                <span>复盘</span>
+              </div>
+              <p>一次只问一个问题，回答越空泛，追问越具体；报告优先指出最低分维度。</p>
+            </div>
+
+            <div className="knowledge-status">
+              <img className="interview-card-icon" src={knowledgeIcon} alt="" aria-hidden="true" />
+              <div>
+                <strong>RAG 知识库</strong>
+                <p>{knowledge ? `${knowledge.document_count} 个文档，${knowledge.chunk_count} 个知识块` : '正在检查知识库'}</p>
+              </div>
+              <Tag color={knowledge?.vector_ready ? 'green' : 'orange'}>{knowledge?.retriever ?? 'checking'}</Tag>
+            </div>
+
+            <Button icon={<IconRefresh />} onClick={reloadKnowledge} long style={{ marginBottom: 12 }}>
+              重新索引知识库
+            </Button>
+
+            <div className="interview-history-panel">
+              <div className="interview-history-head">
+                <strong>面试记录</strong>
+                <button type="button" onClick={() => void loadInterviewSessions()}>刷新</button>
+              </div>
+              {historyGroups.length === 0 ? (
+                <p className="interview-history-empty">暂无历史面试</p>
+              ) : (
+                historyGroups.map(([date, items]) => (
+                  <div key={date} className="interview-history-day">
+                    <button type="button" className="interview-history-date" onClick={() => toggleHistoryDate(date)}>
+                      <span>{collapsedHistoryDates.has(date) ? '›' : '⌄'}</span>
+                      <strong>{date}</strong>
+                      <small>{items.length}</small>
+                    </button>
+                    {!collapsedHistoryDates.has(date) && items.map((item) => (
+                      <div key={item.id} className="interview-history-item-wrap">
+                        <button
+                          type="button"
+                          className={`interview-history-item${session?.id === item.id ? ' active' : ''}`}
+                          onClick={() => void loadInterviewDetail(item.id)}
+                        >
+                          <b>{formatTimeLabel(item.created_at)}</b>
+                          <em>{item.target_role || '未填写目标岗位'}</em>
+                          <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.round_limit} 轮</small>
+                        </button>
+                        <button
+                          type="button"
+                          className="interview-history-delete"
+                          aria-label="删除面试记录"
+                          title="删除面试记录"
+                          onClick={(event) => void deleteInterviewSession(event, item)}
+                        >
+                          <IconDelete />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </details>
       </section>
 
       <section className="interview-room">
         <div className="interview-room-header">
-          {configCollapsed && (
-            <Button className="interview-config-toggle" icon={<IconLeft />} onClick={() => setConfigCollapsed(false)}>
-              设置
-            </Button>
-          )}
           <div>
             <h2>{session ? session.target_role : '准备进入面试房间'}</h2>
             <p>{session ? `${formatDateLabel(session.created_at)} ${formatTimeLabel(session.created_at)} · 第 ${turns.length}/${session.round_limit} 轮 · ${session.status === 'active' ? '面试中' : '已结束'}` : '选择岗位、模型和风格后进入沉浸式训练。Enter 发送，Shift + Enter 换行。'}</p>
           </div>
-          {session?.status === 'active' && (
-            <Button icon={<IconStop />} onClick={() => loadReport()} disabled={loading}>
-              结束并生成报告
-            </Button>
-          )}
         </div>
 
         <div className="interview-dialogue">
           {turns.length === 0 && (
             <div className="interview-empty">
               <div className="interview-empty-orbit">
-                <IconRobot />
+                <img src={aiInterviewerIcon} alt="" aria-hidden="true" />
               </div>
               <h3>面试官已就位</h3>
               <p>从岗位目标开始，系统会按“证据、细节、指标、取舍”逐步追问。</p>
@@ -827,14 +910,22 @@ export function AIInterviewerPage() {
                   </div>
                 )}
               </div>
-              {turn.answer && (
+              {((turn.answer) || (optimisticAnswer && optimisticAnswer.turnId === turn.id)) && (
                 <div className="interview-message candidate">
                   <div className="bubble-title">我的回答</div>
-                  <div className="bubble-content"><MarkdownMessage content={turn.answer} /></div>
+                  <div className="bubble-content"><MarkdownMessage content={turn.answer || (optimisticAnswer?.text ?? '')} /></div>
+                  {optimisticAnswer && optimisticAnswer.turnId === turn.id && !turn.answer && (
+                    <small style={{ color: '#86909c' }}>提交中…</small>
+                  )}
                 </div>
               )}
               {turn.answer_assessment && (
                 <div className="interview-feedback">
+                  {turn.answer_assessment.llm?.fallback_used && (
+                    <div className="interview-feedback-section" style={{ background: '#fff7e6', borderLeft: '3px solid #faad14', padding: '8px 12px', marginBottom: 8, borderRadius: 4 }}>
+                      <span style={{ color: '#d46b08', fontWeight: 500 }}>⚠ 本轮模型服务不稳定，系统已使用保守追问策略。</span>
+                    </div>
+                  )}
                   <div className="interview-feedback-section">
                     <strong>本轮反馈</strong>
                     <p>{turn.answer_assessment.summary}</p>
@@ -895,12 +986,24 @@ export function AIInterviewerPage() {
               autoSize={{ minRows: 3, maxRows: 8 }}
               disabled={loading}
             />
-            <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
-              提交回答
-            </Button>
-            <Button className={listening ? 'voice-button voice-button--active' : 'voice-button'} icon={<IconVoice />} disabled={loading} onClick={toggleVoiceInput}>
-              {listening ? '停止语音' : '语音接入'}
-            </Button>
+            <div className="interview-answer-actions">
+              <div className="interview-answer-actions-row">
+                <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
+                  提交回答
+                </Button>
+                <Button className={listening ? 'voice-button voice-button--active' : 'voice-button'} icon={<img className="interview-button-icon" src={voiceIcon} alt="" aria-hidden="true" />} disabled={loading} onClick={toggleVoiceInput}>
+                  {listening ? '停止语音输入' : '语音输入辅助'}
+                </Button>
+              </div>
+              <div className="interview-answer-actions-row">
+                <Button icon={<img className="interview-button-icon" src={retryIcon} alt="" aria-hidden="true" />} onClick={() => setConfigCollapsed((collapsed) => !collapsed)}>
+                  {configCollapsed ? '再试一次' : '隐藏设置'}
+                </Button>
+                <Button icon={<img className="interview-button-icon" src={reportIcon} alt="" aria-hidden="true" />} onClick={() => loadReport()} disabled={loading}>
+                  结束并生成报告
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 

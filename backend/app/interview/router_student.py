@@ -10,10 +10,13 @@ from app.interview.schemas import InterviewStartRequest, InterviewTurnRequest
 from app.interview.service import (
     delete_interview,
     delete_report,
+    export_interview_report,
     generate_report,
     get_interview_detail,
+    get_report,
     knowledge_status,
     list_interviews,
+    reload_knowledge_status,
     serialize_report,
     start_interview,
     submit_turn,
@@ -23,9 +26,17 @@ from app.interview.service import (
 router = APIRouter(prefix="/student/interviews", tags=["student-interviews"])
 
 
+# ── Interview CRUD ────────────────────────────────────────────────────────────
+
+
 @router.get("/knowledge/status")
 def get_knowledge_status(current=Depends(require_role("student"))):
     return ok(knowledge_status())
+
+
+@router.post("/knowledge/reload")
+def reload_knowledge(current=Depends(require_role("student"))):
+    return ok(reload_knowledge_status())
 
 
 @router.post("/resume/extract")
@@ -76,6 +87,17 @@ def remove_interview(
     return ok({"deleted": True})
 
 
+@router.get("/{session_id}/export")
+def export_interview(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """Export full interview report as JSON."""
+    identity, _ = current
+    return ok(export_interview_report(db, identity, session_id))
+
+
 @router.post("/{session_id}/turns")
 def answer_turn(
     session_id: int,
@@ -84,7 +106,11 @@ def answer_turn(
     current=Depends(require_role("student")),
 ):
     identity, _ = current
-    return ok(submit_turn(db, identity, session_id, payload.answer))
+    return ok(submit_turn(
+        db, identity, session_id, payload.answer,
+        request_id=payload.request_id,
+        turn_id=payload.turn_id,
+    ))
 
 
 @router.post("/{session_id}/finish")
@@ -99,14 +125,13 @@ def finish_interview(
 
 
 @router.get("/{session_id}/report")
-def get_report(
+def get_report_endpoint(
     session_id: int,
     db: Session = Depends(get_db),
     current=Depends(require_role("student")),
 ):
     identity, _ = current
-    report = generate_report(db, identity, session_id)
-    return ok(serialize_report(report))
+    return ok(get_report(db, identity, session_id))
 
 
 @router.post("/{session_id}/report/regenerate")
@@ -119,3 +144,14 @@ def regenerate_report(
     delete_report(db, identity, session_id)
     report = generate_report(db, identity, session_id)
     return ok(serialize_report(report))
+
+
+@router.post("/{session_id}/report/delete")
+def delete_report_endpoint(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    delete_report(db, identity, session_id)
+    return ok({"deleted": True})

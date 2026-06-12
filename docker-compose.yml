@@ -73,6 +73,7 @@
       - "8000:8000"
     volumes:
       - skill-data:/app/data
+      - "D:/Ai Agent/Knowledge Base:/app/knowledge-base:ro"
     healthcheck:
       test:
         [
