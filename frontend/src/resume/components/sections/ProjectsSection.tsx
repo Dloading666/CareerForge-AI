@@ -2,6 +2,7 @@ import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
 import { useResumeEditor } from '../../useResumeEditor'
+import { FieldAiAssist } from '../FieldAiAssist'
 import { RichTextEditor } from '../RichTextEditor'
 
 export function ProjectsSection() {
@@ -41,13 +42,23 @@ export function ProjectsSection() {
               <Input value={item.linkLabel} onChange={(value) => updateProject(item.id, { linkLabel: value })} placeholder="如 在线访问" />
             </Form.Item>
             <Form.Item label="项目亮点">
-              <RichTextEditor
+              <FieldAiAssist
+                section="project"
                 value={item.description ?? ""}
-                onChange={(value) => updateProject(item.id, { description: value })}
+                onApply={(value) => updateProject(item.id, { description: value })}
+                applyLabel="应用到本条项目"
+              >
+                {(trigger) => (
+                  <RichTextEditor
+                    value={item.description ?? ""}
+                    onChange={(value) => updateProject(item.id, { description: value })}
                 placeholder="每行一条，保存后会按魔方简历的列表结构写入"
                 minRows={5}
-              />
-            </Form.Item>
+                                  onAiAssist={trigger}
+                  />
+                )}
+              </FieldAiAssist>
+</Form.Item>
             <Form.Item label="显示在简历中">
               <Switch checked={item.visible} onChange={(checked) => updateProject(item.id, { visible: checked })} />
             </Form.Item>

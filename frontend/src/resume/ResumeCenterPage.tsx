@@ -1,11 +1,11 @@
-import { Button, Empty, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
-import { IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
+import { Button, Empty, Input, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
+import { IconCopy, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
 import { ApiError } from '../shared/api'
-import { deleteResume, downloadResumePdf, getResume, importResumeFile, listResumes, updateResume } from './api'
+import { deleteResume, downloadResumePdf, duplicateResume, getResume, importResumeFile, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { ResumeTemplatePreview } from './templates/registry'
 import { TEMPLATE_REGISTRY } from './templates/registry'
@@ -28,6 +28,7 @@ export function ResumeCenterPage() {
     () => new URLSearchParams(window.location.search).get('import') === '1',
   )
   const [importing, setImporting] = useState(false)
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
 
   const mode = searchParams.get('mode')
 
@@ -118,6 +119,19 @@ export function ResumeCenterPage() {
   const zoomOut = () => setPreviewScale((s) => Math.max(0.2, +(s - 0.1).toFixed(3)))
   const zoomReset = () => setPreviewScale(fitScaleRef.current)
 
+  const handleDuplicate = async (resumeId: number) => {
+    setBusyId(resumeId)
+    try {
+      await duplicateResume(resumeId)
+      Message.success('已复制副本')
+      await refresh()
+    } catch {
+      Message.error('复制失败')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const handleDelete = async (resumeId: number) => {
     setBusyId(resumeId)
     try {
@@ -126,6 +140,26 @@ export function ResumeCenterPage() {
       await refresh()
     } catch {
       Message.error('删除失败')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleInlineTitleSave = async (resumeId: number, newTitle: string) => {
+    const trimmed = newTitle.trim()
+    if (!trimmed) {
+      Message.warning('标题不能为空')
+      return
+    }
+    const detail = resumeDataMap[resumeId]
+    if (!detail || detail.title === trimmed) return
+    setBusyId(resumeId)
+    try {
+      await updateResume({ ...detail, title: trimmed })
+      Message.success('已重命名')
+      await refresh()
+    } catch {
+      Message.error('重命名失败')
     } finally {
       setBusyId(null)
     }
@@ -316,7 +350,24 @@ export function ResumeCenterPage() {
                 </div>
                 <div className="resume-card-item-head">
                   <div>
-                    <h3>{resume.title}</h3>
+                    {editingTitleId === resume.id ? (
+                    <Input
+                      autoFocus
+                      size="small"
+                      defaultValue={resume.title}
+                      onBlur={(e) => { setEditingTitleId(null); void handleInlineTitleSave(resume.id, e.target.value) }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { (e.target as HTMLInputElement).blur() } else if (e.key === "Escape") { setEditingTitleId(null) } }}
+                      style={{ width: 200 }}
+                    />
+                  ) : (
+                    <h3
+                      onDoubleClick={() => setEditingTitleId(resume.id)}
+                      title="双击重命名"
+                      style={{ cursor: "text", margin: 0 }}
+                    >
+                      {resume.title}
+                    </h3>
+                  )}
                     <p>
                       <Tag color="arcoblue">{TEMPLATE_LABELS[resume.templateId]}</Tag>
                       <span>更新于 {new Date(resume.updatedAt).toLocaleDateString('zh-CN')}</span>
@@ -330,6 +381,14 @@ export function ResumeCenterPage() {
                 <div className="resume-card-item-footer">
                   <Button icon={<IconEdit />} onClick={() => navigate(`/student/resumes/${resume.id}`)}>
                     编辑
+                  </Button>
+                  <Button
+                    icon={<IconCopy />}
+                    onClick={() => void handleDuplicate(resume.id)}
+                    loading={busyId === resume.id}
+                    title="复制为新简历"
+                  >
+                    复制
                   </Button>
                   <Button
                     icon={<IconDownload />}

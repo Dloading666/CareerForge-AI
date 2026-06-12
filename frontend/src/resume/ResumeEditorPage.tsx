@@ -1,5 +1,5 @@
 import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
-import { IconArrowLeft, IconExport, IconSave, IconSelectAll } from '@arco-design/web-react/icon'
+import { IconArrowLeft, IconExport, IconSave, IconSelectAll, IconStar } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
@@ -11,6 +11,7 @@ import { createResume, getResume, updateResume } from './api'
 import { EditPanel } from './components/EditPanel'
 import { PreviewPanel } from './components/PreviewPanel'
 import { SidePanel } from './components/SectionNav'
+import { AiAssistPanel, type AiAssistSection } from './components/AiAssistPanel'
 import { TemplatePicker } from './components/TemplatePicker'
 import { ApiError } from '../shared/api'
 import type { TemplateId } from './types'
@@ -54,11 +55,17 @@ function ResumeEditorInner() {
     resume,
     dirty,
     saveStatus,
+    activeSection,
     setResume,
     setActiveSection,
     updateTitle,
     setTemplateId,
     setVisibility,
+    updateExperience,
+    updateProject,
+    updateEducation,
+    setSkillContent,
+    setSelfEvaluationContent,
     markSaving,
     markSaved,
     markError,
@@ -176,7 +183,34 @@ function ResumeEditorInner() {
 
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
-  const [exportMessage, setExportMessage] = useState('正在生成 PDF…')
+  const [aiAssistOpen, setAiAssistOpen] = useState(false)
+    const [exportMessage, setExportMessage] = useState('generating')
+  // Auto-pick target field for toolbar AI assist based on active section
+  const aiAssistConfig: { section: AiAssistSection; value: string; onApply: (v: string) => void } | null = (() => {
+    if (!resume) return null
+    const section = String(activeSection)
+    if (section === "skills") {
+      return { section: "skill", value: resume.skillContent, onApply: (v: string) => setSkillContent(v) }
+    }
+    if (section === "selfEvaluation") {
+      return { section: "selfEvaluation", value: resume.selfEvaluationContent, onApply: (v: string) => setSelfEvaluationContent(v) }
+    }
+    const list = (section === "experience" ? resume.experience : section === "projects" ? resume.projects : section === "education" ? resume.education : null)
+    if (list && list.length > 0) {
+      const first = list[0]
+      const value = ((first as any).details ?? (first as any).description ?? "") as string
+      const sectionKey = (section === "experience" ? "experience" : section === "projects" ? "project" : "education") as AiAssistSection
+      const fieldKey = section === "experience" ? "details" : "description"
+      const update = section === "experience" ? updateExperience : section === "projects" ? updateProject : updateEducation
+      return { section: sectionKey, value, onApply: (v: string) => update(first.id, { [fieldKey]: v } as any) }
+    }
+    return null
+  })()
+
+  const handleAiAssistApply = (text: string) => {
+    if (aiAssistConfig) aiAssistConfig.onApply(text)
+  }
+('正在生成 PDF...')
 
   const handleExport = async () => {
     const node = previewRef.current?.querySelector('[data-resume-print-root]')
@@ -299,6 +333,8 @@ function ResumeEditorInner() {
           </label>
           <span className="wb-header-divider" />
           <Button size="small" icon={<IconSelectAll />} onClick={() => setTemplatePickerVisible(true)}>切换模板</Button>
+          <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
+                    <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
           <Button size="small" icon={<IconExport />} onClick={handleExport}>导出 PDF</Button>
           <Button size="small" type="primary" icon={<IconSave />} onClick={() => void handleSaveNow()}>保存</Button>
         </div>
@@ -370,6 +406,16 @@ function ResumeEditorInner() {
           </div>
           <div className="resume-export-modal-percent">{exportProgress}%</div>
         </div>
+      <AiAssistPanel
+        visible={aiAssistOpen && !!aiAssistConfig}
+        onClose={() => setAiAssistOpen(false)}
+        section={(aiAssistConfig?.section ?? "skill") as AiAssistSection}
+        currentText={aiAssistConfig?.value ?? ""}
+        resumeId={resume.id}
+        onApply={handleAiAssistApply}
+        applyLabel="搴旂敤鍒板綋鍓嶅瓧娈?"
+      />
+
       </Modal>
     </div>
   )
@@ -382,3 +428,4 @@ export function ResumeEditorPage() {
     </ResumeEditorProvider>
   )
 }
+

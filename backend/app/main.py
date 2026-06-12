@@ -38,6 +38,7 @@ from app.student.feedback_router import router as feedback_router
 from app.admin.feedback_router import router as admin_feedback_router
 from app.student.attachment_router import router as attachment_router
 from app.student.resume_router import router as resume_router
+from app.student.ai_assist_router import router as resume_ai_router
 from app.interview import models as interview_models  # noqa: F401
 from app.interview.router_student import router as interview_router
 

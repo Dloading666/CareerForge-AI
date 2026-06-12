@@ -2,6 +2,7 @@ import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
 import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 
 import { useResumeEditor } from '../../useResumeEditor'
+import { FieldAiAssist } from '../FieldAiAssist'
 import { RichTextEditor } from '../RichTextEditor'
 
 export function EducationSection() {
@@ -55,13 +56,23 @@ export function EducationSection() {
               <Input value={item.gpa} onChange={(value) => updateEducation(item.id, { gpa: value })} />
             </Form.Item>
             <Form.Item label="亮点描述">
-              <RichTextEditor
-                value={item.description ?? ''}
-                onChange={(value) => updateEducation(item.id, { description: value })}
+              <FieldAiAssist
+                section="education"
+                value={item.description ?? ""}
+                onApply={(value) => updateEducation(item.id, { description: value })}
+                applyLabel="应用到本条教育经历"
+              >
+                {(trigger) => (
+                  <RichTextEditor
+                    value={item.description ?? ""}
+                    onChange={(value) => updateEducation(item.id, { description: value })}
                 placeholder="每行一条，保存后会按魔方简历的列表结构写入"
                 minRows={4}
-              />
-            </Form.Item>
+                                  onAiAssist={trigger}
+                  />
+                )}
+              </FieldAiAssist>
+</Form.Item>
             <Form.Item label="显示在简历中">
               <Switch checked={item.visible} onChange={(checked) => updateEducation(item.id, { visible: checked })} />
             </Form.Item>

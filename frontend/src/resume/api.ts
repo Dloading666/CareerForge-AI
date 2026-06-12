@@ -112,6 +112,24 @@ export async function downloadResumePdf(resumeId: number, filename: string) {
 }
 
 
+export async function duplicateResume(resumeId: number) {
+  return apiRequest<ResumeData>(`/api/v1/student/resumes/${resumeId}/duplicate`, { method: 'POST' })
+}
+
+export type AiAssistSection = 'experience' | 'project' | 'education' | 'skill' | 'selfEvaluation' | 'summary'
+
+export type AiAssistResult = { suggested: string; model: string; instruction: string }
+
+export async function aiAssistResumeField(
+  resumeId: number,
+  payload: { section: AiAssistSection; instruction: string; currentText: string; jdText?: string },
+) {
+  return apiRequest<AiAssistResult>(`/api/v1/student/resumes/${resumeId}/ai-assist`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getResumeThumbnailUrl(resumeId: number): string {
   const base = '/api/v1/student/resumes/' + resumeId + '/thumbnail'
   if (typeof window === "undefined") return base

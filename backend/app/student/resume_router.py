@@ -1041,6 +1041,42 @@ def delete_resume(
     return ok({"id": resume_id}, msg="deleted")
 
 
+
+
+@router.post("/{resume_id}/duplicate", status_code=201)
+def duplicate_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    identity, _ = current
+    _ensure_resume_limit(db, identity.user_id, identity.tenant_id)
+    source = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
+    try:
+        source_doc = json.loads(source.data_json or "{}")
+    except Exception:
+        source_doc = {}
+    new_title = ((source.title or "简历").strip()[:120] + " - 副本")
+    new_doc = _clean_resume_document(
+        dict(source_doc),
+        title=new_title,
+        template_id=source.template_id,
+        visibility=False,
+    )
+    new_doc["title"] = new_title
+    new_doc["visibility"] = False
+    row = StudentResume(
+        tenant_id=identity.tenant_id,
+        student_id=identity.user_id,
+        title=new_title,
+        template_id=source.template_id,
+        visibility=False,
+        data_json=json.dumps(new_doc, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return ok(_serialize_detail(row).model_dump(mode="json"), msg="duplicated")
 @router.get("/{resume_id}/export-pdf")
 def export_resume_pdf(
     resume_id: int,
