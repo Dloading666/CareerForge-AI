@@ -10,18 +10,45 @@ from typing import Any
 from fastapi import HTTPException, status
 from fastapi import UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.admin.models import ModelConfig
 from app.auth.service import AuthIdentity
 from app.core.llm_client import chat_completion
-from app.interview.knowledge import get_knowledge_index
+from app.interview.exceptions import (
+    InterviewError,
+    InterviewLLMError,
+    InterviewNoPendingQuestionError,
+    InterviewNotActiveError,
+    InterviewNotFoundError,
+    InterviewReportExistsError,
+    InterviewReportGenerationError,
+)
+from app.interview.harness import (
+    SCORE_KEYS,
+    _filter_evidence_quotes,
+    _strict_bool,
+    build_fallback_report,
+    harness_should_finish_interview,
+    run_harnessed_json_generation,
+    validate_followup_output,
+    validate_report_output,
+    validate_start_output,
+)
+from app.interview.knowledge import get_knowledge_index, reload_knowledge_index
 from app.interview.models import InterviewReport, InterviewSession, InterviewTurn
 from app.interview.prompts import (
+    EXTRACTED_JOB_PROMPT,
     FOLLOWUP_USER_PROMPT,
+    INTERVIEW_FOLLOWUP_SUBPROMPT,
+    INTERVIEW_REPORT_SCORING_RUBRIC,
+    INTERVIEW_REPORT_SUBPROMPT,
+    INTERVIEW_START_SUBPROMPT,
     INTERVIEW_STYLE_CONFIG,
     INTERVIEW_SYSTEM_PROMPT,
     INTERVIEW_TYPE_CONFIG,
+    QUALITY_FEEDBACK_PROMPT,
     REPORT_USER_PROMPT,
     SCORING_RUBRIC,
     START_USER_PROMPT,
@@ -29,15 +56,6 @@ from app.interview.prompts import (
 from app.interview.schemas import InterviewStartRequest
 from app.student.resume_models import StudentResume
 
-
-SCORE_KEYS = [
-    "technical_accuracy",
-    "project_evidence",
-    "problem_solving",
-    "communication",
-    "job_fit",
-    "pressure_handling",
-]
 
 SCORE_WEIGHTS = {
     "technical_accuracy": 0.25,
@@ -179,6 +197,13 @@ def knowledge_status() -> dict:
     return info
 
 
+def reload_knowledge_status() -> dict:
+    info = reload_knowledge_index()
+    # 不向学生端暴露服务器绝对路径
+    info.pop("root", None)
+    return info
+
+
 def _latest_resume_snapshot(db: Session, identity: AuthIdentity) -> str:
     # 优先读取「智能体可读取」（visibility=True）的简历
     resume = db.scalar(
@@ -261,14 +286,20 @@ async def extract_uploaded_resume(upload: UploadFile) -> dict[str, Any]:
     }
 
 
-def _candidate_chat_models(db: Session, preferred_model_id: int | None = None) -> list[ModelConfig]:
+def _candidate_chat_models(
+    db: Session,
+    identity: AuthIdentity,
+    preferred_model_id: int | None = None,
+) -> list[ModelConfig]:
     models = list(db.scalars(
         select(ModelConfig)
         .where(
-            ModelConfig.is_deleted == False,
+            ModelConfig.tenant_id == identity.tenant_id,
+            ModelConfig.is_deleted.is_(False),
             ModelConfig.status == "active",
+            ModelConfig.open_to_student.is_(True),
             ModelConfig.api_key_cipher.is_not(None),
-            ModelConfig.capability.in_(["chat", "text", "multimodal"]),
+            ModelConfig.capability.in_(("chat", "text", "multimodal")),
         )
         .order_by(ModelConfig.open_to_student.desc(), ModelConfig.capability.asc(), ModelConfig.id.asc())
     ).all())
@@ -282,11 +313,12 @@ def _llm_json(
     user_prompt: str,
     fallback: dict[str, Any],
     *,
+    identity: AuthIdentity | None = None,
     temperature: float = 0.35,
     preferred_model_id: int | None = None,
     max_tokens: int = 2500,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    models = _candidate_chat_models(db, preferred_model_id)
+    models = _candidate_chat_models(db, identity, preferred_model_id)
     if not models:
         return fallback, {"used": False, "model": None, "error": "No student-open chat model with API key"}
     errors: list[str] = []
@@ -309,19 +341,6 @@ def _llm_json(
         except Exception as exc:
             errors.append(f"{model.display_name}: {str(exc)[:180]}")
     return fallback, {"used": False, "model": models[0].display_name, "error": " | ".join(errors)[:500]}
-
-
-def _llm_json_with_delete(
-    db: Session,
-    user_prompt: str,
-    fallback: dict[str, Any],
-    *,
-    temperature: float = 0.35,
-    preferred_model_id: int | None = None,
-    max_tokens: int = 2500,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """_llm_json 别名，用于 regenerate_report 时跳过缓存。"""
-    return _llm_json(db, user_prompt, fallback, temperature=temperature, preferred_model_id=preferred_model_id, max_tokens=max_tokens)
 
 
 def delete_report(db: Session, identity: AuthIdentity, session_id: int) -> None:
@@ -399,6 +418,14 @@ def _fallback_followup(answer: str, retrieved: list[dict]) -> dict[str, Any]:
             "job_fit": 3,
             "pressure_handling": 3,
         },
+        "score_reasons": {
+            "technical_accuracy": "回答偏概括，缺少技术细节支撑",
+            "project_evidence": "缺少量化指标和具体项目细节" if vague else "有项目线索但取舍说明不足",
+            "problem_solving": "需要补充问题拆解和方案比较",
+            "communication": "表达有方向但结构可以更清晰",
+            "job_fit": "需要更多岗位核心技术匹配的证据",
+            "pressure_handling": "抗压表现待验证",
+        },
         "followup_strategy": "追问项目证据和技术细节",
         "interviewer_tone": "strict",
         "next_question": question,
@@ -407,6 +434,7 @@ def _fallback_followup(answer: str, retrieved: list[dict]) -> dict[str, Any]:
         "capability_tags": ["项目证据", "技术深度"],
         "knowledge_points": [topic],
         "should_end": False,
+        "stage": "resume_deep_dive",
     }
 
 
@@ -507,6 +535,227 @@ def _update_coverage(coverage: dict, stage: str, knowledge_points: list[str], sc
     return coverage
 
 
+# ── 回答质量感知的阶段推进 ────────────────────────────────────────────────────
+
+def _compute_answer_quality(answer: str, score: dict | None, assessment: dict | None = None) -> tuple[float, bool, bool]:
+    """计算回答质量指标。
+
+    Returns:
+        (quality_score, is_vague, lacks_depth)
+        quality_score: 0-10 分，is_vague: 回答是否空泛，lacks_depth: 是否缺少深度
+    """
+    answer_len = len(answer.strip()) if answer else 0
+    # 基于长度的粗粒度评分
+    if answer_len < 30:
+        base = 2.0
+    elif answer_len < 80:
+        base = 4.0
+    elif answer_len < 200:
+        base = 6.0
+    else:
+        base = 7.0
+    is_vague = answer_len < 80
+    lacks_depth = answer_len < 150
+    # 如果有 score，结合评分提升
+    if isinstance(score, dict):
+        try:
+            vals = [float(v) for v in score.values() if isinstance(v, (int, float))]
+            if vals:
+                avg = sum(vals) / len(vals)
+                base = round((base + avg * 2) / 2, 1)
+        except Exception:
+            pass
+    # 如果 Model 判定回答空泛，强制降分
+    if isinstance(assessment, dict) and assessment.get("is_vague"):
+        is_vague = True
+        base = min(base, 4.0)
+    return round(min(10, max(0, base)), 1), is_vague, lacks_depth
+
+
+def _update_quality_metrics(coverage: dict, stage: str, quality_score: float, is_vague: bool) -> dict:
+    """在 coverage 中增加回答质量指标。"""
+    if stage not in coverage:
+        coverage[stage] = {"turns": 0, "knowledge_points": [], "avg_score": 0, "scores": [],
+                           "quality_scores": [], "avg_quality": 0, "vague_count": 0}
+    entry = coverage[stage]
+    entry.setdefault("quality_scores", [])
+    entry.setdefault("avg_quality", 0)
+    entry.setdefault("vague_count", 0)
+    entry["quality_scores"].append(quality_score)
+    entry["avg_quality"] = round(sum(entry["quality_scores"]) / len(entry["quality_scores"]), 1)
+    if is_vague:
+        entry["vague_count"] += 1
+    return coverage
+
+
+def _advance_stage(
+    current_stage: str,
+    stage_plan: list[dict],
+    turn_index: int,
+    round_limit: int,
+    coverage: dict,
+    quality_score: float,
+    is_vague: bool,
+) -> str:
+    """根据回答质量和阶段覆盖度决定是否推进阶段。
+
+    规则：
+    1. 如果当前阶段回答质量高（≥7）且该阶段已覆盖至少 2 轮，提前推进。
+    2. 如果当前阶段回答连续空泛 2 次（使用 consecutive_vague_count），保持当前阶段继续追问。
+    3. 如果当前阶段平均质量 ≥ 6 且已覆盖 ≥ 3 轮，推进到下一阶段。
+    4. 最后一轮必须是 wrap_up。
+    5. 其他情况按 stage_plan 走。
+    """
+    # 最后一轮强制 wrap_up
+    if turn_index >= round_limit - 1:
+        return "wrap_up"
+
+    # 查找当前阶段在 plan 中的位置
+    current_stage_idx = -1
+    for i, entry in enumerate(stage_plan):
+        if entry["stage"] == current_stage:
+            current_stage_idx = i
+            break
+
+    if current_stage_idx < 0:
+        return current_stage
+
+    stage_coverage = coverage.get(current_stage, {})
+    turns_in_stage = stage_coverage.get("turns", 0)
+    avg_quality = stage_coverage.get("avg_quality", 5)
+    # 使用连续空泛计数，而非累计空泛计数
+    consecutive_vague_count = stage_coverage.get("consecutive_vague_count", 0)
+
+    # 连续空泛，保持当前阶段
+    if consecutive_vague_count >= 2 and turns_in_stage < 4:
+        return current_stage
+
+    # 高质量回答 + 已覆盖 2 轮 → 提前推进
+    if quality_score >= 7 and turns_in_stage >= 2:
+        next_idx = current_stage_idx + 1
+        if next_idx < len(stage_plan):
+            return stage_plan[next_idx]["stage"]
+        return current_stage
+
+    # 平均质量 ≥ 6 + 已覆盖 3 轮 → 推进
+    if avg_quality >= 6 and turns_in_stage >= 3:
+        next_idx = current_stage_idx + 1
+        if next_idx < len(stage_plan):
+            return stage_plan[next_idx]["stage"]
+        return current_stage
+
+    # 按 plan 走：如果当前 turn 已超出当前阶段的 rounds 范围，推进
+    current_rounds = stage_plan[current_stage_idx].get("rounds", [])
+    if current_rounds and turn_index > max(current_rounds):
+        next_idx = current_stage_idx + 1
+        if next_idx < len(stage_plan):
+            return stage_plan[next_idx]["stage"]
+
+    return current_stage
+
+
+def _should_skip_stage(stage: str, interview_type: str) -> bool:
+    """判断某些阶段是否应该跳过。"""
+    if stage == "self_intro" and interview_type == "stress":
+        return True
+    if stage == "technical_core" and interview_type == "hr":
+        return True
+    if stage == "pressure" and interview_type == "hr":
+        return True
+    return False
+
+
+# wrap_up 阶段允许的问题类型
+_WRAP_UP_QUESTION_TYPES = {"wrap_up", "self_review", "reflection", "summary", "closing", "reverse_question"}
+
+# 技术深挖关键词（wrap_up 阶段不应出现）
+_DEEP_DIVE_INDICATORS = [
+    "算法", "数据结构", "系统设计", "手写", "实现一下", "代码实现",
+    "时间复杂度", "空间复杂度", "设计模式", "源码", "底层原理",
+    "分布式事务", "CAP 定理", "一致性哈希", "高并发", "压测",
+    "请实现", "请写一个", "请设计", "请手撕",
+]
+
+
+def _is_valid_wrap_up_question(question: str, question_type: str) -> bool:
+    """判断 wrap_up 阶段的问题是否合法。
+
+    合法的 wrap_up 问题必须是：
+    1. question_type 是 wrap_up / self_review / reflection / summary / closing / reverse_question
+    2. 问题不包含技术深挖、算法题、系统设计题等关键词
+    """
+    if question_type not in _WRAP_UP_QUESTION_TYPES:
+        return False
+    q_lower = question.lower()
+    for indicator in _DEEP_DIVE_INDICATORS:
+        if indicator in q_lower:
+            return False
+    return True
+
+
+def _get_effective_focus_points(retrieved: list[dict]) -> list[str]:
+    """从检索结果中提取有效的 focus_points。"""
+    points = []
+    for item in retrieved[:3]:
+        topic = item.get("topic", "")
+        if topic and topic not in points:
+            points.append(topic)
+    return points or ["项目经历", "技术深度", "岗位匹配"]
+
+
+def _extract_job_profile_info(session: InterviewSession) -> dict:
+    """从 session 中提取岗位画像信息。"""
+    job_skills = _json_loads(session.job_skills_json, [])
+    return {
+        "title": session.target_role or "未知岗位",
+        "company": session.company_name or "未提供",
+        "level": session.seniority_level or "未提供",
+        "skills": "、".join(job_skills) if job_skills else "未指定",
+        "responsibility": session.job_description[:500] if session.job_description else "未提供",
+        "requirements": session.job_description[:500] if session.job_description else "未提供",
+    }
+
+
+# ── wrap_up 本地 fallback ────────────────────────────────────────────────────
+
+def _wrap_up_fallback(target_role: str) -> dict[str, Any]:
+    """wrap_up 阶段 LLM 不可用时的本地 fallback。"""
+    return {
+        "answer_assessment": {
+            "summary": "候选人的整体回答表现需要综合评估。",
+            "is_vague": False,
+            "risk_points": ["需要在报告中综合评估"],
+            "positive_points": ["完成了完整的面试流程"],
+        },
+        "score": {
+            "technical_accuracy": 3,
+            "project_evidence": 3,
+            "problem_solving": 3,
+            "communication": 3,
+            "job_fit": 3,
+            "pressure_handling": 3,
+        },
+        "score_reasons": {
+            "technical_accuracy": "最后一轮综合评估",
+            "project_evidence": "最后一轮综合评估",
+            "problem_solving": "最后一轮综合评估",
+            "communication": "最后一轮综合评估",
+            "job_fit": "最后一轮综合评估",
+            "pressure_handling": "最后一轮综合评估",
+        },
+        "evidence_quotes": [],
+        "followup_strategy": "收束面试",
+        "interviewer_tone": "friendly",
+        "next_question": f"感谢你参加这次{target_role}的面试。请用 2 分钟总结一下：你认为自己表现最好的是哪个环节？哪个环节还可以做得更好？",
+        "question_reason": "作为收束问题，让候选人自我复盘",
+        "question_type": "wrap_up",
+        "capability_tags": ["自我认知", "复盘能力"],
+        "knowledge_points": [],
+        "should_end": True,
+        "stage": "wrap_up",
+    }
+
+
 # ── 评分可解释性 ──────────────────────────────────────────────────────────────
 
 def _normalize_score_reasons(raw: Any) -> dict[str, str]:
@@ -514,27 +763,6 @@ def _normalize_score_reasons(raw: Any) -> dict[str, str]:
     if not isinstance(raw, dict):
         raw = {}
     return {key: str(raw.get(key, "本轮未提供足够证据。")) for key in SCORE_KEYS}
-
-
-def _filter_evidence_quotes(raw: Any, answer: str) -> list[dict]:
-    """过滤证据引用，只保留来自用户回答原文的引用。"""
-    if not isinstance(raw, list):
-        return []
-    answer_lower = answer.lower()
-    filtered: list[dict] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        quote = str(item.get("quote", "")).strip()
-        if not quote:
-            continue
-        # quote 必须是用户回答中的原文片段
-        if quote.lower() not in answer_lower:
-            continue
-        filtered.append({"quote": quote, "reason": str(item.get("reason", ""))})
-        if len(filtered) >= 3:
-            break
-    return filtered
 
 
 # ── 训练闭环 ──────────────────────────────────────────────────────────────────
@@ -569,7 +797,12 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     # ── 目标岗位强制必填 ──
     target_role = (payload.target_role or "").strip()
     if not target_role:
-        raise HTTPException(status_code=400, detail="请填写目标岗位")
+        raise InterviewError(status_code=400, detail="请填写目标岗位")
+
+    # ── 岗位 JD 强制必填 ──
+    job_description = (payload.job_description or "").strip()
+    if not job_description:
+        raise InterviewError(status_code=400, detail="请填写岗位 JD")
 
     if payload.resume_source == "upload":
         resume_snapshot = (payload.uploaded_resume_text or "").strip()[:12000]
@@ -579,7 +812,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         resume_snapshot = _latest_resume_snapshot(db, identity)
     index = get_knowledge_index()
     retrieved = index.search(
-        f"{target_role} {payload.job_description or ''} 面试 项目 技术基础",
+        f"{target_role} {job_description} 面试 项目 技术基础",
         target_role=target_role,
         limit=6,
     )
@@ -588,7 +821,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     resume_source_label = _resume_source_label(payload.resume_source)
 
     # ── 岗位画像 ──
-    job_skills = _extract_job_skills(payload.job_description or "", list(payload.job_skills))
+    job_skills = _extract_job_skills(job_description, list(payload.job_skills))
     company_name = (payload.company_name or "").strip() or None
     seniority_level = (payload.seniority_level or "").strip() or None
     job_profile_parts = [f"岗位：{target_role}"]
@@ -620,22 +853,35 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
 
     # Prompt 注入岗位画像信息
     profile_injection = f"\n【岗位画像】{job_profile_summary}" if job_skills or company_name or seniority_level else ""
+    effective_focus = _get_effective_focus_points(retrieved)
     start_prompt = _render_template(
         START_USER_PROMPT,
         {
             "target_role": target_role,
-            "job_description": (payload.job_description or "未提供") + profile_injection,
+            "job_description": job_description + profile_injection,
             "interview_type": type_cfg["label"],
             "interview_type_rule": type_cfg["focus"],
             "interview_style": style_cfg["label"],
             "interview_style_rule": style_cfg["rule"],
-            "focus_tags": "、".join(payload.focus_tags[:8]) or "未指定，按简历和 JD 自适应",
+            "focus_tags": "、".join(payload.focus_tags[:8]) or "、".join(effective_focus),
             "custom_instruction": payload.custom_instruction or "无",
             "resume_summary": resume_snapshot,
             "retrieved_context": json.dumps(retrieved, ensure_ascii=False),
         },
     )
-    start_parsed, start_llm_meta = _llm_json(db, start_prompt, fallback_start, preferred_model_id=payload.model_id)
+    start_parsed, start_llm_meta = run_harnessed_json_generation(
+        db,
+        task_name="start_interview",
+        system_prompt=INTERVIEW_SYSTEM_PROMPT + "\n\n" + INTERVIEW_START_SUBPROMPT,
+        user_prompt=start_prompt,
+        fallback=fallback_start,
+        validator=validate_start_output,
+        identity=identity,
+        preferred_model_id=payload.model_id,
+        temperature=0.35,
+        max_tokens=2500,
+        max_retries=2,
+    )
     intro = str(start_parsed.get("first_question") or fallback_start["first_question"])
     knowledge_points = start_parsed.get("knowledge_points") if isinstance(start_parsed.get("knowledge_points"), list) else fallback_start["knowledge_points"]
     question_reason = str(start_parsed.get("question_reason") or fallback_start["question_reason"])
@@ -652,7 +898,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         tenant_id=identity.tenant_id,
         student_id=identity.user_id,
         target_role=target_role,
-        job_description=payload.job_description,
+        job_description=job_description,
         interview_type=payload.interview_type,
         interview_style=payload.interview_style,
         difficulty=payload.difficulty,
@@ -682,7 +928,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
             "risk_points": [],
             "llm": start_llm_meta,
             "retrieval": {
-                "query": f"{target_role} {payload.job_description or ''} 面试 项目 技术基础"[:500],
+                "query": f"{target_role} {job_description} 面试 项目 技术基础"[:500],
                 "hit_count": len(retrieved),
                 "top_sources": [item.get("source_file") for item in retrieved[:3]],
             },
@@ -694,7 +940,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         question_type=question_type,
         question_reason=question_reason,
         capability_tags_json=_json_dumps(capability_tags),
-        retrieval_query=f"{target_role} {payload.job_description or ''} 面试 项目 技术基础"[:500],
+        retrieval_query=f"{target_role} {job_description} 面试 项目 技术基础"[:500],
         retrieval_hit_count=len(retrieved),
         top_sources_json=_json_dumps(top_sources),
     )
@@ -702,13 +948,13 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     db.commit()
     db.refresh(session)
     db.refresh(turn)
-    return {"session": _serialize_session(session), "first_turn": serialize_turn(turn), "knowledge_status": index.status()}
+    return {"session": _serialize_session(session), "first_turn": serialize_turn(turn), "knowledge_status": knowledge_status()}
 
 
 def _get_session(db: Session, identity: AuthIdentity, session_id: int) -> InterviewSession:
     session = db.get(InterviewSession, session_id)
     if not session or session.student_id != identity.user_id or session.tenant_id != identity.tenant_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="面试会话不存在")
+        raise InterviewNotFoundError
     return session
 
 
@@ -740,14 +986,59 @@ def delete_interview(db: Session, identity: AuthIdentity, session_id: int) -> No
     db.commit()
 
 
-def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: str) -> dict:
+def submit_turn(
+    db: Session,
+    identity: AuthIdentity,
+    session_id: int,
+    answer: str,
+    *,
+    request_id: str | None = None,
+    turn_id: int | None = None,
+) -> dict:
     session = _get_session(db, identity, session_id)
     if session.status != "active":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="面试已经结束")
+        raise InterviewNotActiveError
     turns = db.scalars(select(InterviewTurn).where(InterviewTurn.session_id == session.id).order_by(InterviewTurn.turn_index)).all()
+    
+    # ── 幂等保护：先处理 turn_id ──
+    target_turn = None
+    if turn_id is not None:
+        target_turn = db.scalar(
+            select(InterviewTurn).where(
+                InterviewTurn.id == turn_id,
+                InterviewTurn.session_id == session.id,
+                InterviewTurn.student_id == identity.user_id,
+            )
+        )
+        if not target_turn:
+            raise InterviewError(status_code=404, detail="问题不存在")
+    else:
+        # 找到当前 pending turn
+        target_turn = next((turn for turn in reversed(turns) if not turn.answer), None)
+        if not target_turn:
+            raise InterviewNoPendingQuestionError
+
+    # ── 幂等保护：同一 request_id 重复提交直接返回已有结果 ──
+    if target_turn.answer and target_turn.submit_request_id == request_id:
+        # 找到已有的 next_turn
+        existing_next = next((t for t in turns if t.turn_index == target_turn.turn_index + 1), None)
+        return {
+            "current_turn": serialize_turn(target_turn),
+            "next_turn": serialize_turn(existing_next) if existing_next else None,
+            "is_finished": session.status == "completed",
+            "report_id": None,
+        }
+
+    # ── 幂等保护：同一 turn 不同 request_id 已回答 → 冲突 ──
+    if target_turn.answer and (not request_id or target_turn.submit_request_id != request_id):
+        raise InterviewError(status_code=409, detail="该问题已回答，请刷新面试记录")
+
+    # ── 检查 target_turn 是否是当前 pending turn ──
     current = next((turn for turn in reversed(turns) if not turn.answer), None)
-    if not current:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="没有待回答的问题")
+    if current and target_turn.id != current.id:
+        raise InterviewError(status_code=400, detail="turn_id 与当前待回答问题不匹配，请刷新面试记录")
+    # 设置 current 为 target_turn，以便后续代码使用
+    current = target_turn
 
     index = get_knowledge_index()
     retrieval_query = f"{session.target_role} {current.question} {answer}"[:500]
@@ -760,31 +1051,93 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
         for item in retrieved[:3]
     ]
 
+    # ── 岗位画像注入 ──
+    job_profile = _extract_job_profile_info(session)
+    job_profile_text = _render_template(EXTRACTED_JOB_PROMPT, job_profile)
+
     # ── 注入当前阶段到 Prompt ──
     current_stage = session.current_stage or "opening"
     stage_def = STAGE_DEFINITIONS.get(current_stage, STAGE_DEFINITIONS["opening"])
     stage_injection = f"\n【当前面试阶段】{stage_def['label']}——{stage_def['goal']}"
 
+    # ── 当前回答质量初判（注入给模型）──
+    pre_quality_score, pre_is_vague, pre_lacks_depth = _compute_answer_quality(answer, None, None)
+    current_quality_injection = (
+        f"\n【当前回答质量初判】\n"
+        f"质量分：{pre_quality_score}/10\n"
+        f"是否空泛：{'是' if pre_is_vague else '否'}\n"
+        f"是否缺少深度：{'是' if pre_lacks_depth else '否'}\n"
+        f"{'如果空泛，下一问必须要求候选人补充个人职责、实现细节、量化指标或具体案例。' if pre_is_vague else ''}"
+    )
+
+    # ── 构建 context_block ──
+    context_parts = [
+        f"【目标岗位】{session.target_role}",
+        f"【岗位 JD】{(session.job_description or '未提供') + stage_injection}",
+        f"【面试类型】{INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG['technical'])['label']}",
+        f"【面试风格】{INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG['strict'])['label']}——{INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG['strict'])['rule']}",
+        f"【候选人简历摘要】{session.resume_snapshot or '未提供'}",
+        job_profile_text,
+        f"【上一轮问题】{current.question}",
+        f"【候选人上一轮回答】{answer}",
+        f"【知识库检索结果】{json.dumps(retrieved, ensure_ascii=False)}",
+        f"【已问过的知识点】{', '.join(sum((_json_loads(t.knowledge_points_json, []) for t in turns), []))}",
+        current_quality_injection,
+    ]
+    # 注入上一轮回答的质量反馈（供 Model 参考）
+    prev_turns_with_answer = [t for t in turns if t.answer and t.turn_index < current.turn_index]
+    if prev_turns_with_answer:
+        last_turn = prev_turns_with_answer[-1]
+        prev_score_data = _json_loads(last_turn.score_json, None)
+        prev_assessment_data = _json_loads(last_turn.answer_assessment, None)
+        if prev_score_data and prev_assessment_data:
+            prev_quality, prev_vague, prev_lacks = _compute_answer_quality(
+                last_turn.answer, prev_score_data, prev_assessment_data
+            )
+            feedback_text = _render_template(QUALITY_FEEDBACK_PROMPT, {
+                "quality_score": prev_quality,
+                "is_vague": "是" if prev_vague else "否",
+                "lacks_depth": "是" if prev_lacks else "否",
+                "feedback": "回答空泛，需要更具体的细节和量化指标。" if prev_vague else "",
+            })
+            context_parts.append("【上一轮已完成回答质量反馈】\n" + feedback_text)
+    context_block = "\n\n".join(context_parts)
+    conversation_block = f"【历史问答】\n{_conversation_history(turns)}"
+
+    # ── 选择任务 sub-prompt ──
+    task_subprompt = INTERVIEW_FOLLOWUP_SUBPROMPT
+
     prompt = _render_template(
         FOLLOWUP_USER_PROMPT,
         {
-            "target_role": session.target_role,
-            "job_description": (session.job_description or "未提供") + stage_injection,
-            "interview_type": INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG["technical"])["label"],
-            "interview_type_rule": INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG["technical"])["focus"],
-            "interview_style": INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG["strict"])["label"],
-            "interview_style_rule": INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG["strict"])["rule"],
-            "focus_tags": "见会话简历上下文",
-            "custom_instruction": "见会话简历上下文",
-            "resume_summary": session.resume_snapshot or "未提供",
-            "conversation_history": _conversation_history(turns),
-            "last_question": current.question,
-            "last_answer": answer,
-            "retrieved_context": json.dumps(retrieved, ensure_ascii=False),
-            "asked_topics": ", ".join(sum((_json_loads(t.knowledge_points_json, []) for t in turns), [])),
+            "task_subprompt": task_subprompt,
+            "context_block": context_block,
+            "conversation_block": conversation_block,
         },
     )
-    parsed, llm_meta = _llm_json(db, prompt, fallback, preferred_model_id=session.model_config_id)
+
+    # 构建 grounding context（供 Harness 校验 next_question 引用式幻觉）
+    grounding_context = {
+        "last_answer": answer,
+        "resume_snapshot": session.resume_snapshot or "",
+        "history_text": _conversation_history(turns),
+        "job_description": session.job_description or "",
+    }
+
+    parsed, llm_meta = run_harnessed_json_generation(
+        db,
+        task_name="submit_turn",
+        system_prompt=INTERVIEW_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        fallback=fallback,
+        validator=validate_followup_output,
+        context=grounding_context,
+        identity=identity,
+        preferred_model_id=session.model_config_id,
+        temperature=0.35,
+        max_tokens=2500,
+        max_retries=2,
+    )
     score = parsed.get("score") if isinstance(parsed.get("score"), dict) else fallback["score"]
     assessment = parsed.get("answer_assessment") if isinstance(parsed.get("answer_assessment"), dict) else fallback["answer_assessment"]
     knowledge_points = parsed.get("knowledge_points") if isinstance(parsed.get("knowledge_points"), list) else fallback["knowledge_points"]
@@ -793,7 +1146,11 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
     score_reasons = _normalize_score_reasons(parsed.get("score_reasons"))
     evidence_quotes = _filter_evidence_quotes(parsed.get("evidence_quotes"), answer)
 
+    # ── 计算回答质量指标 ──
+    quality_score, is_vague, lacks_depth = _compute_answer_quality(answer, score, assessment)
+
     current.answer = answer
+    current.submit_request_id = request_id
     if isinstance(assessment, dict):
         assessment["llm"] = llm_meta
         assessment["retrieval"] = {
@@ -814,12 +1171,37 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
     current.retrieval_hit_count = len(retrieved)
     current.top_sources_json = _json_dumps(top_sources)
 
-    # ── 更新阶段覆盖度 ──
+    # ── 更新阶段覆盖度 + 质量指标（区分累计空泛和连续空泛）──
     coverage = _json_loads(session.coverage_json, {})
     coverage = _update_coverage(coverage, current_stage, knowledge_points, score)
+    coverage = _update_quality_metrics(coverage, current_stage, quality_score, is_vague)
+    # 更新连续空泛计数
+    if current_stage not in coverage:
+        coverage[current_stage] = {}
+    stage_cov = coverage[current_stage]
+    if is_vague:
+        stage_cov["consecutive_vague_count"] = stage_cov.get("consecutive_vague_count", 0) + 1
+    else:
+        stage_cov["consecutive_vague_count"] = 0
     session.coverage_json = _json_dumps(coverage)
 
-    should_finish = bool(parsed.get("should_end")) or current.turn_index >= session.round_limit
+    # ── Harness 主导的停止判定 ──
+    model_should_end = _strict_bool(parsed.get("should_end"))
+    valid_answer_count = sum(1 for t in turns if t.answer and len(t.answer.strip()) >= 20)
+    coverage_for_decision = _json_loads(session.coverage_json, {})
+    should_finish, finish_reason = harness_should_finish_interview(
+        model_should_end=model_should_end,
+        current_turn_index=current.turn_index,
+        round_limit=session.round_limit,
+        coverage=coverage_for_decision,
+        current_stage=current_stage,
+        valid_answer_count=valid_answer_count,
+    )
+    # 将 finish_reason 写入 assessment 的 llm 字段供审计
+    if isinstance(assessment, dict):
+        if "llm" not in assessment:
+            assessment["llm"] = {}
+        assessment["llm"]["finish_reason"] = finish_reason
     report_id = None
     next_turn = None
     if should_finish:
@@ -829,9 +1211,25 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
         report = generate_report(db, identity, session.id, commit=False)
         report_id = report.id
     else:
-        # ── 计算下一阶段 ──
+        # ── 计算下一阶段（回答质量感知，使用连续空泛）──
         stage_plan = _json_loads(session.stage_plan_json, [])
-        next_stage = _stage_for_turn(stage_plan, current.turn_index + 1)
+        previous_stage = current_stage
+        next_stage = _advance_stage(
+            current_stage=current_stage,
+            stage_plan=stage_plan,
+            turn_index=current.turn_index + 1,
+            round_limit=session.round_limit,
+            coverage=coverage,
+            quality_score=quality_score,
+            is_vague=is_vague,
+        )
+        # 跳过不适用的阶段
+        while _should_skip_stage(next_stage, session.interview_type) and next_stage != "wrap_up":
+            idx = _STAGE_ORDER.index(next_stage) if next_stage in _STAGE_ORDER else -1
+            if idx >= 0 and idx + 1 < len(_STAGE_ORDER):
+                next_stage = _STAGE_ORDER[idx + 1]
+            else:
+                break
         session.current_stage = next_stage
 
         next_question = str(parsed.get("next_question") or fallback["next_question"])
@@ -839,20 +1237,76 @@ def submit_turn(db: Session, identity: AuthIdentity, session_id: int, answer: st
         next_question_reason = str(parsed.get("question_reason") or fallback.get("followup_strategy", ""))
         next_capability_tags = parsed.get("capability_tags") if isinstance(parsed.get("capability_tags"), list) else []
 
-        next_turn = InterviewTurn(
-            session_id=session.id,
-            student_id=identity.user_id,
-            turn_index=current.turn_index + 1,
-            question=next_question,
-            retrieved_chunks_json=_json_dumps(retrieved),
-            knowledge_points_json=_json_dumps(knowledge_points),
-            # 阶段
-            stage=next_stage,
-            question_type=next_question_type,
-            question_reason=next_question_reason,
-            capability_tags_json=_json_dumps(next_capability_tags),
+        # wrap_up 阶段强制收束：不只是 next_question 为空时 fallback
+        if next_stage == "wrap_up":
+            if not _is_valid_wrap_up_question(next_question, next_question_type):
+                wrap_fallback = _wrap_up_fallback(session.target_role)
+                next_question = wrap_fallback["next_question"]
+                next_question_type = wrap_fallback.get("question_type", "wrap_up")
+                next_question_reason = wrap_fallback.get("question_reason", "")
+                next_capability_tags = wrap_fallback.get("capability_tags", [])
+
+        # 幂等保护：创建下一轮 turn 前检查 (session_id, turn_index) 是否已存在
+        next_turn_index = current.turn_index + 1
+        existing_next = db.scalar(
+            select(InterviewTurn).where(
+                InterviewTurn.session_id == session.id,
+                InterviewTurn.turn_index == next_turn_index,
+            )
         )
-        db.add(next_turn)
+        if existing_next:
+            # 已存在，直接复用（防止并发重复创建）
+            next_turn = existing_next
+            next_turn.question = next_question
+            next_turn.stage = next_stage
+            next_turn.question_type = next_question_type
+            next_turn.question_reason = next_question_reason
+        else:
+            next_turn = InterviewTurn(
+                session_id=session.id,
+                student_id=identity.user_id,
+                turn_index=next_turn_index,
+                question=next_question,
+                retrieved_chunks_json=_json_dumps(retrieved),
+                knowledge_points_json=_json_dumps(knowledge_points),
+                # 阶段
+                stage=next_stage,
+                question_type=next_question_type,
+                question_reason=next_question_reason,
+                capability_tags_json=_json_dumps(next_capability_tags),
+            )
+            db.add(next_turn)
+            try:
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                # 回查已有的 next_turn
+                existing_next = db.scalar(
+                    select(InterviewTurn).where(
+                        InterviewTurn.session_id == session.id,
+                        InterviewTurn.turn_index == next_turn_index,
+                    )
+                )
+                if existing_next:
+                    next_turn = existing_next
+                    next_turn.question = next_question
+                    next_turn.stage = next_stage
+                    next_turn.question_type = next_question_type
+                    next_turn.question_reason = next_question_reason
+                else:
+                    raise
+        # 记录阶段推进信息到 answer_assessment（审计用）
+        if isinstance(assessment, dict):
+            assessment.setdefault("stage_transition", {})
+            assessment["stage_transition"] = {
+                "from": previous_stage,
+                "to": next_stage,
+                "quality_score": quality_score,
+                "is_vague": is_vague,
+                "lacks_depth": lacks_depth,
+                "consecutive_vague_count": coverage.get(current_stage, {}).get("consecutive_vague_count", 0),
+            }
+            current.answer_assessment = _json_dumps(assessment)
     db.commit()
     db.refresh(current)
     if next_turn:
@@ -907,27 +1361,38 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         coverage_lines = []
         for stage_key, info in coverage.items():
             stage_label = STAGE_DEFINITIONS.get(stage_key, {}).get("label", stage_key)
-            coverage_lines.append(f"  {stage_label}: {info.get('turns', 0)} 轮, 平均分 {info.get('avg_score', 0)}")
+            avg_q = info.get("avg_quality", 0)
+            coverage_lines.append(f"  {stage_label}: {info.get('turns', 0)} 轮, 平均分 {info.get('avg_score', 0)}, 回答质量 {avg_q}/10")
         coverage_summary = "\n【阶段覆盖度】\n" + "\n".join(coverage_lines)
 
+    # ── 构建报告 prompt（新模板结构）──
+    context_parts = [
+        f"【目标岗位】{session.target_role}",
+        f"【岗位 JD】{session.job_description or '未提供'}",
+        f"【简历快照】{(session.resume_snapshot or '未提供')[:12000]}",
+        f"【每轮过程评分，仅作参考】{json.dumps(scores, ensure_ascii=False) + coverage_summary}",
+    ]
     prompt = _render_template(
         REPORT_USER_PROMPT,
         {
-            "scoring_rubric": SCORING_RUBRIC,
-            "target_role": session.target_role,
-            "job_description": session.job_description or "未提供",
-            "resume_snapshot": (session.resume_snapshot or "未提供")[:12000],
-            "conversation_history": _conversation_history(turns),
-            "turn_scores": json.dumps(scores, ensure_ascii=False) + coverage_summary,
+            "task_subprompt": INTERVIEW_REPORT_SUBPROMPT,
+            "scoring_rubric_block": f"【评分 Rubric】\n{INTERVIEW_REPORT_SCORING_RUBRIC}",
+            "context_block": "\n\n".join(context_parts),
+            "conversation_block": f"【面试记录】\n{_conversation_history(turns)}",
         },
     )
-    parsed, llm_meta = _llm_json(
+    parsed, llm_meta = run_harnessed_json_generation(
         db,
-        prompt,
-        fallback,
-        temperature=0.2,
+        task_name="generate_report",
+        system_prompt=INTERVIEW_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        fallback=fallback,
+        validator=validate_report_output,
+        identity=identity,
         preferred_model_id=session.model_config_id,
+        temperature=0.2,
         max_tokens=4200,
+        max_retries=3,
     )
     final_dim_scores = _normalize_report_dimensions(parsed.get("dimension_scores"), dim_scores)
     try:
@@ -1021,4 +1486,39 @@ def _build_report_comparison(
         "overall_delta": delta,
         "dimension_delta": dim_delta,
         "message": message,
+    }
+
+
+def get_report(db: Session, identity: AuthIdentity, session_id: int) -> dict:
+    """Get report for a session."""
+    session = _get_session(db, identity, session_id)
+    report = db.scalar(
+        select(InterviewReport)
+        .where(InterviewReport.session_id == session.id)
+        .order_by(InterviewReport.id.desc())
+        .limit(1)
+    )
+    if not report:
+        raise InterviewError(status_code=404, detail="报告不存在")
+    return serialize_report(report)
+
+
+def export_interview_report(db: Session, identity: AuthIdentity, session_id: int) -> dict:
+    """Export full interview report as JSON."""
+    session = _get_session(db, identity, session_id)
+    turns = db.scalars(
+        select(InterviewTurn)
+        .where(InterviewTurn.session_id == session.id)
+        .order_by(InterviewTurn.turn_index)
+    ).all()
+    report = db.scalar(
+        select(InterviewReport)
+        .where(InterviewReport.session_id == session.id)
+        .order_by(InterviewReport.id.desc())
+        .limit(1)
+    )
+    return {
+        "session": _serialize_session(session),
+        "turns": [serialize_turn(t) for t in turns],
+        "report": serialize_report(report) if report else None,
     }

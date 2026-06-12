@@ -1,15 +1,15 @@
 """interview overhaul: job profile, stage machine, scoring explainability, training plan
 
-Revision ID: 20260612_0024
-Revises: 20260612_0021
+Revision ID: 20260612_0024_interview
+Revises: 20260613_0002
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260612_0024"
-down_revision = "20260613_0001"
+revision = "20260612_0024_interview"
+down_revision = "20260613_0002"
 branch_labels = None
 depends_on = None
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+/* eslint-disable react-refresh/only-export-components */
 import type { CSSProperties, ReactNode } from 'react'
 
 import type {
@@ -597,7 +598,6 @@ function RichList({ blocks, resume, inverse = false }: { blocks: RichInlineBlock
         const Tag = block.type === 'ordered' ? 'ol' : 'ul'
         return (
           <Tag
-            // eslint-disable-next-line react/no-array-index-key
             key={`${block.type}-${idx}`}
             style={{
               margin: '4px 0 0',
@@ -676,13 +676,11 @@ function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: Re
         if (block.type === 'paragraph') {
           return (
             <div
-              // eslint-disable-next-line react/no-array-index-key
               key={`p-${idx}`}
               style={{ ...baseStyle, marginBottom: 4 }}
             >
               {block.lines.map((line, j) => (
                 <p
-                  // eslint-disable-next-line react/no-array-index-key
                   key={`p-${idx}-${j}`}
                   style={{ margin: 0 }}
                 >
@@ -695,7 +693,6 @@ function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: Re
         const Tag = block.type === 'ordered' ? 'ol' : 'ul'
         return (
           <Tag
-            // eslint-disable-next-line react/no-array-index-key
             key={`${block.type}-${idx}`}
             style={{
               ...baseStyle,

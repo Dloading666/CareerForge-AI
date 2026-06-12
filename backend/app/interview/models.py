@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db import Base
@@ -45,6 +45,9 @@ class InterviewSession(Base):
 
 class InterviewTurn(Base):
     __tablename__ = "interview_turns"
+    __table_args__ = (
+        UniqueConstraint("session_id", "turn_index", name="uq_interview_turn_session_turn_index"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -67,6 +70,8 @@ class InterviewTurn(Base):
     top_sources_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     score_reasons_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     evidence_quotes_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 幂等保护：记录提交请求 ID，防止重复提交
+    submit_request_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

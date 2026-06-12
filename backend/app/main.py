@@ -257,3 +257,17 @@ def healthz():
         "status": "ok",
         "redis": "ok" if ping_redis() else "unavailable",
     }
+
+
+# ── Interview module exception handler ───────────────────────────────────────
+
+from fastapi.responses import JSONResponse as _JSONResponse
+from app.interview.exceptions import InterviewError as _InterviewError
+
+
+@app.exception_handler(_InterviewError)
+async def interview_error_handler(request, exc: _InterviewError):  # noqa: ANN001
+    return _JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.status_code, "msg": exc.detail, "data": None},
+    )

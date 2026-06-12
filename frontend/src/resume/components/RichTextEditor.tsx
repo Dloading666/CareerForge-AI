@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs, react-refresh/only-export-components */
 import { Button, Tooltip } from '@arco-design/web-react'
 import { IconBold, IconItalic, IconOrderedList, IconRefresh, IconUnderline, IconUnorderedList } from '@arco-design/web-react/icon'
 import Placeholder from '@tiptap/extension-placeholder'

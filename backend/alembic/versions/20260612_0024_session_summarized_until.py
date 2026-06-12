@@ -13,9 +13,15 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table: str, column: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return any(item["name"] == column for item in inspector.get_columns(table))
+
+
 def upgrade() -> None:
-    with op.batch_alter_table("student_agent_session") as batch:
-        batch.add_column(sa.Column("summarized_until_message_id", sa.Integer, nullable=True))
+    if not _has_column("student_agent_session", "summarized_until_message_id"):
+        with op.batch_alter_table("student_agent_session") as batch:
+            batch.add_column(sa.Column("summarized_until_message_id", sa.Integer, nullable=True))
 
 
 def downgrade() -> None:

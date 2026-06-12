@@ -1335,8 +1335,9 @@ def list_available_models(
             ModelConfig.tenant_id == identity.tenant_id,
             ModelConfig.is_deleted.is_(False),
             ModelConfig.open_to_student.is_(True),
-            ModelConfig.capability.in_(allowed_capabilities),
             ModelConfig.status == "active",
+            ModelConfig.api_key_cipher.is_not(None),
+            ModelConfig.capability.in_(allowed_capabilities),
         )
         .order_by(ModelConfig.id.asc())
     ).all()

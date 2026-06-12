@@ -1,7 +1,7 @@
 ﻿"""add missing columns to student_agent_session
 
-Revision ID: 20260613_0003
-Revises: 20260612_0021, 20260612_0023, 20260612_0024
+Revision ID: 20260613_0006
+Revises: 20260612_0026, 20260613_0005
 Create Date: 2026-06-12
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260613_0003"
-down_revision = ("20260612_0021", "20260613_0001", "20260612_0024")
+revision = "20260613_0006"
+down_revision = ("20260612_0026", "20260613_0005")
 branch_labels = None
 depends_on = None
 

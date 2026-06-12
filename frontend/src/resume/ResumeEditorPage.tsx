@@ -1,4 +1,4 @@
-import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
+﻿import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
 import { IconArrowLeft, IconExport, IconSave, IconSelectAll, IconStar } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -14,10 +14,10 @@ import { SidePanel } from './components/SectionNav'
 import { AiAssistPanel, type AiAssistSection } from './components/AiAssistPanel'
 import { TemplatePicker } from './components/TemplatePicker'
 import { ApiError } from '../shared/api'
-import type { TemplateId } from './types'
+import type { Education, Experience, Project, TemplateId } from './types'
 import { exportResumeElementToPdf } from './utils/exportResumePdf'
 
-// → 简历编辑器自动保存 debounce：半分钟。改动后重置定时器，到期才推送 updateResume。
+// 鈫?绠€鍘嗙紪杈戝櫒鑷姩淇濆瓨 debounce锛氬崐鍒嗛挓銆傛敼鍔ㄥ悗閲嶇疆瀹氭椂鍣紝鍒版湡鎵嶆帹閫?updateResume銆?
 const AUTOSAVE_DEBOUNCE_MS = 30_000
 
 function PanelLeftIcon({ active }: { active: boolean }) {
@@ -81,7 +81,7 @@ function ResumeEditorInner() {
 
   const resumeId = params.resumeId
   const templateParam = searchParams.get('template')
-  // → 以 TEMPLATE_REGISTRY 为准验证 templateParam：避免硬编码白名单遗漏新模板。
+  // 鈫?浠?TEMPLATE_REGISTRY 涓哄噯楠岃瘉 templateParam锛氶伩鍏嶇‖缂栫爜鐧藉悕鍗曢仐婕忔柊妯℃澘銆?
   const draftTemplateId: TemplateId =
     templateParam && TEMPLATE_REGISTRY.some((t) => t.id === templateParam)
       ? (templateParam as TemplateId)
@@ -195,14 +195,17 @@ function ResumeEditorInner() {
     if (section === "selfEvaluation") {
       return { section: "selfEvaluation", value: resume.selfEvaluationContent, onApply: (v: string) => setSelfEvaluationContent(v) }
     }
-    const list = (section === "experience" ? resume.experience : section === "projects" ? resume.projects : section === "education" ? resume.education : null)
-    if (list && list.length > 0) {
-      const first = list[0]
-      const value = ((first as any).details ?? (first as any).description ?? "") as string
-      const sectionKey = (section === "experience" ? "experience" : section === "projects" ? "project" : "education") as AiAssistSection
-      const fieldKey = section === "experience" ? "details" : "description"
-      const update = section === "experience" ? updateExperience : section === "projects" ? updateProject : updateEducation
-      return { section: sectionKey, value, onApply: (v: string) => update(first.id, { [fieldKey]: v } as any) }
+    if (section === "experience" && resume.experience.length > 0) {
+      const first: Experience = resume.experience[0]
+      return { section: "experience", value: first.details, onApply: (v: string) => updateExperience(first.id, { details: v }) }
+    }
+    if (section === "projects" && resume.projects.length > 0) {
+      const first: Project = resume.projects[0]
+      return { section: "project", value: first.description, onApply: (v: string) => updateProject(first.id, { description: v }) }
+    }
+    if (section === "education" && resume.education.length > 0) {
+      const first: Education = resume.education[0]
+      return { section: "education", value: first.description, onApply: (v: string) => updateEducation(first.id, { description: v }) }
     }
     return null
   })()
@@ -210,17 +213,16 @@ function ResumeEditorInner() {
   const handleAiAssistApply = (text: string) => {
     if (aiAssistConfig) aiAssistConfig.onApply(text)
   }
-('正在生成 PDF...')
 
   const handleExport = async () => {
     const node = previewRef.current?.querySelector('[data-resume-print-root]')
     if (!(node instanceof HTMLElement)) return
     setExporting(true)
     setExportProgress(5)
-    setExportMessage('正在准备资源…')
+    setExportMessage('正在准备资源...')
     try {
       await exportResumeElementToPdf(node, {
-        filename: resume?.title || '简历',
+        filename: resume?.title || 'resume',
         scale: 2,
         onProgress: (state) => {
           setExportMessage(state.message)
@@ -240,7 +242,7 @@ function ResumeEditorInner() {
   if (loading) {
     return (
       <div className="resume-loading">
-        <Spin size={34} tip="正在加载简历编辑器..." />
+        <Spin size={34} tip="姝ｅ湪鍔犺浇绠€鍘嗙紪杈戝櫒..." />
       </div>
     )
   }
@@ -250,18 +252,18 @@ function ResumeEditorInner() {
   }
 
   if (missing || !resume) {
-    return <Result status="404" title="简历不存在" subTitle="这份简历可能已被删除。" />
+    return <Result status="404" title="简历不存在" subTitle="这份简历可能已经被删除。" />
   }
 
   const saveLabel =
-    saveStatus === 'saving' ? '保存中…'
+    saveStatus === 'saving' ? '保存中...'
     : saveStatus === 'saved' ? '已保存'
-    : saveStatus === 'error' ? '保存失败'
+    : saveStatus === 'error' ? '淇濆瓨澶辫触'
     : '未保存'
 
   return (
     <div className="wb-root">
-      {/* 导入提醒 banner */}
+      {/* 瀵煎叆鎻愰啋 banner */}
       {searchParams.get('imported') === '1' && (
         <div style={{
           background: '#FFF7E6', border: '1px solid #FFD591', borderRadius: 8,
@@ -277,7 +279,7 @@ function ResumeEditorInner() {
               url.searchParams.delete('imported')
               window.history.replaceState(null, '', url.toString())
             }}
-          >×</button>
+          >脳</button>
         </div>
       )}
       {/* Header */}
@@ -285,7 +287,7 @@ function ResumeEditorInner() {
         <div className="wb-header-left">
           <button type="button" className="wb-back-btn" onClick={handleBackClick}>
             <IconArrowLeft />
-            <span>返回</span>
+            <span>杩斿洖</span>
           </button>
           <span className="wb-breadcrumb-sep">/</span>
           <input
@@ -318,7 +320,7 @@ function ResumeEditorInner() {
             type="button"
             className={`wb-panel-toggle${!previewPanelCollapsed ? ' on' : ''}`}
             onClick={() => setPreviewPanelCollapsed((v) => !v)}
-            title={previewPanelCollapsed ? '展开预览面板' : '收起预览面板'}
+            title={previewPanelCollapsed ? '灞曞紑棰勮闈㈡澘' : '鏀惰捣棰勮闈㈡澘'}
           >
             <EyeIcon active={!previewPanelCollapsed} />
           </button>
@@ -326,17 +328,17 @@ function ResumeEditorInner() {
 
         <div className="wb-header-right">
           <label className="wb-visibility-row">
-            <Tooltip content="同一时间只能勾选一份简历供 AI 读取，勾选后其他简历将自动取消">
-              <span>智能体可读取</span>
+            <Tooltip content="鍚屼竴鏃堕棿鍙兘鍕鹃€変竴浠界畝鍘嗕緵 AI 璇诲彇锛屽嬀閫夊悗鍏朵粬绠€鍘嗗皢鑷姩鍙栨秷">
+              <span>鏅鸿兘浣撳彲璇诲彇</span>
             </Tooltip>
             <Switch checked={resume.visibility} onChange={setVisibility} size="small" />
           </label>
           <span className="wb-header-divider" />
-          <Button size="small" icon={<IconSelectAll />} onClick={() => setTemplatePickerVisible(true)}>切换模板</Button>
-          <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
-                    <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
-          <Button size="small" icon={<IconExport />} onClick={handleExport}>导出 PDF</Button>
-          <Button size="small" type="primary" icon={<IconSave />} onClick={() => void handleSaveNow()}>保存</Button>
+          <Button size="small" icon={<IconSelectAll />} onClick={() => setTemplatePickerVisible(true)}>鍒囨崲妯℃澘</Button>
+          <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 杈呭姪</Button>
+                    <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 杈呭姪</Button>
+          <Button size="small" icon={<IconExport />} onClick={handleExport}>瀵煎嚭 PDF</Button>
+          <Button size="small" type="primary" icon={<IconSave />} onClick={() => void handleSaveNow()}>淇濆瓨</Button>
         </div>
       </header>
 
@@ -379,7 +381,7 @@ function ResumeEditorInner() {
         }
       >
         <p style={{ margin: 0, color: '#4b5563' }}>
-          检测到当前简历还有未保存的修改，返回前请选择是否保存。也可以点「取消」继续编辑。
+          检测到当前简历还有未保存的修改，返回前请选择是否保存。也可以点击“取消”继续编辑。
         </p>
       </Modal>
 
@@ -396,7 +398,7 @@ function ResumeEditorInner() {
           <div className="resume-export-modal-icon" aria-hidden>
             <IconExport />
           </div>
-          <div className="resume-export-modal-title">正在生成 PDF</div>
+          <div className="resume-export-modal-title">姝ｅ湪鐢熸垚 PDF</div>
           <div className="resume-export-modal-sub">{exportMessage}</div>
           <div className="resume-export-modal-progress">
             <div
@@ -413,7 +415,7 @@ function ResumeEditorInner() {
         currentText={aiAssistConfig?.value ?? ""}
         resumeId={resume.id}
         onApply={handleAiAssistApply}
-        applyLabel="搴旂敤鍒板綋鍓嶅瓧娈?"
+        applyLabel="鎼存梻鏁ら崚鏉跨秼閸撳秴鐡у▓?"
       />
 
       </Modal>
@@ -428,4 +430,4 @@ export function ResumeEditorPage() {
     </ResumeEditorProvider>
   )
 }
-
+

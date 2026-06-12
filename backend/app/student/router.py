@@ -570,38 +570,58 @@ def get_profile_completeness(
     items = {
         "basic": bool((student.name or "").strip()),
         "education": db.scalar(
-            select(select(StudentEducation.id).where(
-                StudentEducation.student_id == identity.user_id,
-                StudentEducation.tenant_id == identity.tenant_id,
-            ).exists().as_scalar())
+            select(
+                select(StudentEducation.id)
+                .where(
+                    StudentEducation.student_id == identity.user_id,
+                    StudentEducation.tenant_id == identity.tenant_id,
+                )
+                .exists()
+            )
         ) or False,
         "experience_or_project": (
             db.scalar(
-                select(select(StudentWorkExperience.id).where(
-                    StudentWorkExperience.student_id == identity.user_id,
-                    StudentWorkExperience.tenant_id == identity.tenant_id,
-                ).exists().as_scalar())
+                select(
+                    select(StudentWorkExperience.id)
+                    .where(
+                        StudentWorkExperience.student_id == identity.user_id,
+                        StudentWorkExperience.tenant_id == identity.tenant_id,
+                    )
+                    .exists()
+                )
             ) or
             db.scalar(
-                select(select(StudentProject.id).where(
-                    StudentProject.student_id == identity.user_id,
-                    StudentProject.tenant_id == identity.tenant_id,
-                ).exists().as_scalar())
+                select(
+                    select(StudentProject.id)
+                    .where(
+                        StudentProject.student_id == identity.user_id,
+                        StudentProject.tenant_id == identity.tenant_id,
+                    )
+                    .exists()
+                )
             ) or False
         ),
         "skills": db.scalar(
-            select(select(StudentSkill.id).where(
-                StudentSkill.student_id == identity.user_id,
-                StudentSkill.tenant_id == identity.tenant_id,
-            ).exists().as_scalar())
+            select(
+                select(StudentSkill.id)
+                .where(
+                    StudentSkill.student_id == identity.user_id,
+                    StudentSkill.tenant_id == identity.tenant_id,
+                )
+                .exists()
+            )
         ) or False,
         "advantages": bool((student.personal_advantages or "").strip()),
     }
     has_resume = db.scalar(
-        select(select(StudentResume.id).where(
-            StudentResume.student_id == identity.user_id,
-            StudentResume.tenant_id == identity.tenant_id,
-        ).exists().as_scalar())
+        select(
+            select(StudentResume.id)
+            .where(
+                StudentResume.student_id == identity.user_id,
+                StudentResume.tenant_id == identity.tenant_id,
+            )
+            .exists()
+        )
     ) or False
     completed = sum(1 for v in items.values() if v)
     score = int(completed / len(items) * 100)

@@ -648,7 +648,7 @@ async def import_resume_file(
     if ext == ".json":
         # JSON 分支：直接解析校验
         try:
-            raw = json.loads(content.decode("utf-8"))
+            raw = json.loads(content.decode("utf-8-sig"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="JSON 文件格式错误，请检查后重试")
         if not isinstance(raw, dict):
