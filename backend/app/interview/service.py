@@ -7,15 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException, status
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.admin.models import ModelConfig
 from app.auth.service import AuthIdentity
-from app.core.llm_client import chat_completion
+from app.core.llm_client import chat_completion, voice_chat_completion
 from app.interview.exceptions import (
     InterviewError,
     InterviewLLMError,
@@ -25,9 +24,11 @@ from app.interview.exceptions import (
     InterviewReportExistsError,
     InterviewReportGenerationError,
 )
+from app.interview.progress import set_progress
 from app.interview.harness import (
     SCORE_KEYS,
     _filter_evidence_quotes,
+    _qa_score_question,
     _strict_bool,
     build_fallback_report,
     harness_should_finish_interview,
@@ -152,6 +153,7 @@ def serialize_turn(turn: InterviewTurn) -> dict:
     return {
         "id": turn.id,
         "turn_index": turn.turn_index,
+        "role": "candidate" if turn.answer else "interviewer",
         "question": turn.question,
         "answer": turn.answer,
         "answer_assessment": _json_loads(turn.answer_assessment, None),
@@ -228,6 +230,20 @@ def _latest_resume_snapshot(db: Session, identity: AuthIdentity) -> str:
     return resume.data_json[:8000]
 
 
+def _resume_snapshot_by_id(db: Session, identity: AuthIdentity, resume_id: int) -> str:
+    """根据指定的简历 ID 读取简历内容。"""
+    row = db.scalar(
+        select(StudentResume).where(
+            StudentResume.id == resume_id,
+            StudentResume.student_id == identity.user_id,
+            StudentResume.tenant_id == identity.tenant_id,
+        )
+    )
+    if not row:
+        raise InterviewError(status_code=404, detail="简历不存在")
+    return row.data_json[:12000]
+
+
 def _resume_source_label(source: str) -> str:
     if source == "upload":
         return "本次上传简历"
@@ -286,6 +302,22 @@ async def extract_uploaded_resume(upload: UploadFile) -> dict[str, Any]:
     }
 
 
+def _extract_resume_anchors(resume_snapshot: str) -> list[str]:
+    text = (resume_snapshot or "").strip()
+    if not text or "暂未" in text:
+        return []
+    anchors: list[str] = []
+    for line in text.splitlines():
+        item = line.strip(" -•\t")
+        if not item:
+            continue
+        if any(key in item for key in ("项目", "经历", "实习", "公司", "技术", "负责", "开发", "系统", "平台")):
+            anchors.append(item[:120])
+        if len(anchors) >= 5:
+            break
+    return anchors
+
+
 def _candidate_chat_models(
     db: Session,
     identity: AuthIdentity,
@@ -303,6 +335,57 @@ def _candidate_chat_models(
         )
         .order_by(ModelConfig.open_to_student.desc(), ModelConfig.capability.asc(), ModelConfig.id.asc())
     ).all())
+    if preferred_model_id:
+        models.sort(key=lambda item: 0 if item.id == preferred_model_id else 1)
+    return models
+
+
+def _candidate_voice_models(
+    db: Session,
+    identity: AuthIdentity,
+    preferred_model_id: int | None = None,
+) -> list[ModelConfig]:
+    """选择支持语音多模态（voice_multimodal）的模型，回退到 multimodal/chat。
+
+    排序保证 voice_multimodal 优先于 multimodal 优先于 chat。
+    """
+    # 分别查询，确保优先级
+    voice_models = list(db.scalars(
+        select(ModelConfig).where(
+            ModelConfig.tenant_id == identity.tenant_id,
+            ModelConfig.is_deleted.is_(False),
+            ModelConfig.status == "active",
+            ModelConfig.open_to_student.is_(True),
+            ModelConfig.api_key_cipher.is_not(None),
+            ModelConfig.capability == "voice_multimodal",
+        ).order_by(ModelConfig.id.asc())
+    ).all())
+
+    multi_models = list(db.scalars(
+        select(ModelConfig).where(
+            ModelConfig.tenant_id == identity.tenant_id,
+            ModelConfig.is_deleted.is_(False),
+            ModelConfig.status == "active",
+            ModelConfig.open_to_student.is_(True),
+            ModelConfig.api_key_cipher.is_not(None),
+            ModelConfig.capability == "multimodal",
+        ).order_by(ModelConfig.id.asc())
+    ).all())
+
+    chat_models = list(db.scalars(
+        select(ModelConfig).where(
+            ModelConfig.tenant_id == identity.tenant_id,
+            ModelConfig.is_deleted.is_(False),
+            ModelConfig.status == "active",
+            ModelConfig.open_to_student.is_(True),
+            ModelConfig.api_key_cipher.is_not(None),
+            ModelConfig.capability == "chat",
+        ).order_by(ModelConfig.id.asc())
+    ).all())
+
+    # voice_multimodal 最优先，multimodal 次之，chat 最后
+    models = voice_models + multi_models + chat_models
+
     if preferred_model_id:
         models.sort(key=lambda item: 0 if item.id == preferred_model_id else 1)
     return models
@@ -463,234 +546,20 @@ def _extract_job_skills(jd_text: str, user_skills: list[str]) -> list[str]:
     return found
 
 
-# ── 面试阶段状态机 ──────────────────────────────────────────────────────────────
+# ── 面试阶段状态机（P1-2: 已抽取到 state_machine.py）───────────────────────────
 
-STAGE_DEFINITIONS: dict[str, dict[str, str]] = {
-    "opening": {"label": "开场", "goal": "确认目标岗位与面试类型，建立氛围"},
-    "self_intro": {"label": "自我介绍", "goal": "考察候选人的自我认知和表达结构"},
-    "resume_deep_dive": {"label": "简历深挖", "goal": "验证项目真实性、个人贡献和量化结果"},
-    "technical_core": {"label": "核心技术", "goal": "考察岗位必备技术深度和原理理解"},
-    "scenario": {"label": "场景题", "goal": "考察系统设计、业务理解和问题拆解能力"},
-    "pressure": {"label": "压力追问", "goal": "考察抗压能力、证据意识和诚实度"},
-    "reverse_question": {"label": "反问环节", "goal": "考察候选人对岗位和公司的思考深度"},
-    "wrap_up": {"label": "收束复盘", "goal": "总结表现，给出改进方向"},
-    "completed": {"label": "已完成", "goal": "面试结束"},
-}
-
-_STAGE_ORDER = ["opening", "self_intro", "resume_deep_dive", "technical_core", "scenario", "pressure", "reverse_question", "wrap_up"]
-
-
-def _build_stage_plan(interview_type: str, round_limit: int, focus_tags: list[str]) -> list[dict]:
-    """根据面试类型和轮次生成阶段计划。"""
-    # 基础分配：按轮次均匀分配阶段（不含 wrap_up，最后单独加）
-    stages = [s for s in _STAGE_ORDER if s != "wrap_up"]
-    # 压力面跳过 self_intro
-    if interview_type == "stress":
-        stages = [s for s in stages if s != "self_intro"]
-    # HR 面跳过 technical_core
-    if interview_type == "hr":
-        stages = [s for s in stages if s not in ("technical_core", "pressure")]
-
-    plan: list[dict] = []
-    usable_rounds = max(1, round_limit - 1)  # 最后一轮留给 wrap_up
-    per_stage = max(1, usable_rounds // len(stages))
-    round_num = 1
-    for i, stage in enumerate(stages):
-        if i == len(stages) - 1:
-            # 最后一个阶段用完剩余轮次（不含 wrap_up）
-            end = usable_rounds
-        else:
-            end = min(round_num + per_stage - 1, usable_rounds)
-        rounds = list(range(round_num, end + 1))
-        if rounds:
-            plan.append({"stage": stage, "rounds": rounds})
-        round_num = end + 1
-    # wrap_up 固定在最后一轮
-    plan.append({"stage": "wrap_up", "rounds": [round_limit]})
-    return plan
-
-
-def _stage_for_turn(stage_plan: list[dict], turn_index: int) -> str:
-    """根据 turn_index 查找当前阶段。"""
-    for entry in stage_plan:
-        if turn_index in entry.get("rounds", []):
-            return entry["stage"]
-    return "opening"
-
-
-def _update_coverage(coverage: dict, stage: str, knowledge_points: list[str], score: dict) -> dict:
-    """更新阶段覆盖度统计。"""
-    if stage not in coverage:
-        coverage[stage] = {"turns": 0, "knowledge_points": [], "avg_score": 0, "scores": []}
-    entry = coverage[stage]
-    entry["turns"] += 1
-    for kp in knowledge_points:
-        if kp not in entry["knowledge_points"]:
-            entry["knowledge_points"].append(kp)
-    if isinstance(score, dict):
-        vals = [v for v in score.values() if isinstance(v, (int, float))]
-        if vals:
-            entry["scores"].append(sum(vals) / len(vals))
-            entry["avg_score"] = round(sum(entry["scores"]) / len(entry["scores"]), 1)
-    return coverage
-
-
-# ── 回答质量感知的阶段推进 ────────────────────────────────────────────────────
-
-def _compute_answer_quality(answer: str, score: dict | None, assessment: dict | None = None) -> tuple[float, bool, bool]:
-    """计算回答质量指标。
-
-    Returns:
-        (quality_score, is_vague, lacks_depth)
-        quality_score: 0-10 分，is_vague: 回答是否空泛，lacks_depth: 是否缺少深度
-    """
-    answer_len = len(answer.strip()) if answer else 0
-    # 基于长度的粗粒度评分
-    if answer_len < 30:
-        base = 2.0
-    elif answer_len < 80:
-        base = 4.0
-    elif answer_len < 200:
-        base = 6.0
-    else:
-        base = 7.0
-    is_vague = answer_len < 80
-    lacks_depth = answer_len < 150
-    # 如果有 score，结合评分提升
-    if isinstance(score, dict):
-        try:
-            vals = [float(v) for v in score.values() if isinstance(v, (int, float))]
-            if vals:
-                avg = sum(vals) / len(vals)
-                base = round((base + avg * 2) / 2, 1)
-        except Exception:
-            pass
-    # 如果 Model 判定回答空泛，强制降分
-    if isinstance(assessment, dict) and assessment.get("is_vague"):
-        is_vague = True
-        base = min(base, 4.0)
-    return round(min(10, max(0, base)), 1), is_vague, lacks_depth
-
-
-def _update_quality_metrics(coverage: dict, stage: str, quality_score: float, is_vague: bool) -> dict:
-    """在 coverage 中增加回答质量指标。"""
-    if stage not in coverage:
-        coverage[stage] = {"turns": 0, "knowledge_points": [], "avg_score": 0, "scores": [],
-                           "quality_scores": [], "avg_quality": 0, "vague_count": 0}
-    entry = coverage[stage]
-    entry.setdefault("quality_scores", [])
-    entry.setdefault("avg_quality", 0)
-    entry.setdefault("vague_count", 0)
-    entry["quality_scores"].append(quality_score)
-    entry["avg_quality"] = round(sum(entry["quality_scores"]) / len(entry["quality_scores"]), 1)
-    if is_vague:
-        entry["vague_count"] += 1
-    return coverage
-
-
-def _advance_stage(
-    current_stage: str,
-    stage_plan: list[dict],
-    turn_index: int,
-    round_limit: int,
-    coverage: dict,
-    quality_score: float,
-    is_vague: bool,
-) -> str:
-    """根据回答质量和阶段覆盖度决定是否推进阶段。
-
-    规则：
-    1. 如果当前阶段回答质量高（≥7）且该阶段已覆盖至少 2 轮，提前推进。
-    2. 如果当前阶段回答连续空泛 2 次（使用 consecutive_vague_count），保持当前阶段继续追问。
-    3. 如果当前阶段平均质量 ≥ 6 且已覆盖 ≥ 3 轮，推进到下一阶段。
-    4. 最后一轮必须是 wrap_up。
-    5. 其他情况按 stage_plan 走。
-    """
-    # 最后一轮强制 wrap_up
-    if turn_index >= round_limit - 1:
-        return "wrap_up"
-
-    # 查找当前阶段在 plan 中的位置
-    current_stage_idx = -1
-    for i, entry in enumerate(stage_plan):
-        if entry["stage"] == current_stage:
-            current_stage_idx = i
-            break
-
-    if current_stage_idx < 0:
-        return current_stage
-
-    stage_coverage = coverage.get(current_stage, {})
-    turns_in_stage = stage_coverage.get("turns", 0)
-    avg_quality = stage_coverage.get("avg_quality", 5)
-    # 使用连续空泛计数，而非累计空泛计数
-    consecutive_vague_count = stage_coverage.get("consecutive_vague_count", 0)
-
-    # 连续空泛，保持当前阶段
-    if consecutive_vague_count >= 2 and turns_in_stage < 4:
-        return current_stage
-
-    # 高质量回答 + 已覆盖 2 轮 → 提前推进
-    if quality_score >= 7 and turns_in_stage >= 2:
-        next_idx = current_stage_idx + 1
-        if next_idx < len(stage_plan):
-            return stage_plan[next_idx]["stage"]
-        return current_stage
-
-    # 平均质量 ≥ 6 + 已覆盖 3 轮 → 推进
-    if avg_quality >= 6 and turns_in_stage >= 3:
-        next_idx = current_stage_idx + 1
-        if next_idx < len(stage_plan):
-            return stage_plan[next_idx]["stage"]
-        return current_stage
-
-    # 按 plan 走：如果当前 turn 已超出当前阶段的 rounds 范围，推进
-    current_rounds = stage_plan[current_stage_idx].get("rounds", [])
-    if current_rounds and turn_index > max(current_rounds):
-        next_idx = current_stage_idx + 1
-        if next_idx < len(stage_plan):
-            return stage_plan[next_idx]["stage"]
-
-    return current_stage
-
-
-def _should_skip_stage(stage: str, interview_type: str) -> bool:
-    """判断某些阶段是否应该跳过。"""
-    if stage == "self_intro" and interview_type == "stress":
-        return True
-    if stage == "technical_core" and interview_type == "hr":
-        return True
-    if stage == "pressure" and interview_type == "hr":
-        return True
-    return False
-
-
-# wrap_up 阶段允许的问题类型
-_WRAP_UP_QUESTION_TYPES = {"wrap_up", "self_review", "reflection", "summary", "closing", "reverse_question"}
-
-# 技术深挖关键词（wrap_up 阶段不应出现）
-_DEEP_DIVE_INDICATORS = [
-    "算法", "数据结构", "系统设计", "手写", "实现一下", "代码实现",
-    "时间复杂度", "空间复杂度", "设计模式", "源码", "底层原理",
-    "分布式事务", "CAP 定理", "一致性哈希", "高并发", "压测",
-    "请实现", "请写一个", "请设计", "请手撕",
-]
-
-
-def _is_valid_wrap_up_question(question: str, question_type: str) -> bool:
-    """判断 wrap_up 阶段的问题是否合法。
-
-    合法的 wrap_up 问题必须是：
-    1. question_type 是 wrap_up / self_review / reflection / summary / closing / reverse_question
-    2. 问题不包含技术深挖、算法题、系统设计题等关键词
-    """
-    if question_type not in _WRAP_UP_QUESTION_TYPES:
-        return False
-    q_lower = question.lower()
-    for indicator in _DEEP_DIVE_INDICATORS:
-        if indicator in q_lower:
-            return False
-    return True
+from app.interview.state_machine import (
+    STAGE_DEFINITIONS,
+    _STAGE_ORDER,
+    advance_stage,
+    build_stage_plan,
+    compute_answer_quality,
+    is_valid_wrap_up_question,
+    should_skip_stage,
+    stage_for_turn,
+    update_coverage,
+    update_quality_metrics,
+)
 
 
 def _get_effective_focus_points(retrieved: list[dict]) -> list[str]:
@@ -794,6 +663,7 @@ def _build_fallback_training_plan(weakest_dim: str) -> list[dict]:
 
 
 def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStartRequest) -> dict:
+    request_id = payload.request_id
     # ── 目标岗位强制必填 ──
     target_role = (payload.target_role or "").strip()
     if not target_role:
@@ -804,18 +674,23 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     if not job_description:
         raise InterviewError(status_code=400, detail="请填写岗位 JD")
 
+    set_progress(request_id, stage="resume", status="active", message="正在读取用户选择的在线简历")
     if payload.resume_source == "upload":
         resume_snapshot = (payload.uploaded_resume_text or "").strip()[:12000]
         if not resume_snapshot:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择并上传一份可读取的简历")
+    elif payload.resume_id:
+        resume_snapshot = _resume_snapshot_by_id(db, identity, payload.resume_id)
     else:
         resume_snapshot = _latest_resume_snapshot(db, identity)
+    set_progress(request_id, stage="jd", status="active", message="正在分析岗位 JD")
     index = get_knowledge_index()
     retrieved = index.search(
         f"{target_role} {job_description} 面试 项目 技术基础",
         target_role=target_role,
         limit=6,
     )
+    set_progress(request_id, stage="match", status="active", message="正在匹配简历经历与岗位要求")
     type_cfg = INTERVIEW_TYPE_CONFIG.get(payload.interview_type, INTERVIEW_TYPE_CONFIG["technical"])
     style_cfg = INTERVIEW_STYLE_CONFIG.get(payload.interview_style, INTERVIEW_STYLE_CONFIG["strict"])
     resume_source_label = _resume_source_label(payload.resume_source)
@@ -834,7 +709,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     job_profile_summary = "，".join(job_profile_parts)
 
     # ── 阶段计划 ──
-    stage_plan = _build_stage_plan(payload.interview_type, payload.round_limit, list(payload.focus_tags))
+    stage_plan = build_stage_plan(payload.interview_type, payload.round_limit, list(payload.focus_tags))
     current_stage = "opening"
 
     fallback_start = {
@@ -853,7 +728,19 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
 
     # Prompt 注入岗位画像信息
     profile_injection = f"\n【岗位画像】{job_profile_summary}" if job_skills or company_name or seniority_level else ""
+    set_progress(request_id, stage="rag", status="active", message="正在检索题库/RAG")
     effective_focus = _get_effective_focus_points(retrieved)
+
+    # P0: 简历事实锚点提取
+    resume_anchors = _extract_resume_anchors(resume_snapshot)
+    anchor_injection = ""
+    if resume_anchors:
+        anchor_injection = (
+            "\n\n【必须引用的简历事实锚点】\n"
+            + "\n".join(f"- {a}" for a in resume_anchors)
+            + '\n\n第一问必须至少引用其中一个具体项目、经历、技能或职责。不得只说"我已经读取了你的简历"。'
+        )
+
     start_prompt = _render_template(
         START_USER_PROMPT,
         {
@@ -865,10 +752,13 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
             "interview_style_rule": style_cfg["rule"],
             "focus_tags": "、".join(payload.focus_tags[:8]) or "、".join(effective_focus),
             "custom_instruction": payload.custom_instruction or "无",
+            "round_limit": payload.round_limit,
             "resume_summary": resume_snapshot,
             "retrieved_context": json.dumps(retrieved, ensure_ascii=False),
         },
     )
+    start_prompt += anchor_injection
+    set_progress(request_id, stage="llm", status="active", message="正在生成第一问")
     start_parsed, start_llm_meta = run_harnessed_json_generation(
         db,
         task_name="start_interview",
@@ -876,12 +766,14 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         user_prompt=start_prompt,
         fallback=fallback_start,
         validator=validate_start_output,
+        context={"resume_anchors": resume_anchors},
         identity=identity,
         preferred_model_id=payload.model_id,
         temperature=0.35,
         max_tokens=2500,
         max_retries=2,
     )
+    set_progress(request_id, stage="harness", status="active", message="正在校验第一问是否围绕简历和 JD")
     intro = str(start_parsed.get("first_question") or fallback_start["first_question"])
     knowledge_points = start_parsed.get("knowledge_points") if isinstance(start_parsed.get("knowledge_points"), list) else fallback_start["knowledge_points"]
     question_reason = str(start_parsed.get("question_reason") or fallback_start["question_reason"])
@@ -948,6 +840,7 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     db.commit()
     db.refresh(session)
     db.refresh(turn)
+    set_progress(request_id, stage="done", status="done", message="第一问已生成", done=True)
     return {"session": _serialize_session(session), "first_turn": serialize_turn(turn), "knowledge_status": knowledge_status()}
 
 
@@ -1061,7 +954,7 @@ def submit_turn(
     stage_injection = f"\n【当前面试阶段】{stage_def['label']}——{stage_def['goal']}"
 
     # ── 当前回答质量初判（注入给模型）──
-    pre_quality_score, pre_is_vague, pre_lacks_depth = _compute_answer_quality(answer, None, None)
+    pre_quality_score, pre_is_vague, pre_lacks_depth = compute_answer_quality(answer, None, None)
     current_quality_injection = (
         f"\n【当前回答质量初判】\n"
         f"质量分：{pre_quality_score}/10\n"
@@ -1091,7 +984,7 @@ def submit_turn(
         prev_score_data = _json_loads(last_turn.score_json, None)
         prev_assessment_data = _json_loads(last_turn.answer_assessment, None)
         if prev_score_data and prev_assessment_data:
-            prev_quality, prev_vague, prev_lacks = _compute_answer_quality(
+            prev_quality, prev_vague, prev_lacks = compute_answer_quality(
                 last_turn.answer, prev_score_data, prev_assessment_data
             )
             feedback_text = _render_template(QUALITY_FEEDBACK_PROMPT, {
@@ -1111,6 +1004,12 @@ def submit_turn(
         FOLLOWUP_USER_PROMPT,
         {
             "task_subprompt": task_subprompt,
+            "round_context": f"【轮次信息】当前第 {current.turn_index + 1} 轮，共 {session.round_limit} 轮。"
+            + (
+                f" 这是倒数第 {max(1, session.round_limit - current.turn_index)} 轮，请准备收束面试。"
+                if session.round_limit - current.turn_index <= 2
+                else ""
+            ),
             "context_block": context_block,
             "conversation_block": conversation_block,
         },
@@ -1138,6 +1037,47 @@ def submit_turn(
         max_tokens=2500,
         max_retries=2,
     )
+
+    # ── QA 打分：对 next_question 做质量检查，低于 6 分触发一次轻量重试 ──
+    raw_next_q = str(parsed.get("next_question") or "").strip()
+    qa_score, qa_issues = _qa_score_question(raw_next_q)
+    if qa_score < 6 and raw_next_q:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("submit_turn QA score=%.1f (<6), issues=%s — triggering lightweight retry", qa_score, qa_issues)
+        retry_prompt_parts = [
+            "你的上一个 next_question 质量不达标，请重新生成一个更具体的追问。",
+            f"【原问题】{raw_next_q}",
+            f"【质量问题】{'；'.join(qa_issues)}",
+            "【要求】新问题必须有明确的验证目标，引用候选人回答中的具体内容，禁止泛泛收尾。",
+            "只输出 next_question 字段的文本内容，不要输出 JSON。",
+        ]
+        retry_prompt = "\n".join(retry_prompt_parts)
+        from app.core.llm_client import chat_completion
+        models = _candidate_chat_models(db, identity, session.model_config_id)
+        if models:
+            try:
+                retry_result = chat_completion(
+                    models[0],
+                    system_prompt="你是一个严格的技术面试官。请根据要求重新生成一个高质量的追问。只输出问题文本。",
+                    variables={},
+                    memory=[],
+                    user_message=retry_prompt,
+                    temperature=0.4,
+                    max_tokens=300,
+                )
+                retry_q = str(retry_result.get("reply") or "").strip()
+                retry_score, retry_issues = _qa_score_question(retry_q)
+                if retry_score >= 6 and retry_q:
+                    parsed["next_question"] = retry_q
+                    llm_meta["qa_retry"] = True
+                    llm_meta["qa_retry_score"] = retry_score
+                else:
+                    llm_meta["qa_retry"] = False
+                    llm_meta["qa_retry_score"] = retry_score
+                    llm_meta["qa_retry_issues"] = retry_issues
+            except Exception as exc:
+                llm_meta["qa_retry"] = False
+                llm_meta["qa_retry_error"] = str(exc)[:180]
     score = parsed.get("score") if isinstance(parsed.get("score"), dict) else fallback["score"]
     assessment = parsed.get("answer_assessment") if isinstance(parsed.get("answer_assessment"), dict) else fallback["answer_assessment"]
     knowledge_points = parsed.get("knowledge_points") if isinstance(parsed.get("knowledge_points"), list) else fallback["knowledge_points"]
@@ -1147,7 +1087,7 @@ def submit_turn(
     evidence_quotes = _filter_evidence_quotes(parsed.get("evidence_quotes"), answer)
 
     # ── 计算回答质量指标 ──
-    quality_score, is_vague, lacks_depth = _compute_answer_quality(answer, score, assessment)
+    quality_score, is_vague, lacks_depth = compute_answer_quality(answer, score, assessment)
 
     current.answer = answer
     current.submit_request_id = request_id
@@ -1173,8 +1113,8 @@ def submit_turn(
 
     # ── 更新阶段覆盖度 + 质量指标（区分累计空泛和连续空泛）──
     coverage = _json_loads(session.coverage_json, {})
-    coverage = _update_coverage(coverage, current_stage, knowledge_points, score)
-    coverage = _update_quality_metrics(coverage, current_stage, quality_score, is_vague)
+    coverage = update_coverage(coverage, current_stage, knowledge_points, score)
+    coverage = update_quality_metrics(coverage, current_stage, quality_score, is_vague)
     # 更新连续空泛计数
     if current_stage not in coverage:
         coverage[current_stage] = {}
@@ -1208,13 +1148,17 @@ def submit_turn(
         session.status = "completed"
         session.current_stage = "completed"
         session.ended_at = datetime.now(timezone.utc)
+        # 强制出题三件套：即使结束，也将模型生成的收束性提问写入 followup_reason 供前端展示
+        closing_question = str(parsed.get("next_question") or "").strip()
+        if closing_question:
+            current.followup_reason = closing_question
         report = generate_report(db, identity, session.id, commit=False)
         report_id = report.id
     else:
         # ── 计算下一阶段（回答质量感知，使用连续空泛）──
         stage_plan = _json_loads(session.stage_plan_json, [])
         previous_stage = current_stage
-        next_stage = _advance_stage(
+        next_stage = advance_stage(
             current_stage=current_stage,
             stage_plan=stage_plan,
             turn_index=current.turn_index + 1,
@@ -1224,7 +1168,7 @@ def submit_turn(
             is_vague=is_vague,
         )
         # 跳过不适用的阶段
-        while _should_skip_stage(next_stage, session.interview_type) and next_stage != "wrap_up":
+        while should_skip_stage(next_stage, session.interview_type) and next_stage != "wrap_up":
             idx = _STAGE_ORDER.index(next_stage) if next_stage in _STAGE_ORDER else -1
             if idx >= 0 and idx + 1 < len(_STAGE_ORDER):
                 next_stage = _STAGE_ORDER[idx + 1]
@@ -1239,7 +1183,7 @@ def submit_turn(
 
         # wrap_up 阶段强制收束：不只是 next_question 为空时 fallback
         if next_stage == "wrap_up":
-            if not _is_valid_wrap_up_question(next_question, next_question_type):
+            if not is_valid_wrap_up_question(next_question, next_question_type):
                 wrap_fallback = _wrap_up_fallback(session.target_role)
                 next_question = wrap_fallback["next_question"]
                 next_question_type = wrap_fallback.get("question_type", "wrap_up")
@@ -1316,6 +1260,175 @@ def submit_turn(
         "next_turn": serialize_turn(next_turn) if next_turn else None,
         "is_finished": should_finish,
         "report_id": report_id,
+    }
+
+
+# ── 语音面试管线（Voice Pipeline）──────────────────────────────────────────────
+#
+# 架构原则：
+# - Mimo v2.5 在语音链路中 **只负责音频转写**
+# - 评分、追问、阶段推进、报告生成必须走 submit_turn / state_machine / harness
+# - 语音回答最终进入 submit_turn(...)，不绕过任何 Harness 校验
+
+VOICE_TRANSCRIPT_SYSTEM_PROMPT = """你是一个音频转写模块。你会收到一段候选人的语音音频。
+
+你的唯一任务是：将音频内容准确转写为文字。
+
+输出 JSON 格式（只输出这个格式，不要输出其他内容）：
+{
+  "text": "音频转写的完整文字内容",
+  "language": "zh-CN",
+  "confidence": 0.9
+}
+
+注意：
+- 只做转写，不要评估、不要评分、不要生成问题。
+- 如实转写，不要编造、补充或改写内容。
+- 如果音频无法识别，text 字段返回空字符串。
+- confidence 为 0-1 之间的浮点数，表示转写置信度。
+"""
+
+
+async def voice_submit_turn(
+    db: Session,
+    identity: AuthIdentity,
+    session_id: int,
+    *,
+    turn_id: int,
+    audio_file: UploadFile,
+    request_id: str | None = None,
+) -> dict:
+    """语音面试回答（标准接口）。
+
+    流程：
+    1. 验证音频文件格式和大小
+    2. 调用 VLM 转写音频（只做转写，不做评分/出题）
+    3. 将转写文本直接传入 submit_turn() 走统一管线
+    4. 返回 {transcript, turn_result}
+
+    Mimo v2.5 只负责转写，评分/追问/阶段推进全部由 submit_turn 管线处理。
+    """
+    # ── 验证音频文件 ──
+    _ALLOWED_MIME_PREFIXES = ["audio/", "video/webm"]
+    _MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10MB
+
+    content_type = audio_file.content_type or ""
+    if not any(content_type.startswith(prefix) for prefix in _ALLOWED_MIME_PREFIXES):
+        raise InterviewError(
+            status_code=400,
+            detail=f"不支持的文件类型：{content_type}，请上传音频文件 (webm/wav/mp3/ogg)",
+        )
+
+    audio_bytes = await audio_file.read()
+    if len(audio_bytes) > _MAX_AUDIO_BYTES:
+        raise InterviewError(status_code=400, detail=f"音频文件过大（{len(audio_bytes) // (1024*1024)}MB），最大支持 10MB")
+    if len(audio_bytes) < 100:
+        raise InterviewError(status_code=400, detail="音频数据过短，请重新录音")
+
+    # ── 选择语音模型并转写 ──
+    import base64 as _b64
+    audio_base64 = _b64.b64encode(audio_bytes).decode("utf-8")
+
+    # 从 content_type 推断格式
+    audio_format = "webm"
+    if "wav" in content_type:
+        audio_format = "wav"
+    elif "mp3" in content_type or "mpeg" in content_type:
+        audio_format = "mp3"
+    elif "ogg" in content_type:
+        audio_format = "ogg"
+    elif "mp4" in content_type or "m4a" in content_type:
+        audio_format = "mp4"
+
+    models = _candidate_voice_models(db, identity, None)
+    if not models:
+        raise InterviewError(status_code=503, detail="暂无支持语音的模型，请联系管理员配置。")
+
+    transcript_text = ""
+    confidence = 0.0
+    language = "zh-CN"
+
+    for model in models:
+        try:
+            result = voice_chat_completion(
+                model,
+                system_prompt=VOICE_TRANSCRIPT_SYSTEM_PROMPT,
+                audio_base64=audio_base64,
+                audio_format=audio_format,
+                temperature=0.1,
+                max_tokens=1000,
+            )
+            parsed = _extract_json(result["reply"])
+            if parsed and parsed.get("text"):
+                transcript_text = str(parsed["text"]).strip()
+                confidence = float(parsed.get("confidence", 0.8))
+                language = str(parsed.get("language", "zh-CN"))
+                break
+        except Exception:
+            continue
+
+    if not transcript_text:
+        raise InterviewError(status_code=422, detail="音频转写失败，未识别到有效内容。请重新录音或切换为文字模式。")
+
+    # ── 核心：直接调用 submit_turn，走统一管线 ──
+    turn_result = submit_turn(
+        db, identity, session_id, transcript_text,
+        request_id=request_id,
+        turn_id=turn_id,
+    )
+
+    # 注入语音元数据到 answer_assessment
+    current_turn_data = turn_result.get("current_turn")
+    if current_turn_data and isinstance(current_turn_data.get("answer_assessment"), dict):
+        assessment = current_turn_data["answer_assessment"]
+        assessment["voice_meta"] = {
+            "input_mode": "voice",
+            "audio_format": audio_format,
+            "audio_size_bytes": len(audio_bytes),
+            "transcript_confidence": confidence,
+            "transcript_language": language,
+        }
+        current_turn_obj = db.get(InterviewTurn, current_turn_data["id"])
+        if current_turn_obj:
+            current_turn_obj.answer_assessment = _json_dumps(assessment)
+            db.commit()
+
+    return {
+        "transcript": {
+            "text": transcript_text,
+            "language": language,
+            "confidence": confidence,
+        },
+        "turn_result": turn_result,
+    }
+
+
+def get_turn_tts_text(
+    db: Session,
+    identity: AuthIdentity,
+    session_id: int,
+    turn_id: int,
+) -> dict:
+    """获取面试官问题文本（供前端 TTS 朗读）。
+
+    只读取数据库中已有的 turn.question，不重新生成。
+    返回结构包含 mode 字段，区分 server_tts / browser_tts。
+    当前默认返回 browser_tts，后续接入 Mimo TTS 后可切换。
+    """
+    session = _get_session(db, identity, session_id)
+    turn = db.get(InterviewTurn, turn_id)
+    if not turn or turn.session_id != session.id:
+        raise InterviewError(status_code=404, detail="问题不存在")
+    return {
+        "mode": "browser_tts",
+        "text": turn.question,
+        "audio_base64": None,
+        "content_type": None,
+        "provider": None,
+        "reason": "当前未配置服务端 TTS，前端将使用浏览器朗读",
+        "turn_id": turn.id,
+        "question_text": turn.question,
+        "turn_index": turn.turn_index,
     }
 
 

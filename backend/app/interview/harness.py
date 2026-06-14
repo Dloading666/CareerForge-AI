@@ -126,7 +126,33 @@ def _looks_like_single_question(text: str) -> bool:
     return True
 
 
-# ── 证据引用过滤 ──────────────────────────────────────────────────────────────
+# ── 反套路：泛泛收尾问题检测 ───────────────────────────────────────────────────
+
+_FILLER_PATTERNS = [
+    "你觉得呢",
+    "你怎么看",
+    "还有什么想补充的吗",
+    "还有什么想说的吗",
+    "你还有什么要补充",
+    "你有什么想法",
+    "你觉得怎么样",
+    "你认为呢",
+    "补充一下吧",
+    "说说你的想法",
+]
+
+
+def _is_generic_filler_question(text: str) -> bool:
+    """检测是否为泛泛收尾问题（反套路规则）。
+
+    只有当问题主体就是这些泛泛表达时才拦截，
+    如果泛泛表达只是问题的一部分（如「你觉得 Redis 和 Memcached 的区别是什么？」）则放行。
+    """
+    text_clean = text.strip().rstrip("？?。.!！")
+    for pattern in _FILLER_PATTERNS:
+        if text_clean == pattern or text_clean == f"那{pattern}" or text_clean == f"那么{pattern}":
+            return True
+    return False
 
 def _filter_evidence_quotes(quotes: Any, answer: str) -> list[dict[str, Any]]:
     """过滤证据引用，只保留能在 answer 中匹配到的 quote。"""
@@ -362,6 +388,27 @@ def validate_start_output(data: dict[str, Any], context: dict[str, Any]) -> list
         # 禁止内容检查
         if _contains_forbidden_text(first_question):
             errors.append("first_question 包含禁止泄漏的内容")
+        # 开场语必须包含"已读简历"表述
+        _opening_indicators = ["读取", "简历", "看过", "阅读", "了解了", "看过你的"]
+        if not any(indicator in first_question for indicator in _opening_indicators):
+            errors.append("first_question 缺少「已读简历」表述（开场语需体现面试官已阅读候选人简历）")
+        # P0: 简历锚点引用校验
+        resume_anchors = context.get("resume_anchors") if context else None
+        if resume_anchors and isinstance(resume_anchors, list) and len(resume_anchors) > 0:
+            fq_lower = first_question.lower()
+            anchor_hit = False
+            for anchor in resume_anchors:
+                # 从 anchor 中提取关键词（取 2-6 字的片段）
+                anchor_clean = anchor.strip(" -•\t")
+                if not anchor_clean:
+                    continue
+                # 检查 anchor 中的关键词是否出现在 first_question 中
+                keywords = [kw for kw in re.split(r"[，,、。；;：:（）()\s]+", anchor_clean) if len(kw) >= 2]
+                if any(kw.lower() in fq_lower for kw in keywords):
+                    anchor_hit = True
+                    break
+            if not anchor_hit:
+                errors.append("first_question 未引用简历中的具体项目/经历/技能")
 
     # focus_points 是 1 到 6 个字符串
     focus_points = data.get("focus_points")
@@ -376,10 +423,29 @@ def validate_start_output(data: dict[str, Any], context: dict[str, Any]) -> list
         if not isinstance(knowledge_points, list):
             errors.append("knowledge_points 不是数组")
 
+    # P1-1: resume_brief 必须是非空字符串
+    resume_brief = str(data.get("resume_brief") or "").strip()
+    if not resume_brief:
+        errors.append("resume_brief 为空")
+
+    # P1-1: question_reason 必须是非空字符串
+    question_reason = str(data.get("question_reason") or "").strip()
+    if not question_reason:
+        errors.append("question_reason 为空")
+
+    # P1-1: question_type 必须是非空字符串
+    question_type = str(data.get("question_type") or "").strip()
+    if not question_type:
+        errors.append("question_type 为空")
+
+    # P1-1: capability_tags 必须是字符串数组
+    capability_tags = data.get("capability_tags")
+    if not isinstance(capability_tags, list):
+        errors.append("capability_tags 必须是数组")
+    elif not all(isinstance(item, str) for item in capability_tags):
+        errors.append("capability_tags 必须是字符串数组")
+
     return errors
-
-
-# ── AnswerReviewLoop 校验 ────────────────────────────────────────────────────
 
 def validate_followup_output(data: dict[str, Any], context: dict[str, Any]) -> list[str]:
     """校验 AnswerReviewLoop 的模型输出。
@@ -483,16 +549,19 @@ def validate_followup_output(data: dict[str, Any], context: dict[str, Any]) -> l
     should_end = _strict_bool(should_end_raw)
 
     next_question = str(data.get("next_question") or "").strip()
-    if not should_end:
-        if not next_question:
-            errors.append("should_end=false 但 next_question 为空")
-        else:
-            # 只能包含一个主问题
-            if not _looks_like_single_question(next_question):
-                errors.append("next_question 包含多个主问题")
-            # 禁止内容检查
-            if _contains_forbidden_text(next_question):
-                errors.append("next_question 包含禁止泄漏的内容")
+    # 强制出题三件套：next_question 必须非空，即使 should_end=true
+    if not next_question:
+        errors.append("next_question 为空（违反强制出题三件套规则，即使 should_end=true 也必须给出收束性提问）")
+    else:
+        # 只能包含一个主问题
+        if not _looks_like_single_question(next_question):
+            errors.append("next_question 包含多个主问题")
+        # 禁止内容检查
+        if _contains_forbidden_text(next_question):
+            errors.append("next_question 包含禁止泄漏的内容")
+        # 反套路检查：禁止泛泛收尾
+        if _is_generic_filler_question(next_question):
+            errors.append(f"next_question 是泛泛收尾问题（如「你觉得呢？」），违反反套路规则：「{next_question[:50]}」")
 
     # evidence_quotes 引用内容必须能在 last_answer 中找到（使用归一化匹配）
     last_answer = str(context.get("last_answer") or "")
@@ -641,17 +710,96 @@ def validate_report_output(data: dict[str, Any], context: dict[str, Any]) -> lis
     if report_text and _contains_forbidden_text(report_text):
         errors.append("report_text 包含禁止泄漏的内容")
 
-    # training_plan 是数组
+    # P1-1: training_plan 必须是非空数组
     training_plan = data.get("training_plan")
-    if training_plan is not None and not isinstance(training_plan, list):
-        errors.append("training_plan 不是数组")
+    if not isinstance(training_plan, list) or len(training_plan) == 0:
+        errors.append("training_plan 为空或不是数组")
 
-    # rewrite_examples 是数组
+    # P1-1: rewrite_examples 必须是数组（允许空数组）
     rewrite_examples = data.get("rewrite_examples")
-    if rewrite_examples is not None and not isinstance(rewrite_examples, list):
+    if not isinstance(rewrite_examples, list):
         errors.append("rewrite_examples 不是数组")
 
+    # P1-1: next_session_preset 必须是对象
+    next_session_preset = data.get("next_session_preset")
+    if next_session_preset is not None and not isinstance(next_session_preset, dict):
+        errors.append("next_session_preset 不是对象")
+
     return errors
+
+
+# ── 问题质量 QA 打分 ─────────────────────────────────────────────────────────
+
+# 高质量指标词：表明问题有具体验证目标
+_SPECIFIC_INDICATORS = [
+    "具体", "哪个", "什么场景", "举个例子", "量化", "指标", "数据",
+    "多少", "几个", "百分比", "QPS", "TPS", "延迟", "耗时",
+    "异常", "故障", "边界", "极端", "压力", "并发",
+    "为什么", "怎么实现", "原理", "底层", "源码",
+    "取舍", "权衡", "对比", "区别", "优缺点",
+    "你当时", "你亲自", "你在项目中", "你的职责",
+]
+
+# 低质量指标词：表明问题可能过于泛泛
+_VAGUE_INDICATORS = [
+    "介绍一下", "谈谈", "聊聊", "说说", "讲讲",
+    "你的理解", "你怎么理解", "你认为",
+]
+
+
+def _qa_score_question(question: str) -> tuple[float, list[str]]:
+    """对生成的问题进行质量打分（0-10）。
+
+    Returns:
+        (score, issues) — score >= 6 为合格，issues 为具体问题列表
+    """
+    issues: list[str] = []
+    score = 7.0  # 基准分
+
+    q = question.strip()
+    if not q:
+        return 0.0, ["问题为空"]
+
+    # 长度检查
+    if len(q) < 15:
+        score -= 2.0
+        issues.append("问题过短（<15字），缺少具体验证方向")
+    elif len(q) > 250:
+        score -= 1.0
+        issues.append("问题过长（>250字），可能包含多个子问题")
+
+    # 具体性加分
+    specific_count = sum(1 for w in _SPECIFIC_INDICATORS if w in q)
+    if specific_count >= 2:
+        score += 1.0
+    elif specific_count == 0:
+        score -= 1.5
+        issues.append("缺少具体验证指标词（如具体/哪个/量化/为什么）")
+
+    # 泛泛扣分
+    vague_count = sum(1 for w in _VAGUE_INDICATORS if w in q)
+    if vague_count >= 2:
+        score -= 2.0
+        issues.append("包含多个泛泛表达（如「介绍一下」「谈谈」）")
+    elif vague_count == 1 and specific_count == 0:
+        score -= 1.0
+        issues.append("以泛泛表达开头且无具体验证目标")
+
+    # 反套路：检查是否是纯收尾
+    if _is_generic_filler_question(q):
+        score -= 3.0
+        issues.append("是泛泛收尾问题（反套路规则）")
+
+    # 问号检查
+    q_count = q.count("?") + q.count("？")
+    if q_count == 0:
+        score -= 1.0
+        issues.append("不含问号，可能不是提问")
+    elif q_count > 2:
+        score -= 1.5
+        issues.append(f"包含 {q_count} 个问号，可能包含多个子问题")
+
+    return round(max(0, min(10, score)), 1), issues
 
 
 # ── FinishDecisionLoop（纯代码，不调用模型）────────────────────────────────────

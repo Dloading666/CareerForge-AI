@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.auth.service import require_role
 from app.core.response import ok
 from app.infra.db import get_db
 from app.interview.schemas import InterviewStartRequest, InterviewTurnRequest
+from app.interview.progress import get_progress, set_progress
 from app.interview.service import (
     delete_interview,
     delete_report,
@@ -14,12 +16,13 @@ from app.interview.service import (
     generate_report,
     get_interview_detail,
     get_report,
+    get_turn_tts_text,
     knowledge_status,
     list_interviews,
-    reload_knowledge_status,
     serialize_report,
     start_interview,
     submit_turn,
+    voice_submit_turn,
     extract_uploaded_resume,
 )
 
@@ -34,9 +37,24 @@ def get_knowledge_status(current=Depends(require_role("student"))):
     return ok(knowledge_status())
 
 
-@router.post("/knowledge/reload")
-def reload_knowledge(current=Depends(require_role("student"))):
-    return ok(reload_knowledge_status())
+# P0-5: 学生端已移除 knowledge reload，需要时由管理员通过 admin 路由操作
+
+
+@router.get("/progress/{request_id}")
+def get_interview_progress(
+    request_id: str,
+    current=Depends(require_role("student")),
+):
+    progress = get_progress(request_id)
+    if not progress:
+        return ok({
+            "stage": "unknown",
+            "status": "pending",
+            "message": "等待任务开始",
+            "done": False,
+            "error": None,
+        })
+    return ok(progress)
 
 
 @router.post("/resume/extract")
@@ -54,7 +72,11 @@ def create_interview(
     current=Depends(require_role("student")),
 ):
     identity, _ = current
-    return ok(start_interview(db, identity, payload), msg="created")
+    try:
+        return ok(start_interview(db, identity, payload), msg="created")
+    except Exception as exc:
+        set_progress(payload.request_id, stage="error", status="error", message="创建面试失败", done=True, error=str(exc))
+        raise
 
 
 @router.get("")
@@ -111,6 +133,51 @@ def answer_turn(
         request_id=payload.request_id,
         turn_id=payload.turn_id,
     ))
+
+
+# ── 语音面试接口（标准 multipart/form-data）────────────────────────────────────
+
+
+@router.post("/{session_id}/turns/voice")
+async def voice_answer_turn(
+    session_id: int,
+    file: UploadFile = File(..., description="音频文件 (webm/wav/mp3/ogg)"),
+    turn_id: int = Form(..., description="当前问题 ID"),
+    request_id: str | None = Form(default=None, description="幂等请求 ID"),
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """语音面试回答（标准接口）。
+
+    接收 multipart/form-data 音频文件，转写后直接调用 submit_turn。
+    返回转写文本 + 面试结果（与文字模式完全相同的管线）。
+    """
+    identity, _ = current
+    return ok(await voice_submit_turn(
+        db, identity, session_id,
+        turn_id=turn_id,
+        audio_file=file,
+        request_id=request_id,
+    ))
+
+
+@router.get("/{session_id}/turns/{turn_id}/voice/reply")
+def get_voice_reply(
+    session_id: int,
+    turn_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """获取面试官问题的文本（供前端 TTS 朗读）。
+
+    只读取数据库中已有的 turn.question，不重新生成。
+    前端使用浏览器 SpeechSynthesis 或服务端 TTS 将其转为语音。
+    """
+    identity, _ = current
+    return ok(get_turn_tts_text(db, identity, session_id, turn_id))
+
+
+# ── 报告接口 ─────────────────────────────────────────────────────────────────
 
 
 @router.post("/{session_id}/finish")

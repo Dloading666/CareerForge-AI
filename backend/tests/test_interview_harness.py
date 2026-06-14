@@ -440,9 +440,13 @@ class QuestionGroundingTests(unittest.TestCase):
 class ValidateStartOutputPassTests(unittest.TestCase):
     def test_valid_start_output_passes(self):
         data = {
-            "first_question": "请围绕你简历中的一个项目，说明你在其中的具体职责和量化结果。",
+            "resume_brief": "候选人有 3 年 Java 后端经验，简历中提到了 Redis 缓存和 MySQL 优化项目。",
+            "first_question": "我看到你在简历中提到了 Redis 缓存优化的项目，请围绕这个项目说明你在其中的具体职责、技术方案和量化结果。",
             "focus_points": ["项目真实性", "岗位匹配"],
             "knowledge_points": ["Redis", "MySQL"],
+            "question_reason": "围绕简历中的 Redis 项目验证候选人的真实参与度和技术深度。",
+            "question_type": "resume_deep_dive",
+            "capability_tags": ["项目证据", "技术深度"],
         }
         errors = validate_start_output(data, {})
         self.assertEqual(errors, [])
@@ -805,8 +809,64 @@ class NormalizeTextForMatchTests(unittest.TestCase):
 
     def test_strips_quotes(self):
         # Curly quotes should be normalized to straight quotes
-        result = _normalize_text_for_match("“Redis”")
+        result = _normalize_text_for_match('\u201cRedis\u201d')
         self.assertIn('"', result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# P0: 简历锚点引用校验
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ResumeAnchorTests(unittest.TestCase):
+    """validate_start_output 必须校验 first_question 是否引用简历锚点。"""
+
+    def test_anchor_present_but_not_referenced_rejected(self):
+        """有锚点但 first_question 未引用任何锚点，应失败。"""
+        data = {
+            "resume_brief": "候选人有 Redis 项目经验",
+            "first_question": "我已经读取了你的简历，请选一个最能证明你适合该岗位的项目介绍。",
+            "focus_points": ["项目真实性"],
+            "knowledge_points": ["Redis"],
+            "question_reason": "验证项目",
+            "question_type": "resume_deep_dive",
+            "capability_tags": ["项目证据"],
+        }
+        context = {"resume_anchors": ["负责 Redis 缓存优化项目", "开发 Spring Boot 微服务系统"]}
+        errors = validate_start_output(data, context)
+        self.assertTrue(any("未引用简历" in e for e in errors),
+                        f"Expected anchor reference error, got: {errors}")
+
+    def test_anchor_present_and_referenced_passes(self):
+        """有锚点且 first_question 引用了项目名/技能名，应通过。"""
+        data = {
+            "resume_brief": "候选人有 Redis 项目经验",
+            "first_question": "我看到你在简历中提到了 Redis 缓存优化项目，请围绕这个项目说明你的具体职责和技术方案。",
+            "focus_points": ["项目真实性"],
+            "knowledge_points": ["Redis"],
+            "question_reason": "验证项目",
+            "question_type": "resume_deep_dive",
+            "capability_tags": ["项目证据"],
+        }
+        context = {"resume_anchors": ["负责 Redis 缓存优化项目", "开发 Spring Boot 微服务系统"]}
+        errors = validate_start_output(data, context)
+        anchor_errors = [e for e in errors if "未引用简历" in e]
+        self.assertEqual(anchor_errors, [], f"Expected no anchor errors, got: {anchor_errors}")
+
+    def test_no_anchor_no_requirement(self):
+        """无锚点时，不要求引用具体项目，但必须说明没有读到足够简历信息。"""
+        data = {
+            "resume_brief": "暂未读取到足够简历信息",
+            "first_question": "我已经读取了你的简历，但信息有限。请先介绍一下你最近的一个项目经历、你的职责和使用的技术栈。",
+            "focus_points": ["项目经历", "技术深度"],
+            "knowledge_points": [],
+            "question_reason": "简历信息不足，需要候选人主动补充",
+            "question_type": "resume_deep_dive",
+            "capability_tags": ["项目证据"],
+        }
+        context = {"resume_anchors": []}
+        errors = validate_start_output(data, context)
+        anchor_errors = [e for e in errors if "未引用简历" in e]
+        self.assertEqual(anchor_errors, [], f"Empty anchors should not require reference: {anchor_errors}")
 
 
 

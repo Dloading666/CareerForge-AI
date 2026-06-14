@@ -6553,6 +6553,232 @@ textarea {
   border-color: #f53f3f !important;
 }
 
+/* ── 语音面试 ─────────────────────────────────────── */
+
+.interview-voice-box {
+  padding: 12px 0;
+}
+
+.interview-voice-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.interview-voice-idle p {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.interview-voice-speaking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.interview-voice-speaking p {
+  font-weight: 600;
+  color: #165dff;
+  font-size: 15px;
+}
+
+.interview-voice-recording {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+.interview-voice-recording p {
+  font-weight: 600;
+  color: #f53f3f;
+  font-size: 15px;
+}
+
+.interview-voice-recording-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.interview-voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 40px;
+}
+
+.voice-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f53f3f;
+  animation: voice-wave 1.2s ease-in-out infinite;
+}
+
+.interview-voice-speaking .voice-dot {
+  background: #165dff;
+}
+
+.voice-dot--1 { animation-delay: 0s; }
+.voice-dot--2 { animation-delay: 0.15s; }
+.voice-dot--3 { animation-delay: 0.3s; }
+.voice-dot--4 { animation-delay: 0.45s; }
+.voice-dot--5 { animation-delay: 0.6s; }
+
+@keyframes voice-wave {
+  0%, 100% { transform: scaleY(1); opacity: 0.5; }
+  50% { transform: scaleY(2.5); opacity: 1; }
+}
+
+/* ── 流式进度阶段 ─────────────────────────────────── */
+
+.interview-progress-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.interview-progress-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #86909c;
+  transition: all 0.2s ease;
+}
+
+.interview-progress-stage svg {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9cdd4;
+  flex-shrink: 0;
+}
+
+.interview-progress-stage--active {
+  color: #165dff;
+  background: rgba(22, 93, 255, 0.06);
+  font-weight: 600;
+}
+
+.interview-progress-stage--done {
+  color: #00b42a;
+}
+
+.interview-progress-stage--done svg {
+  color: #00b42a;
+}
+
+.interview-progress-stage--error {
+  color: #f53f3f;
+  background: rgba(245, 63, 63, 0.06);
+}
+
+.interview-progress-stage--error svg {
+  color: #f53f3f;
+}
+
+.stage-error-detail {
+  display: block;
+  font-size: 11px;
+  color: #f53f3f;
+  margin-left: 22px;
+}
+
+/* ── 语音草稿确认 ─────────────────────────────────── */
+
+.interview-voice-draft {
+  margin: 0 18px 18px;
+  padding: 18px;
+  border: 2px solid #165dff;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f2f7ff 0%, #ffffff 100%);
+  animation: draft-slide-in 0.3s ease-out;
+}
+
+@keyframes draft-slide-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.interview-voice-draft-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.interview-voice-draft-header strong {
+  font-size: 15px;
+  color: #172033;
+}
+
+.interview-voice-draft-header small {
+  color: #86909c;
+  font-size: 12px;
+}
+
+.interview-voice-draft-section {
+  margin-bottom: 14px;
+}
+
+.interview-voice-draft-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4e5969;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.interview-voice-draft-transcript {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7f8fa;
+  border: 1px solid #e5e6eb;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #1d2129;
+}
+
+.interview-voice-draft-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.interview-voice-draft-hint {
+  display: block;
+  margin-top: 6px;
+  color: #86909c;
+  font-size: 12px;
+}
+
+.interview-voice-draft-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 .interview-report {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -6965,6 +7191,66 @@ textarea {
   color: #15803d;
 }
 
+/* P0-2: Resume list in picker */
+.interview-resume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 8px;
+  border-top: 1px solid #f0f2f5;
+  margin-top: 4px;
+}
+
+.interview-resume-list-loading,
+.interview-resume-list-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.interview-resume-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: #4e5969;
+  border-radius: 4px;
+  transition: background 0.15s;
+  text-align: left;
+  width: 100%;
+}
+
+.interview-resume-list-item:hover {
+  background: #f2f3f5;
+}
+
+.interview-resume-list-item.selected {
+  background: #e8f0ff;
+  color: #165dff;
+  font-weight: 600;
+}
+
+.interview-resume-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interview-resume-list-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #c9cdd4;
+}
+
 .interview-upload-row {
   display: flex;
   flex-wrap: wrap;
@@ -7312,6 +7598,468 @@ textarea {
   flex: 1;
   min-width: 112px;
   justify-content: center;
+}
+
+/* P1-3: Question meta (考察意图、考察点、题库来源) */
+.interview-question-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #86909c;
+  flex-wrap: wrap;
+}
+
+.interview-question-meta-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #f0f2f5;
+  color: #4e5969;
+}
+
+/* P1-3: Score reasons */
+.interview-score-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.interview-score-reason-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.interview-score-reason-dim {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #4e5969;
+  min-width: 60px;
+}
+
+/* P1-3: Evidence quotes */
+.interview-evidence-quotes {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  list-style: none;
+}
+
+.interview-evidence-quotes li {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4e5969;
+  margin-bottom: 4px;
+}
+
+.interview-evidence-quotes em {
+  color: #1d2129;
+  font-style: italic;
+}
+
+.interview-evidence-quotes small {
+  color: #86909c;
+  font-size: 11px;
+}
+
+.feedback-label.detail {
+  color: #165dff;
+}
+
+.feedback-label.evidence {
+  color: #722ed1;
+}
+
+/* ── InterviewReportDrawer ────────────────────────────────────────────── */
+
+.interview-report-drawer .arco-drawer-body {
+  padding: 0;
+  overflow-x: hidden;
+}
+
+.drawer-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: #86909c;
+}
+
+.drawer-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #c9cdd4;
+  font-size: 14px;
+}
+
+.drawer-report-content {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Score panel */
+.drawer-score-panel {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 24px 24px 20px;
+  background: linear-gradient(135deg, #172033 0%, #1e3a5f 100%);
+  color: #fff;
+}
+
+.drawer-score-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.drawer-score-ring span {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.drawer-score-ring p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.drawer-score-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawer-scoring-meta {
+  margin: 0 0 4px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.drawer-weakest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.drawer-weakest strong {
+  color: #ffd666;
+}
+
+.drawer-weakest small {
+  opacity: 0.7;
+}
+
+/* Report text */
+.drawer-report-text {
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #1d2129;
+  white-space: pre-wrap;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.drawer-comparison {
+  padding: 12px 24px;
+  background: #f7f8fa;
+  font-size: 13px;
+  color: #4e5969;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+/* Dimension scores */
+.drawer-dimension-section {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.drawer-dimension-section h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.drawer-dimension-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-dimension-item {
+  display: grid;
+  grid-template-columns: 1fr 40px;
+  grid-template-rows: auto auto;
+  gap: 0 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+
+.drawer-dimension-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawer-dimension-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.drawer-dimension-desc {
+  font-size: 11px;
+  color: #86909c;
+}
+
+.drawer-dimension-focus {
+  font-size: 11px;
+  color: #f53f3f;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.drawer-dimension-score {
+  font-size: 20px;
+  font-weight: 800;
+  text-align: right;
+  grid-row: 1 / 3;
+}
+
+.drawer-dimension-item--good .drawer-dimension-score { color: #00b42a; }
+.drawer-dimension-item--ok .drawer-dimension-score { color: #ff7d00; }
+.drawer-dimension-item--risk .drawer-dimension-score { color: #f53f3f; }
+
+.drawer-dimension-bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 2px;
+  background: #e5e8ef;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.drawer-dimension-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.drawer-dimension-item--good .drawer-dimension-bar-fill { background: #00b42a; }
+.drawer-dimension-item--ok .drawer-dimension-bar-fill { background: #ff7d00; }
+.drawer-dimension-item--risk .drawer-dimension-bar-fill { background: #f53f3f; }
+
+/* Lists */
+.drawer-lists-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.drawer-report-list h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.drawer-report-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawer-report-list li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4e5969;
+  padding-left: 16px;
+  position: relative;
+}
+
+.drawer-report-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.drawer-report-list--good li::before { background: #00b42a; }
+.drawer-report-list--risk li::before { background: #f53f3f; }
+.drawer-report-list--coach li::before { background: #165dff; }
+.drawer-report-list--next li::before { background: #ff7d00; }
+
+.drawer-report-list--good h4 { color: #00b42a; }
+.drawer-report-list--risk h4 { color: #f53f3f; }
+.drawer-report-list--coach h4 { color: #165dff; }
+.drawer-report-list--next h4 { color: #ff7d00; }
+
+/* Training plan */
+.drawer-training-section {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.drawer-training-section h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.drawer-training-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.drawer-training-day {
+  display: flex;
+  gap: 12px;
+}
+
+.drawer-training-day-badge {
+  flex-shrink: 0;
+  width: 56px;
+  padding: 4px 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #165dff;
+  background: #e8f0ff;
+  border-radius: 6px;
+}
+
+.drawer-training-day-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawer-training-day-content strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #1d2129;
+}
+
+.drawer-training-day-content ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: #4e5969;
+  line-height: 1.8;
+}
+
+.drawer-training-output {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #86909c;
+  font-style: italic;
+}
+
+/* Rewrite examples */
+.drawer-rewrite-section {
+  padding: 20px 24px;
+}
+
+.drawer-rewrite-section h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.drawer-rewrite-item {
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+
+.drawer-rewrite-before,
+.drawer-rewrite-after {
+  margin-bottom: 8px;
+}
+
+.drawer-rewrite-label {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.drawer-rewrite-before .drawer-rewrite-label {
+  background: #fff0e8;
+  color: #d25f00;
+}
+
+.drawer-rewrite-after .drawer-rewrite-label {
+  background: #e8f9ef;
+  color: #15803d;
+}
+
+.drawer-rewrite-before p,
+.drawer-rewrite-after p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4e5969;
+}
+
+.drawer-rewrite-explanation {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #86909c;
+  font-style: italic;
+}
+
+/* P1-4: Practice again button */
+.drawer-practice-again {
+  padding: 20px 24px;
+  border-top: 1px solid #f0f2f5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawer-preset-info {
+  margin: 0;
+  font-size: 12px;
+  color: #86909c;
+  text-align: center;
 }
 
 .interview-report {

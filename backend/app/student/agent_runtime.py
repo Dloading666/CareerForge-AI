@@ -2367,22 +2367,14 @@ def _configured_fallback_answer(config: Any, user_text: str) -> str:
 # Agentic Loop（Model + Harness）—— Model 只提议工具，Harness 负责执行/校验/审计
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── AI 面试官工具池 ────────────────────────────────────────────────────────────
+# ── 已弃用的旧面试官聊天入口 ───────────────────────────────────────────────────
 
-INTERVIEWER_SYSTEM_PROMPT = """你是 CareerForge-AI 的 AI 助手。新版 AI 面试官已升级为岗位定制化训练房间，支持目标岗位必填、阶段状态机、评分可解释性和训练闭环。
+INTERVIEWER_SYSTEM_PROMPT = """AI 面试官已升级为独立结构化面试页面。
 
-请直接回复用户：
-「新版 AI 面试官已升级为岗位定制化训练房间，请前往 /student/interviewer 开始面试。在那里你可以选择目标岗位、面试类型和风格，系统会围绕你的简历和 JD 进行结构化模拟面试，并在结束后生成包含训练计划的详细报告。」
-
-不要进行模拟面试，不要提问，不要调用任何工具。只做引导。
+请引导用户前往「AI 面试官」页面（/student/interviewer）开始正式面试。不要在当前 Agentic Loop 对话里创建面试、追问、评分或生成报告；正式面试只允许通过 /api/v1/student/interviews 独立 API 执行。
 """
 
-INTERVIEWER_ACTIVE_TOOL_NAMES = (
-    "query_student_profile",
-    "read_resume_ai",
-    "get_session_context",
-    "analyze_uploaded_file",
-)
+INTERVIEWER_ACTIVE_TOOL_NAMES: tuple[str, ...] = ()
 
 
 def _assemble_tools(db: Session, identity: AuthIdentity, agent_type: str) -> list[ToolDefinition]:

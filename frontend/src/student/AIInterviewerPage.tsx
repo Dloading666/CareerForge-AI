@@ -23,6 +23,8 @@ import reportIcon from '../assets/interview-icons/cute-score-report.png'
 import resumeIcon from '../assets/interview-icons/cute-resume.png'
 import retryIcon from '../assets/interview-icons/cute-retry.png'
 import voiceIcon from '../assets/interview-icons/cute-voice.png'
+import { InterviewReportDrawer } from './InterviewReportDrawer'
+import type { InterviewReportData } from './InterviewReportDrawer'
 
 type KnowledgeStatus = {
   root?: string
@@ -70,6 +72,12 @@ type InterviewTurn = {
   followup_reason?: string | null
   retrieved_chunks?: Array<{ title: string; topic: string; source_file: string; score: number }>
   knowledge_points?: string[]
+  // P1-3: 考察点和评分证据
+  question_reason?: string | null
+  capability_tags?: string[]
+  top_sources?: Array<{ title: string; topic: string; source_file: string; score: number }>
+  score_reasons?: Record<string, string>
+  evidence_quotes?: Array<{ quote?: string; dimension?: string }>
 }
 
 type Report = {
@@ -99,6 +107,10 @@ type Report = {
   report_text: string
 }
 
+type ProgressStage = { label: string; status: 'pending' | 'active' | 'done' | 'error'; detail?: string }
+
+type VoicePhase = 'idle' | 'speaking' | 'listening' | 'uploading' | 'thinking' | 'error'
+
 const DIMENSION_LABELS: Record<string, string> = {
   technical_accuracy: '技术准确性',
   project_evidence: '项目证据',
@@ -120,23 +132,11 @@ const DIMENSION_DESCRIPTIONS: Record<string, string> = {
 const INTERVIEW_TYPE_META: Record<string, string> = {
   first_round: '一面：基础能力、简历真实性、岗位核心要求、表达稳定性',
   second_round: '二面：项目深度、技术/业务取舍、复杂问题拆解、复盘能力',
-  technical: '技术准确性、原理解释、工程实现、异常场景',
-  manager: '总经理面：业务理解、长期潜力、价值观匹配、关键决策',
-  project: '个人职责、关键决策、量化结果、项目真实性',
-  hr: '动机表达、稳定性、职业规划、团队协作',
-  final_round: '终面：综合判断、岗位匹配、风险确认、录用建议',
-  stress: '证据意识、临场修正、抗压表达',
 }
 
 const INTERVIEW_TYPE_OPTIONS = [
-  { value: 'first_round', label: '一面' },
+  { value: 'first_round', label: '初面' },
   { value: 'second_round', label: '二面' },
-  { value: 'technical', label: '技术面试' },
-  { value: 'project', label: '项目深挖' },
-  { value: 'hr', label: 'HR 面' },
-  { value: 'manager', label: '总经理面试' },
-  { value: 'final_round', label: '终面' },
-  { value: 'stress', label: '压力面' },
 ]
 
 const FOCUS_OPTIONS = [
@@ -211,10 +211,13 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [selectedModelId, setSelectedModelId] = useState<number | undefined>(undefined)
   const [targetRole, setTargetRole] = useState('')
   const [jobDescription, setJobDescription] = useState('')
-  const [interviewType, setInterviewType] = useState('technical')
+  const [interviewType, setInterviewType] = useState('first_round')
   const [interviewStyle, setInterviewStyle] = useState('strict')
   const [roundLimit, setRoundLimit] = useState('8')
   const [resumeSource, setResumeSource] = useState<'online' | 'upload'>('online')
+  const [selectedResumeId, setSelectedResumeId] = useState<number | null>(null)
+  const [resumes, setResumes] = useState<Array<{ id: number; title: string; updated_at: string | null }>>([])
+  const [loadingResumes, setLoadingResumes] = useState(false)
   const [uploadedResumeText, setUploadedResumeText] = useState('')
   const [uploadedResumeName, setUploadedResumeName] = useState('')
   const [uploadingResume, setUploadingResume] = useState(false)
@@ -226,7 +229,6 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState<Report | null>(null)
   const [configCollapsed, setConfigCollapsed] = useState(false)
-  const [listening, setListening] = useState(false)
   const [reportProgress, setReportProgress] = useState<string[]>([])
   const [interviewProgress, setInterviewProgress] = useState<string[]>([])
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
@@ -235,11 +237,48 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [modelError, setModelError] = useState<string | null>(null)
   const [optimisticAnswer, setOptimisticAnswer] = useState<{ turnId: number; text: string } | null>(null)
   const [resumePickerVisible, setResumePickerVisible] = useState(false)
-  const recognitionRef = useRef<unknown>(null)
+  const [reportDrawerVisible, setReportDrawerVisible] = useState(false)
+  // 语音面试状态
+  const [interviewMode, setInterviewMode] = useState<'text' | 'voice'>('text')
+  const [recording, setRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [progressStages, setProgressStages] = useState<ProgressStage[]>([])
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false)
+  const [ttsMode, setTtsMode] = useState<'server_tts' | 'browser_tts'>('browser_tts')
+  // P1: 语音状态机防重入
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle')
+  // P1: 静音检测状态
+  const [silenceDetected, setSilenceDetected] = useState(false)
+  const [hasSpoken, setHasSpoken] = useState(false)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const progressStartRef = useRef<number | null>(null)
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const resumeInputRef = useRef<HTMLInputElement | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const maxRecordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const noSpeechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // P1: 静音检测 refs
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const silenceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const speechStartedRef = useRef(false)
+  const silenceStartRef = useRef<number | null>(null)
+
+  // P0-2: 加载在线简历列表
+  const loadResumes = async () => {
+    if (resumes.length > 0) return
+    setLoadingResumes(true)
+    try {
+      const data = await apiRequest<Array<{ id: number; title: string; updated_at: string | null }>>('/api/v1/student/resumes')
+      setResumes(data)
+    } catch {
+      // 静默失败，不影响主流程
+    } finally {
+      setLoadingResumes(false)
+    }
+  }
 
   const pendingTurn = useMemo(() => turns.find((turn) => !turn.answer) ?? null, [turns])
 
@@ -374,6 +413,16 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   useEffect(() => {
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current)
+      // P1: 清理所有语音资源
+      window.speechSynthesis?.cancel()
+      mediaRecorderRef.current?.stop()
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+      }
+      if (silenceCheckRef.current) clearInterval(silenceCheckRef.current)
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+      if (maxRecordingTimerRef.current) clearTimeout(maxRecordingTimerRef.current)
+      if (noSpeechTimerRef.current) clearTimeout(noSpeechTimerRef.current)
     }
   }, [])
 
@@ -411,11 +460,86 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       if (!progressStartRef.current) progressStartRef.current = performance.now()
       setProgressElapsed(Math.round(performance.now() - progressStartRef.current))
     }, 1000)
-    setInterviewProgress([`正在读取${resumeSource === 'upload' ? '本次上传简历' : '智能体可读取的在线简历'}，分析关键经历和技能匹配点…`])
-    const progressTimers = [
-      window.setTimeout(() => setInterviewProgress((prev) => [...prev, '正在检索岗位相关题库，筛选与简历经历匹配的追问素材。']), 500),
-      window.setTimeout(() => setInterviewProgress((prev) => [...prev, `模型：${selectedModel?.display_name ?? '默认'}；风格：${INTERVIEW_STYLE_LABELS[interviewStyle] ?? '严格追问'}；正在生成第一轮问题…`]), 1000),
-    ]
+
+    // ── P0: 真实后端进度事件 ──
+    const requestId = crypto.randomUUID()
+    const stageMap: Record<string, ProgressStage> = {
+      resume: { label: '正在读取简历', status: 'active' },
+      jd: { label: '正在分析岗位 JD', status: 'pending' },
+      match: { label: '正在匹配简历经历与岗位要求', status: 'pending' },
+      rag: { label: '正在检索题库/RAG', status: 'pending' },
+      llm: { label: '正在生成第一问', status: 'pending' },
+      harness: { label: '正在校验问题质量', status: 'pending' },
+      done: { label: '第一问已生成', status: 'pending' },
+    }
+    const stageOrder = ['resume', 'jd', 'match', 'rag', 'llm', 'harness', 'done']
+    const initialStages: ProgressStage[] = stageOrder.map((key) => ({ ...stageMap[key] }))
+    setProgressStages([...initialStages])
+
+    // 后端进度轮询
+    let progressDone = false
+    let backendProgressAvailable = false
+    const pollProgress = async () => {
+      while (!progressDone) {
+        await new Promise((r) => setTimeout(r, 800))
+        if (progressDone) break
+        try {
+          const data = await apiRequest<{ stage: string; status: string; message: string; done: boolean; error: string | null }>(
+            `/api/v1/student/interviews/progress/${requestId}`,
+          )
+          if (data.stage !== 'unknown') {
+            backendProgressAvailable = true
+            const stageIdx = stageOrder.indexOf(data.stage)
+            if (stageIdx >= 0) {
+              setProgressStages((prev) =>
+                prev.map((s, i) => {
+                  if (i < stageIdx) return { ...s, status: 'done' as const }
+                  if (i === stageIdx) {
+                    if (data.status === 'error') return { ...s, status: 'error' as const, detail: data.message }
+                    return { ...s, status: 'active' as const }
+                  }
+                  return s
+                })
+              )
+            }
+            if (data.done) {
+              if (data.status === 'error') {
+                setProgressStages((prev) =>
+                  prev.map((s) => s.status === 'active' ? { ...s, status: 'error' as const, detail: data.error || data.message } : s)
+                )
+              } else {
+                setProgressStages((prev) => prev.map((s) => ({ ...s, status: 'done' as const })))
+              }
+              progressDone = true
+            }
+          }
+        } catch {
+          // 静默失败，继续轮询
+        }
+      }
+    }
+    const progressPollPromise = pollProgress()
+
+    // Fallback: 如果后端进度 3 秒内没有响应，使用前端模拟
+    const fallbackTimer = window.setTimeout(() => {
+      if (!backendProgressAvailable && !progressDone) {
+        const advanceStage = (index: number) => {
+          setProgressStages((prev) =>
+            prev.map((s, i) => {
+              if (i < index) return { ...s, status: 'done' as const }
+              if (i === index) return { ...s, status: 'active' as const }
+              return s
+            })
+          )
+        }
+        advanceStage(1)
+        window.setTimeout(() => advanceStage(2), 600)
+        window.setTimeout(() => advanceStage(3), 1200)
+        window.setTimeout(() => advanceStage(4), 1800)
+        window.setTimeout(() => advanceStage(5), 2500)
+      }
+    }, 3000)
+
     try {
       const res = await apiRequest<{
         session: InterviewSession
@@ -432,22 +556,37 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           round_limit: normalizedRoundLimit,
           model_id: selectedModelId,
           resume_source: resumeSource,
+          resume_id: resumeSource === 'online' ? selectedResumeId : undefined,
           uploaded_resume_text: resumeSource === 'upload' ? uploadedResumeText : undefined,
           focus_tags: focusTags,
           custom_instruction: customInstruction,
+          request_id: requestId,
         }),
       })
+      progressDone = true
+      // 全部阶段完成
+      setProgressStages((prev) => prev.map((s) => ({ ...s, status: 'done' as const })))
       setSession(res.session)
       setTurns([res.first_turn])
       setKnowledge(res.knowledge_status)
       setAnswer('')
       setConfigCollapsed(true)
-      setInterviewProgress((prev) => [...prev, '第一轮问题已生成，面试开始。'])
       await loadInterviewSessions()
+
+      // 语音模式：自动朗读第一问
+      if (interviewMode === 'voice') {
+        await speakAndAutoRecord(res.first_turn.question, res.session.id, res.first_turn.id)
+      }
     } catch (error) {
+      progressDone = true
+      // 标记当前阶段为 error
+      setProgressStages((prev) =>
+        prev.map((s) => s.status === 'active' ? { ...s, status: 'error' as const, detail: error instanceof Error ? error.message : '创建面试失败' } : s)
+      )
       Message.error(error instanceof Error ? error.message : '创建面试失败')
     } finally {
-      progressTimers.forEach((timer) => window.clearTimeout(timer))
+      window.clearTimeout(fallbackTimer)
+      await progressPollPromise
       if (progressTimerRef.current) {
         clearInterval(progressTimerRef.current)
         progressTimerRef.current = null
@@ -456,61 +595,280 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
     }
   }
 
-  const reloadKnowledge = async () => {
-    setLoading(true)
-    try {
-      const next = await apiRequest<KnowledgeStatus>('/api/v1/student/interviews/knowledge/reload', { method: 'POST' })
-      setKnowledge(next)
-      Message.success('知识库已重新索引')
-    } catch (error) {
-      Message.error(error instanceof Error ? error.message : '重新索引失败')
-    } finally {
-      setLoading(false)
+  // 知识库 reload 已由管理员路由处理，学生端不再提供
+
+  // ── TTS：面试官语音朗读问题 ──
+
+  const speakQuestion = async (text: string, sessionId?: number, turnId?: number): Promise<void> => {
+    // P1: 优先尝试服务端 TTS
+    if (sessionId && turnId) {
+      try {
+        const ttsData = await apiRequest<{
+          mode: string
+          text: string
+          audio_base64: string | null
+          content_type: string | null
+          provider: string | null
+          reason: string | null
+        }>(`/api/v1/student/interviews/${sessionId}/turns/${turnId}/voice/reply`)
+
+        if (ttsData.mode === 'server_tts' && ttsData.audio_base64) {
+          // 服务端 TTS：播放 base64 音频
+          setTtsMode('server_tts')
+          const audioSrc = `data:${ttsData.content_type || 'audio/mpeg'};base64,${ttsData.audio_base64}`
+          return new Promise((resolve) => {
+            const audio = new Audio(audioSrc)
+            audio.onplay = () => setVoiceSpeaking(true)
+            audio.onended = () => { setVoiceSpeaking(false); resolve() }
+            audio.onerror = () => { setVoiceSpeaking(false); resolve() }
+            audio.play().catch(() => { setVoiceSpeaking(false); resolve() })
+          })
+        }
+        // browser_tts 模式：继续使用浏览器 SpeechSynthesis
+      } catch {
+        // 接口失败时降级到浏览器 TTS
+      }
+    }
+
+    // Fallback: 浏览器 SpeechSynthesis
+    setTtsMode('browser_tts')
+    return new Promise((resolve) => {
+      if (!('speechSynthesis' in window)) {
+        Message.warning('当前浏览器不支持语音合成，请使用文字模式。')
+        resolve()
+        return
+      }
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = 'zh-CN'
+      utterance.rate = 0.95
+      utterance.pitch = 1.0
+      utterance.onstart = () => setVoiceSpeaking(true)
+      utterance.onend = () => { setVoiceSpeaking(false); resolve() }
+      utterance.onerror = () => { setVoiceSpeaking(false); resolve() }
+      window.speechSynthesis.speak(utterance)
+    })
+  }
+
+  // 朗读最新问题并在结束后自动开始录音
+  const speakAndAutoRecord = async (questionText: string, sessionId?: number, turnId?: number) => {
+    if (interviewMode !== 'voice') return
+    setVoicePhase('speaking')
+    await speakQuestion(questionText, sessionId, turnId)
+    // 朗读结束后自动开始录音
+    if (interviewMode === 'voice') {
+      await startRecording()
     }
   }
 
-  const toggleVoiceInput = () => {
-    const SpeechRecognition = (window as unknown as Record<string, unknown>).SpeechRecognition
-      || (window as unknown as Record<string, unknown>).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      Message.warning('当前浏览器不支持语音识别，可以先用文字回答。')
-      return
-    }
-    if (listening && recognitionRef.current) {
-      ;(recognitionRef.current as { stop: () => void }).stop()
-      setListening(false)
-      return
-    }
-    const recognition = new (SpeechRecognition as new () => {
-      lang: string; continuous: boolean; interimResults: boolean;
-      onresult: ((ev: unknown) => void) | null;
-      onerror: (() => void) | null;
-      onend: (() => void) | null;
-      start: () => void; stop: () => void;
-    })()
-    recognition.lang = 'zh-CN'
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.onresult = (event: unknown) => {
-      const ev = event as { resultIndex: number; results: { length: number; [i: number]: { 0: { transcript?: string }; isFinal: boolean } } }
-      let finalText = ''
-      let interimText = ''
-      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
-        const transcript = ev.results[i][0]?.transcript ?? ''
-        if (ev.results[i].isFinal) finalText += transcript
-        else interimText += transcript
+  // ── 语音面试：录音控制（含静音检测）──
+
+  const SPEECH_THRESHOLD = 0.035
+  const SILENCE_AFTER_SPEECH_MS = 1500
+  const NO_SPEECH_TIMEOUT_MS = 15000
+  const MAX_RECORDING_MS = 120000
+
+  const startRecording = async () => {
+    // P1: 防重入检查
+    if (voicePhase === 'listening' || voicePhase === 'uploading' || voicePhase === 'thinking') return
+    try {
+      setVoicePhase('listening')
+      setSilenceDetected(false)
+      setHasSpoken(false)
+      speechStartedRef.current = false
+      silenceStartRef.current = null
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+      audioChunksRef.current = []
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data)
       }
-      if (finalText) setAnswer((prev) => `${prev}${prev ? ' ' : ''}${finalText}`.trim())
-      else if (interimText && !answer) setAnswer(interimText)
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+      recorder.start(100)
+      mediaRecorderRef.current = recorder
+      setRecording(true)
+      setRecordingDuration(0)
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1)
+      }, 1000)
+
+      // P1: 静音检测 - 使用 Web Audio API
+      try {
+        const audioContext = new AudioContext()
+        audioContextRef.current = audioContext
+        const source = audioContext.createMediaStreamSource(stream)
+        const analyser = audioContext.createAnalyser()
+        analyser.fftSize = 2048
+        source.connect(analyser)
+        analyserRef.current = analyser
+
+        const dataArray = new Float32Array(analyser.fftSize)
+        silenceCheckRef.current = setInterval(() => {
+          if (!analyserRef.current) return
+          analyserRef.current.getFloatTimeDomainData(dataArray)
+          let sum = 0
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] * dataArray[i]
+          }
+          const rms = Math.sqrt(sum / dataArray.length)
+
+          if (rms > SPEECH_THRESHOLD) {
+            // 检测到声音
+            if (!speechStartedRef.current) {
+              speechStartedRef.current = true
+              setHasSpoken(true)
+            }
+            silenceStartRef.current = null
+            setSilenceDetected(false)
+          } else if (speechStartedRef.current) {
+            // 说话后静音
+            if (!silenceStartRef.current) {
+              silenceStartRef.current = Date.now()
+            } else if (Date.now() - silenceStartRef.current > SILENCE_AFTER_SPEECH_MS) {
+              // 静音超过阈值，自动提交
+              setSilenceDetected(true)
+              Message.info('检测到静音，自动提交回答。')
+              submitVoiceAnswer()
+            }
+          }
+        }, 200)
+      } catch {
+        // AudioContext 创建失败，降级到无静音检测模式
+      }
+
+      // 最长录音自动停止
+      maxRecordingTimerRef.current = setTimeout(() => {
+        if (recorder.state === 'recording') {
+          Message.info('已达到最长录音时长，自动提交。')
+          submitVoiceAnswer()
+        }
+      }, MAX_RECORDING_MS)
+
+      // 无声音超时提示
+      noSpeechTimerRef.current = setTimeout(() => {
+        if (!speechStartedRef.current && recorder.state === 'recording') {
+          Message.info('未检测到声音，请说话或点击"我说完了"手动提交。')
+        }
+      }, NO_SPEECH_TIMEOUT_MS)
+    } catch {
+      setVoicePhase('error')
+      Message.error('无法访问麦克风，请检查浏览器权限设置。')
     }
-    recognition.onerror = () => {
-      setListening(false)
-      Message.error('语音识别中断了，请检查麦克风权限。')
+  }
+
+  const stopRecording = (): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current
+      if (!recorder || recorder.state === 'inactive') {
+        resolve(new Blob())
+        return
+      }
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        resolve(blob)
+      }
+      recorder.stop()
+      setRecording(false)
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current)
+        recordingTimerRef.current = null
+      }
+      if (maxRecordingTimerRef.current) {
+        clearTimeout(maxRecordingTimerRef.current)
+        maxRecordingTimerRef.current = null
+      }
+      if (noSpeechTimerRef.current) {
+        clearTimeout(noSpeechTimerRef.current)
+        noSpeechTimerRef.current = null
+      }
+      if (silenceCheckRef.current) {
+        clearInterval(silenceCheckRef.current)
+        silenceCheckRef.current = null
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+        audioContextRef.current = null
+        analyserRef.current = null
+      }
+    })
+  }
+
+  // ── 语音面试：提交录音（multipart/form-data）──
+
+  const submitVoiceAnswer = async () => {
+    if (!session || !pendingTurn || loading) return
+    // P1: 防重入检查
+    if (voicePhase === 'uploading' || voicePhase === 'thinking') return
+    setVoicePhase('uploading')
+    setLoading(true)
+    progressStartRef.current = null
+    setProgressElapsed(0)
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current)
+    progressTimerRef.current = setInterval(() => {
+      if (!progressStartRef.current) progressStartRef.current = performance.now()
+      setProgressElapsed(Math.round(performance.now() - progressStartRef.current))
+    }, 1000)
+
+    try {
+      const audioBlob = await stopRecording()
+      if (audioBlob.size === 0) {
+        Message.warning('录音为空，请重新录音。')
+        setVoicePhase('idle')
+        return
+      }
+
+      setVoicePhase('thinking')
+      // 使用 FormData 上传（不用 base64 JSON）
+      const formData = new FormData()
+      formData.append('file', audioBlob, 'recording.webm')
+      formData.append('turn_id', String(pendingTurn.id))
+      formData.append('request_id', crypto.randomUUID())
+
+      const res = await apiRequest<{
+        transcript: { text: string; language: string; confidence: number }
+        turn_result: {
+          current_turn: InterviewTurn
+          next_turn: InterviewTurn | null
+          is_finished: boolean
+          report_id: number | null
+        }
+      }>(`/api/v1/student/interviews/${session.id}/turns/voice`, {
+        method: 'POST',
+        body: formData,
+        // 不设 Content-Type，让浏览器自动加 multipart boundary
+      })
+
+      // 更新 turns
+      setTurns((prev) => {
+        const updated = prev.map((t) => (t.id === res.turn_result.current_turn.id ? res.turn_result.current_turn : t))
+        return res.turn_result.next_turn ? [...updated, res.turn_result.next_turn] : updated
+      })
+
+      if (res.turn_result.is_finished) {
+        setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
+        setVoicePhase('idle')
+        await loadReport(session.id, true)
+      } else if (res.turn_result.next_turn && interviewMode === 'voice') {
+        // 自动朗读下一问
+        setVoicePhase('speaking')
+        await speakAndAutoRecord(res.turn_result.next_turn.question, session.id, res.turn_result.next_turn.id)
+      } else {
+        setVoicePhase('idle')
+      }
+      await loadInterviewSessions()
+    } catch (error) {
+      setVoicePhase('error')
+      Message.error(error instanceof Error ? error.message : '语音提交失败')
+    } finally {
+      if (progressTimerRef.current) {
+        clearInterval(progressTimerRef.current)
+        progressTimerRef.current = null
+      }
+      setLoading(false)
     }
-    recognition.onend = () => setListening(false)
-    recognitionRef.current = recognition
-    recognition.start()
-    setListening(true)
   }
 
   const submitAnswer = async () => {
@@ -548,7 +906,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       setAnswer('')
       if (res.is_finished) {
         setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
-        await loadReport(session.id)
+        await loadReport(session.id, true)
       }
       await loadInterviewSessions()
     } catch (error) {
@@ -570,7 +928,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
     if (!loading && answer.trim()) submitAnswer()
   }
 
-  const loadReport = async (sessionId = session?.id) => {
+  const loadReport = async (sessionId = session?.id, forceGenerate = false) => {
     if (!sessionId) return
     setLoading(true)
     progressStartRef.current = null
@@ -586,8 +944,17 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       '正在生成维度评分，并与历史表现做对比。',
     ])
     try {
-      const data = await apiRequest<Report>(`/api/v1/student/interviews/${sessionId}/report`)
+      // P0-1: 活跃面试用 POST /finish 生成报告，已完成面试用 GET /report 读取
+      const isActive = session?.status === 'active' || forceGenerate
+      const url = isActive
+        ? `/api/v1/student/interviews/${sessionId}/finish`
+        : `/api/v1/student/interviews/${sessionId}/report`
+      const method = isActive ? 'POST' : 'GET'
+      const data = method === 'POST'
+        ? await apiRequest<Report>(url, { method: 'POST' })
+        : await apiRequest<Report>(url)
       setReport(data)
+      setReportDrawerVisible(true)
       setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
       await loadInterviewSessions()
     } catch (error) {
@@ -602,18 +969,29 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   }
 
   return (
+    <>
     <main className={`interview-page${configCollapsed ? ' interview-page--immersive' : ''}`}>
       <section className="interview-config-panel">
         <div className="interview-mode-strip">
-          <button type="button" className="interview-mode-card active">
+          <button
+            type="button"
+            className={`interview-mode-card${interviewMode === 'text' ? ' active' : ''}`}
+            onClick={() => setInterviewMode('text')}
+          >
             <img className="interview-inline-icon" src={voiceIcon} alt="" aria-hidden="true" />
             <span>文字面试</span>
-            <small>当前可用</small>
+            <small>{interviewMode === 'text' ? '当前' : '切换'}</small>
           </button>
-          <button type="button" className="interview-mode-card" disabled title="语音面试需要服务端 ASR 和 TTS 支持，暂未上线">
+          <button
+            type="button"
+            className={`interview-mode-card${interviewMode === 'voice' ? ' active' : ''}`}
+            onClick={() => setInterviewMode('voice')}
+            disabled={session?.status === 'active' && interviewMode === 'text'}
+            title={session?.status === 'active' && interviewMode === 'text' ? '面试进行中无法切换模式' : '语音面试需要浏览器麦克风权限'}
+          >
             <IconVideoCamera />
-            <span>语音面试：暂未上线</span>
-            <small>暂未上线</small>
+            <span>语音面试</span>
+            <small>{interviewMode === 'voice' ? '当前' : '需麦克风'}</small>
           </button>
         </div>
 
@@ -670,12 +1048,40 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                     className={`composer-settings-option${resumeSource === 'online' ? ' selected' : ''}`}
                     onClick={() => {
                       setResumeSource('online')
-                      setResumePickerVisible(false)
+                      loadResumes()
                     }}
                   >
                     <span>在线简历</span>
                     {resumeSource === 'online' && <IconCheck />}
                   </button>
+                  {resumeSource === 'online' && (
+                    <div className="interview-resume-list">
+                      {loadingResumes && <div className="interview-resume-list-loading"><Spin size={12} /><span>加载中...</span></div>}
+                      {!loadingResumes && resumes.length === 0 && <div className="interview-resume-list-empty">暂无在线简历</div>}
+                      {!loadingResumes && resumes.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className={`interview-resume-list-item${selectedResumeId === r.id ? ' selected' : ''}`}
+                          onClick={() => setSelectedResumeId(r.id)}
+                        >
+                          <span className="interview-resume-list-title">{r.title || `简历 #${r.id}`}</span>
+                          {r.updated_at && <span className="interview-resume-list-time">{new Date(r.updated_at).toLocaleDateString()}</span>}
+                          {selectedResumeId === r.id && <IconCheck />}
+                        </button>
+                      ))}
+                      {!loadingResumes && resumes.length > 0 && (
+                        <button
+                          type="button"
+                          className={`interview-resume-list-item${selectedResumeId === null ? ' selected' : ''}`}
+                          onClick={() => setSelectedResumeId(null)}
+                        >
+                          <span className="interview-resume-list-title">自动选择（优先可读取简历）</span>
+                          {selectedResumeId === null && <IconCheck />}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <button
                     type="button"
                     className={`composer-settings-option${resumeSource === 'upload' ? ' selected' : ''}`}
@@ -810,10 +1216,6 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
               <Tag color={knowledge?.vector_ready ? 'green' : 'orange'}>{knowledge?.retriever ?? 'checking'}</Tag>
             </div>
 
-            <Button icon={<IconRefresh />} onClick={reloadKnowledge} long style={{ marginBottom: 12 }}>
-              重新索引知识库
-            </Button>
-
             <div className="interview-history-panel">
               <div className="interview-history-head">
                 <strong>面试记录</strong>
@@ -883,7 +1285,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
             </div>
           )}
 
-          {interviewProgress.length > 0 && turns.length === 0 && (
+          {progressStages.length > 0 && turns.length === 0 && (
             <div className="interview-progress-stream">
               <div className="interview-progress-head">
                 <Spin size={16} />
@@ -893,9 +1295,29 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                 <span>思考 {formatDuration(progressElapsed)}</span>
                 <span>{INTERVIEW_STYLE_TONE[interviewStyle]}</span>
               </div>
-              {interviewProgress.map((item, idx) => (
-                <p key={`${item}-${idx}`}><IconCheckCircle />{item}</p>
-              ))}
+              <div className="interview-progress-stages">
+                {progressStages.map((stage, idx) => (
+                  <div key={idx} className={`interview-progress-stage interview-progress-stage--${stage.status}`}>
+                    {stage.status === 'done' && <IconCheckCircle />}
+                    {stage.status === 'active' && <Spin size={12} />}
+                    {stage.status === 'error' && <IconExclamationCircle />}
+                    {stage.status === 'pending' && <span className="stage-dot" />}
+                    <span>{stage.label}</span>
+                    {stage.detail && <small className="stage-error-detail">{stage.detail}</small>}
+                  </div>
+                ))}
+              </div>
+              {progressStages.some((s) => s.status === 'error') && (
+                <Button
+                  type="outline"
+                  size="small"
+                  icon={<IconRefresh />}
+                  onClick={() => { setProgressStages([]); startInterview() }}
+                  style={{ marginTop: 8 }}
+                >
+                  重试
+                </Button>
+              )}
             </div>
           )}
 
@@ -907,6 +1329,27 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                 {turn.knowledge_points && turn.knowledge_points.length > 0 && (
                   <div className="knowledge-tags">
                     {turn.knowledge_points.slice(0, 4).map((item) => <Tag key={item}>{item}</Tag>)}
+                  </div>
+                )}
+                {/* P1-3: 考察点和追问原因 */}
+                {turn.question_reason && (
+                  <div className="interview-question-meta">
+                    <span className="interview-question-meta-label">考察意图</span>
+                    <span>{turn.question_reason}</span>
+                  </div>
+                )}
+                {turn.capability_tags && turn.capability_tags.length > 0 && (
+                  <div className="interview-question-meta">
+                    <span className="interview-question-meta-label">考察点</span>
+                    {turn.capability_tags.map((tag) => <Tag key={tag} color="blue" style={{ fontSize: 11 }}>{tag}</Tag>)}
+                  </div>
+                )}
+                {turn.top_sources && turn.top_sources.length > 0 && (
+                  <div className="interview-question-meta">
+                    <span className="interview-question-meta-label">题库来源</span>
+                    <span style={{ fontSize: 11, color: '#86909c' }}>
+                      {turn.top_sources.map((s) => s.topic || s.title).filter(Boolean).join('、')}
+                    </span>
                   </div>
                 )}
               </div>
@@ -952,6 +1395,34 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                       <p>{turn.followup_reason}</p>
                     </div>
                   )}
+                  {/* P1-3: 维度扣分原因 */}
+                  {turn.score_reasons && Object.keys(turn.score_reasons).length > 0 && (
+                    <div className="interview-feedback-section">
+                      <span className="feedback-label detail">📊 维度评语</span>
+                      <div className="interview-score-reasons">
+                        {Object.entries(turn.score_reasons).map(([key, reason]) => (
+                          <div key={key} className="interview-score-reason-item">
+                            <span className="interview-score-reason-dim">{DIMENSION_LABELS[key] ?? key}</span>
+                            <span>{reason as string}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* P1-3: 证据引用 */}
+                  {turn.evidence_quotes && turn.evidence_quotes.length > 0 && (
+                    <div className="interview-feedback-section">
+                      <span className="feedback-label evidence">💬 引用了你的原话</span>
+                      <ul className="interview-evidence-quotes">
+                        {turn.evidence_quotes.map((eq: { quote?: string; dimension?: string }, i: number) => (
+                          <li key={i}>
+                            <em>"{eq.quote}"</em>
+                            {eq.dimension && <small> — {DIMENSION_LABELS[eq.dimension] ?? eq.dimension}</small>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -978,32 +1449,92 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
 
         {session?.status === 'active' && pendingTurn && (
           <div className="interview-answer-box">
-            <Input.TextArea
-              value={answer}
-              onChange={setAnswer}
-              onKeyDown={handleAnswerKeyDown}
-              placeholder="输入你的回答。建议用：背景 -> 我的职责 -> 方案 -> 结果数据。Enter 发送，Shift + Enter 换行。"
-              autoSize={{ minRows: 3, maxRows: 8 }}
-              disabled={loading}
-            />
-            <div className="interview-answer-actions">
-              <div className="interview-answer-actions-row">
-                <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
-                  提交回答
-                </Button>
-                <Button className={listening ? 'voice-button voice-button--active' : 'voice-button'} icon={<img className="interview-button-icon" src={voiceIcon} alt="" aria-hidden="true" />} disabled={loading} onClick={toggleVoiceInput}>
-                  {listening ? '停止语音输入' : '语音输入辅助'}
-                </Button>
+            {interviewMode === 'text' ? (
+              <>
+                <Input.TextArea
+                  value={answer}
+                  onChange={setAnswer}
+                  onKeyDown={handleAnswerKeyDown}
+                  placeholder="输入你的回答。建议用：背景 -> 我的职责 -> 方案 -> 结果数据。Enter 发送，Shift + Enter 换行。"
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                  disabled={loading}
+                />
+                <div className="interview-answer-actions">
+                  <div className="interview-answer-actions-row">
+                    <Button type="primary" icon={<IconSend />} loading={loading} disabled={!answer.trim()} onClick={submitAnswer}>
+                      提交回答
+                    </Button>
+                    <Button icon={<img className="interview-button-icon" src={retryIcon} alt="" aria-hidden="true" />} onClick={() => setConfigCollapsed((collapsed) => !collapsed)}>
+                      {configCollapsed ? '再试一次' : '隐藏设置'}
+                    </Button>
+                    <Button icon={<img className="interview-button-icon" src={reportIcon} alt="" aria-hidden="true" />} onClick={() => loadReport()} disabled={loading}>
+                      结束并生成报告
+                    </Button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="interview-voice-box">
+                {voiceSpeaking && (
+                  <div className="interview-voice-speaking">
+                    <div className="interview-voice-wave">
+                      <span className="voice-dot voice-dot--1" />
+                      <span className="voice-dot voice-dot--2" />
+                      <span className="voice-dot voice-dot--3" />
+                      <span className="voice-dot voice-dot--4" />
+                      <span className="voice-dot voice-dot--5" />
+                    </div>
+                    <p>{ttsMode === 'server_tts' ? '面试官正在语音提问…' : '正在使用浏览器朗读问题…'}</p>
+                  </div>
+                )}
+                {recording && !voiceSpeaking && (
+                  <div className="interview-voice-recording">
+                    <div className="interview-voice-wave">
+                      <span className="voice-dot voice-dot--1" />
+                      <span className="voice-dot voice-dot--2" />
+                      <span className="voice-dot voice-dot--3" />
+                      <span className="voice-dot voice-dot--4" />
+                      <span className="voice-dot voice-dot--5" />
+                    </div>
+                    <p>
+                      {hasSpoken
+                        ? (silenceDetected ? '检测到静音，正在提交…' : '正在聆听你的回答…')
+                        : '等待你开口说话…'}
+                      {' '}{Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+                    </p>
+                    <div className="interview-voice-recording-actions">
+                      <Button type="primary" icon={<IconThunderbolt />} onClick={submitVoiceAnswer} loading={loading}>
+                        我说完了
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {!recording && !voiceSpeaking && !loading && (
+                  <div className="interview-voice-idle">
+                    <p>{voicePhase === 'error' ? '录音出错，请重试。' : '等待面试官提问，或点击下方按钮开始回答。'}</p>
+                    <Button type="primary" size="large" icon={<img className="interview-button-icon" src={voiceIcon} alt="" aria-hidden="true" />} onClick={startRecording} disabled={loading || voicePhase === 'uploading' || voicePhase === 'thinking'}>
+                      开始回答
+                    </Button>
+                  </div>
+                )}
+                {loading && !recording && !voiceSpeaking && (
+                  <div className="interview-voice-idle">
+                    <Spin />
+                    <p>正在转写和评估你的回答…</p>
+                  </div>
+                )}
+                <div className="interview-answer-actions">
+                  <div className="interview-answer-actions-row">
+                    <Button icon={<img className="interview-button-icon" src={retryIcon} alt="" aria-hidden="true" />} onClick={() => setConfigCollapsed((collapsed) => !collapsed)}>
+                      {configCollapsed ? '再试一次' : '隐藏设置'}
+                    </Button>
+                    <Button icon={<img className="interview-button-icon" src={reportIcon} alt="" aria-hidden="true" />} onClick={() => loadReport()} disabled={loading}>
+                      结束并生成报告
+                    </Button>
+                  </div>
+                </div>
               </div>
-              <div className="interview-answer-actions-row">
-                <Button icon={<img className="interview-button-icon" src={retryIcon} alt="" aria-hidden="true" />} onClick={() => setConfigCollapsed((collapsed) => !collapsed)}>
-                  {configCollapsed ? '再试一次' : '隐藏设置'}
-                </Button>
-                <Button icon={<img className="interview-button-icon" src={reportIcon} alt="" aria-hidden="true" />} onClick={() => loadReport()} disabled={loading}>
-                  结束并生成报告
-                </Button>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1014,6 +1545,14 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                 <span>{Math.round(report.overall_score)}</span>
                 <p>综合评分</p>
               </div>
+              <Button
+                type="outline"
+                size="small"
+                style={{ marginTop: 8 }}
+                onClick={() => setReportDrawerVisible(true)}
+              >
+                查看完整报告
+              </Button>
               {weakestDimension && (
                 <div className="report-weakest">
                   <IconExclamationCircle />
@@ -1068,6 +1607,25 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         )}
       </section>
     </main>
+
+    <InterviewReportDrawer
+      visible={reportDrawerVisible}
+      onClose={() => setReportDrawerVisible(false)}
+      report={report as InterviewReportData | null}
+      onPracticeAgain={(preset) => {
+        if (!preset) return
+        if (preset.target_role) setTargetRole(preset.target_role)
+        if (preset.interview_type) setInterviewType(preset.interview_type)
+        if (preset.interview_style) setInterviewStyle(preset.interview_style)
+        setSession(null)
+        setTurns([])
+        setReport(null)
+        setAnswer('')
+        setConfigCollapsed(false)
+        Message.success('已加载预设配置，请检查后开始新一轮面试')
+      }}
+    />
+    </>
   )
 }
 

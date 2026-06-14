@@ -7,18 +7,22 @@ All tests use pure functions — no database or HTTP dependencies.
 import unittest
 
 from app.interview.service import (
-    SCORE_KEYS,
-    _advance_stage,
     _build_fallback_training_plan,
-    _build_stage_plan,
-    _compute_answer_quality,
     _extract_job_skills,
-    _filter_evidence_quotes,
-    _is_valid_wrap_up_question,
     _normalize_score_reasons,
-    _stage_for_turn,
-    _update_coverage,
-    _update_quality_metrics,
+)
+from app.interview.harness import (
+    SCORE_KEYS,
+    _filter_evidence_quotes,
+)
+from app.interview.state_machine import (
+    advance_stage,
+    build_stage_plan,
+    compute_answer_quality,
+    is_valid_wrap_up_question,
+    stage_for_turn,
+    update_coverage,
+    update_quality_metrics,
 )
 
 
@@ -52,30 +56,30 @@ class ExtractJobSkillsTests(unittest.TestCase):
 
 class BuildStagePlanTests(unittest.TestCase):
     def test_basic_plan_has_all_stages(self):
-        plan = _build_stage_plan("technical", 8, [])
+        plan = build_stage_plan("technical", 8, [])
         stages = [entry["stage"] for entry in plan]
         self.assertIn("opening", stages)
         self.assertIn("wrap_up", stages)
         self.assertEqual(stages[-1], "wrap_up")
 
     def test_stress_type_skips_self_intro(self):
-        plan = _build_stage_plan("stress", 8, [])
+        plan = build_stage_plan("stress", 8, [])
         stages = [entry["stage"] for entry in plan]
         self.assertNotIn("self_intro", stages)
 
     def test_hr_type_skips_technical_and_pressure(self):
-        plan = _build_stage_plan("hr", 8, [])
+        plan = build_stage_plan("hr", 8, [])
         stages = [entry["stage"] for entry in plan]
         self.assertNotIn("technical_core", stages)
         self.assertNotIn("pressure", stages)
 
     def test_wrap_up_uses_last_round(self):
-        plan = _build_stage_plan("technical", 10, [])
+        plan = build_stage_plan("technical", 10, [])
         wrap_up = next(e for e in plan if e["stage"] == "wrap_up")
         self.assertIn(10, wrap_up["rounds"])
 
     def test_minimum_rounds(self):
-        plan = _build_stage_plan("technical", 3, [])
+        plan = build_stage_plan("technical", 3, [])
         all_rounds = []
         for entry in plan:
             all_rounds.extend(entry["rounds"])
@@ -90,15 +94,15 @@ class StageForTurnTests(unittest.TestCase):
             {"stage": "resume_deep_dive", "rounds": [3, 4]},
             {"stage": "wrap_up", "rounds": [5]},
         ]
-        self.assertEqual(_stage_for_turn(plan, 1), "opening")
-        self.assertEqual(_stage_for_turn(plan, 2), "self_intro")
-        self.assertEqual(_stage_for_turn(plan, 3), "resume_deep_dive")
-        self.assertEqual(_stage_for_turn(plan, 4), "resume_deep_dive")
-        self.assertEqual(_stage_for_turn(plan, 5), "wrap_up")
+        self.assertEqual(stage_for_turn(plan, 1), "opening")
+        self.assertEqual(stage_for_turn(plan, 2), "self_intro")
+        self.assertEqual(stage_for_turn(plan, 3), "resume_deep_dive")
+        self.assertEqual(stage_for_turn(plan, 4), "resume_deep_dive")
+        self.assertEqual(stage_for_turn(plan, 5), "wrap_up")
 
     def test_unknown_turn_returns_opening(self):
         plan = [{"stage": "opening", "rounds": [1]}]
-        self.assertEqual(_stage_for_turn(plan, 99), "opening")
+        self.assertEqual(stage_for_turn(plan, 99), "opening")
 
 
 class NormalizeScoreReasonsTests(unittest.TestCase):
@@ -159,7 +163,7 @@ class BuildFallbackTrainingPlanTests(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ConsecutiveVagueTests(unittest.TestCase):
-    """_advance_stage 必须使用 consecutive_vague_count 而非 vague_count。"""
+    """advance_stage 必须使用 consecutive_vague_count 而非 vague_count。"""
 
     def _make_plan(self):
         return [
@@ -179,7 +183,7 @@ class ConsecutiveVagueTests(unittest.TestCase):
                 "consecutive_vague_count": 1,  # 但连续只有 1 次（最后一个是空泛）
             }
         }
-        result = _advance_stage(
+        result = advance_stage(
             current_stage="resume_deep_dive",
             stage_plan=self._make_plan(),
             turn_index=4,
@@ -202,7 +206,7 @@ class ConsecutiveVagueTests(unittest.TestCase):
                 "consecutive_vague_count": 2,  # 连续 2 次
             }
         }
-        result = _advance_stage(
+        result = advance_stage(
             current_stage="resume_deep_dive",
             stage_plan=self._make_plan(),
             turn_index=3,
@@ -223,7 +227,7 @@ class ConsecutiveVagueTests(unittest.TestCase):
                 "consecutive_vague_count": 0,  # 但连续已被重置
             }
         }
-        result = _advance_stage(
+        result = advance_stage(
             current_stage="resume_deep_dive",
             stage_plan=self._make_plan(),
             turn_index=5,
@@ -245,47 +249,47 @@ class WrapUpEnforcementTests(unittest.TestCase):
 
     def test_wrap_up_type_passes(self):
         """question_type=wrap_up 应通过。"""
-        self.assertTrue(_is_valid_wrap_up_question(
+        self.assertTrue(is_valid_wrap_up_question(
             "请总结一下你这次面试的表现。", "wrap_up",
         ))
 
     def test_self_review_type_passes(self):
-        self.assertTrue(_is_valid_wrap_up_question(
+        self.assertTrue(is_valid_wrap_up_question(
             "你觉得自己哪个环节做得最好？", "self_review",
         ))
 
     def test_reflection_type_passes(self):
-        self.assertTrue(_is_valid_wrap_up_question(
+        self.assertTrue(is_valid_wrap_up_question(
             "回顾这次面试，你有什么收获？", "reflection",
         ))
 
     def test_technical_deep_dive_rejected_in_wrap_up(self):
         """技术深挖问题在 wrap_up 阶段必须被拒绝。"""
-        self.assertFalse(_is_valid_wrap_up_question(
+        self.assertFalse(is_valid_wrap_up_question(
             "请手写一个 LRU 缓存的实现。", "wrap_up",
         ))
 
     def test_algorithm_question_rejected_in_wrap_up(self):
         """算法题在 wrap_up 阶段必须被拒绝。"""
-        self.assertFalse(_is_valid_wrap_up_question(
+        self.assertFalse(is_valid_wrap_up_question(
             "请实现一个时间复杂度为 O(log n) 的查找算法。", "wrap_up",
         ))
 
     def test_system_design_rejected_in_wrap_up(self):
         """系统设计题在 wrap_up 阶段必须被拒绝。"""
-        self.assertFalse(_is_valid_wrap_up_question(
+        self.assertFalse(is_valid_wrap_up_question(
             "请设计一个高并发的消息队列系统。", "wrap_up",
         ))
 
     def test_wrong_question_type_rejected(self):
         """question_type 不是 wrap_up 类型时必须被拒绝。"""
-        self.assertFalse(_is_valid_wrap_up_question(
+        self.assertFalse(is_valid_wrap_up_question(
             "请总结一下面试表现。", "project_deep_dive",
         ))
 
     def test_reverse_question_type_passes(self):
         """reverse_question 类型在 wrap_up 阶段应通过。"""
-        self.assertTrue(_is_valid_wrap_up_question(
+        self.assertTrue(is_valid_wrap_up_question(
             "你对我们公司有什么想了解的？", "reverse_question",
         ))
 
@@ -296,14 +300,14 @@ class WrapUpEnforcementTests(unittest.TestCase):
 
 class ComputeAnswerQualityTests(unittest.TestCase):
     def test_short_answer_is_vague(self):
-        quality, is_vague, lacks_depth = _compute_answer_quality("是的", None, None)
+        quality, is_vague, lacks_depth = compute_answer_quality("是的", None, None)
         self.assertTrue(is_vague)
         self.assertTrue(lacks_depth)
         self.assertLess(quality, 5)
 
     def test_long_answer_not_vague(self):
         long_answer = "我在这个项目中负责了后端架构设计，使用了 Spring Boot + MyBatis-Plus 技术栈。" * 5
-        quality, is_vague, lacks_depth = _compute_answer_quality(long_answer, None, None)
+        quality, is_vague, lacks_depth = compute_answer_quality(long_answer, None, None)
         self.assertFalse(is_vague)
         self.assertGreater(quality, 5)
 
@@ -311,7 +315,7 @@ class ComputeAnswerQualityTests(unittest.TestCase):
         """如果模型判定回答空泛，即使长度不短也要标记。"""
         answer = "我优化了接口性能，使用了 Redis 缓存，效果提升了 50%"
         assessment = {"is_vague": True}
-        quality, is_vague, _ = _compute_answer_quality(answer, None, assessment)
+        quality, is_vague, _ = compute_answer_quality(answer, None, assessment)
         self.assertTrue(is_vague)
         self.assertLessEqual(quality, 4.0)
 

@@ -193,3 +193,97 @@ def chat_completion(
         frequency_penalty=frequency_penalty,
         presence_penalty=presence_penalty,
     )
+
+
+def voice_chat_completion(
+    model_config,
+    *,
+    system_prompt: str,
+    audio_base64: str,
+    audio_format: str = "wav",
+    text_prompt: str | None = None,
+    image_base64: str | None = None,
+    image_format: str = "png",
+    temperature: float = 0.35,
+    max_tokens: int = 2500,
+) -> dict:
+    """调用支持音频的 VLM（如 MiMo V2.5）。
+
+    通过 OpenAI 兼容的 multipart content 数组发送音频+文本+可选图片。
+    如果模型不支持 multimodal content 数组，回退为纯文本调用。
+
+    Args:
+        model_config: ModelConfig 实例
+        system_prompt: system prompt
+        audio_base64: base64 编码的音频数据
+        audio_format: 音频格式（wav/mp3/webm 等）
+        text_prompt: 可选的文本提示（与音频一起发送）
+        image_base64: 可选的 base64 编码图片（截屏等）
+        image_format: 图片格式
+        temperature: 温度
+        max_tokens: 最大输出 token
+
+    Returns:
+        {"reply": str, "usage": dict}
+    """
+    api_base = (model_config.base_url or "https://api.deepseek.com").rstrip("/")
+    api_key = decrypt_api_key(model_config.api_key_cipher) if model_config.api_key_cipher else ""
+    model_id = _normalize_model_id(model_config.model_identifier or "deepseek-chat", api_base)
+
+    # 构建 content 数组（multimodal 格式）
+    content_parts: list[dict] = []
+
+    # 文本部分
+    if text_prompt:
+        content_parts.append({"type": "text", "text": text_prompt})
+
+    # 音频部分（OpenAI 兼容格式）
+    content_parts.append({
+        "type": "input_audio",
+        "input_audio": {
+            "data": audio_base64,
+            "format": audio_format,
+        },
+    })
+
+    # 可选图片部分
+    if image_base64:
+        content_parts.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/{image_format};base64,{image_base64}",
+            },
+        })
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content_parts},
+    ]
+
+    body = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    with httpx.Client(timeout=httpx.Timeout(getattr(model_config, "timeout_sec", None) or 180.0)) as client:
+        resp = client.post(f"{api_base}/chat/completions", json=body, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Voice LLM call failed ({resp.status_code}): {resp.text[:512]}")
+    data = resp.json()
+    choice = data.get("choices", [{}])[0]
+    reply = choice.get("message", {}).get("content", "")
+    usage = data.get("usage")
+    return {
+        "reply": reply,
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+        if usage
+        else None,
+    }
