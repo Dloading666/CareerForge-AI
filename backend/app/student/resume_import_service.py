@@ -186,6 +186,25 @@ def parse_resume_text_to_data(
     raise ValueError("模型未能返回有效的结构化数据，请重试")
 
 
+
+def _raise_for_status_with_body(resp, endpoint_label: str, model_identifier: str) -> None:
+    """Wrap resp.raise_for_status() so 4xx/5xx errors include the upstream body.
+
+    Without this, httpx discards the response body and we only see a bare "400 Bad Request",
+    which is useless for diagnosing upstream LLM errors (e.g. unknown model, invalid key,
+    malformed request, balance exhausted, etc.)."""
+    if resp.is_success:
+        return
+    body = resp.text
+    if len(body) > 1000:
+        body = body[:1000] + "..."
+    logger.error(
+        "LLM upstream error endpoint=%s model=%s status=%s body=%s",
+        endpoint_label, model_identifier, resp.status_code, body,
+    )
+    detail = f"{resp.status_code} {resp.reason_phrase} from {endpoint_label} (model={model_identifier}): {body}"
+    raise httpx.HTTPStatusError(detail, request=resp.request, response=resp)
+
 def _call_llm_for_parse(
     base_url: str,
     api_key: str,
@@ -213,7 +232,7 @@ def _call_llm_for_parse(
                     "tools": tools,
                 },
             )
-            resp.raise_for_status()
+            _raise_for_status_with_body(resp, "chat/completions", model_identifier)
             data = resp.json()
             # Anthropic: 找 tool_use block
             for block in data.get("content", []):
@@ -238,7 +257,7 @@ def _call_llm_for_parse(
                     "max_tokens": 4000,
                 },
             )
-            resp.raise_for_status()
+            _raise_for_status_with_body(resp, "chat/completions", model_identifier)
             data = resp.json()
             choices = data.get("choices", [])
             if choices:
