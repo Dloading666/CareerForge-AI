@@ -19,3 +19,4 @@ Pillow==11.2.1
 reportlab==4.2.2
 rl-renderPM==4.0.3
 rq==2.1.0
+cryptography>=43.0.0
