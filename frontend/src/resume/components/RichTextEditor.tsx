@@ -1,4 +1,4 @@
-import { Button, Tooltip } from '@arco-design/web-react'
+import { Tooltip } from '@arco-design/web-react'
 import { IconBold, IconItalic, IconOrderedList, IconRefresh, IconUnderline, IconUnorderedList } from '@arco-design/web-react/icon'
 import Placeholder from '@tiptap/extension-placeholder'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
@@ -40,18 +40,20 @@ function ToolbarButton({
   onClick,
   title,
   children,
+  className,
 }: {
   active?: boolean
   disabled?: boolean
   onClick: () => void
   title: string
   children: ReactNode
+  className?: string
 }) {
   return (
     <Tooltip content={title}>
       <button
         type="button"
-        className={`rich-text-toolbar-btn${active ? ' active' : ''}`}
+        className={`rich-text-toolbar-btn${className ? ' ' + className : ''}${active ? ' active' : ''}`}
         disabled={disabled}
         onMouseDown={(e) => e.preventDefault()}
         onClick={onClick}
@@ -112,16 +114,14 @@ function EditorToolbar({ editor, onAiAssist, aiAssistLabel }: { editor: Editor; 
       </div>
       {onAiAssist ? (
         <div className="rich-text-toolbar-group rich-text-toolbar-group--end">
-          <Button
-            type="text"
-            size="mini"
-            className="rich-text-ai-btn"
-            onClick={onAiAssist}
+          <ToolbarButton
             title={aiAssistLabel || 'AI 优化'}
+            onClick={onAiAssist}
+            className="rich-text-toolbar-btn--wide"
           >
             <span aria-hidden style={{ marginRight: 4 }}>✨</span>
             {aiAssistLabel || 'AI 优化'}
-          </Button>
+          </ToolbarButton>
         </div>
       ) : null}
     </div>
