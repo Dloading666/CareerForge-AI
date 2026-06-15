@@ -5,6 +5,7 @@ import {
 import { IconDelete, IconEdit, IconPlus, IconSend } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest } from '../shared/api'
+import { useDebouncedValue } from '../shared/useDebouncedValue'
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -64,6 +65,7 @@ export function AgentManagementPage() {
   const [models, setModels] = useState<ModelItem[]>([])
   const [flt, setFlt] = useState('all')
   const [srch, setSrch] = useState('')
+  const debouncedSrch = useDebouncedValue(srch, 300)  // 300ms debounce on server-bound search
   const [drawer, setDrawer] = useState(false)
   const [edit, setEdit] = useState<AgentItem | null>(null)
   const [form] = Form.useForm()
@@ -87,18 +89,25 @@ export function AgentManagementPage() {
   }, [])
 
   useEffect(() => {
-    let alive = true
+    const ctrl = new AbortController()
     ;(async () => {
       try {
         const sp = new URLSearchParams()
         if (flt && flt !== 'all') sp.set('category', flt)
-        if (srch) sp.set('search', srch)
-        const r = await apiRequest<AgentItem[]>(`/api/v1/admin/agents${sp.toString() ? '?' + sp.toString() : ''}`)
-        if (alive) setAgents(Array.isArray(r) ? r : [])
-      } catch { /* silent */ }
+        if (debouncedSrch) sp.set('search', debouncedSrch)
+        const r = await apiRequest<AgentItem[]>(
+          `/api/v1/admin/agents${sp.toString() ? '?' + sp.toString() : ''}`,
+          { signal: ctrl.signal },
+        )
+        setAgents(Array.isArray(r) ? r : [])
+      } catch (err) {
+        // AbortError is expected on rapid typing — ignore silently.
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        /* silent for other errors */
+      }
     })()
-    return () => { alive = false }
-  }, [flt, srch])
+    return () => ctrl.abort()
+  }, [flt, debouncedSrch])
 
   useEffect(() => {
     const h = () => { setEdit(null); form.resetFields(); setUseDify(false); setMsgs([]); setTab('basic'); setDrawer(true) }
