@@ -22,11 +22,15 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
     jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")  # REQUIRED: no default; missing env fails startup
+    api_key_encryption_key: str = Field(alias="API_KEY_ENCRYPTION_KEY")  # REQUIRED: Fernet key; generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
     access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
     login_fail_limit: int = Field(default=10, alias="LOGIN_FAIL_LIMIT")
     login_fail_window_seconds: int = Field(default=600, alias="LOGIN_FAIL_WINDOW_SECONDS")
     login_lock_seconds: int = Field(default=300, alias="LOGIN_LOCK_SECONDS")
+
+    api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
+    api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")
 
     admin_bootstrap_username: str = Field(default="admin", alias="ADMIN_BOOTSTRAP_USERNAME")
     admin_bootstrap_email: str = Field(default="admin@example.com", alias="ADMIN_BOOTSTRAP_EMAIL")
