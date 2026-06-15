@@ -860,15 +860,28 @@ def start_interview(
     stage_plan = build_stage_plan(payload.interview_type, payload.round_limit, list(payload.focus_tags))
     current_stage = "opening"
 
+    # 选择开场锚点：优先用具体项目名，回退到 JD 核心技能
+    if anchor_names:
+        best_anchor = anchor_names[0]
+    elif jd_keywords:
+        best_anchor = jd_keywords[0]
+    else:
+        best_anchor = f"与「{target_role}」最相关"
+
+    rag_topics = list({item["topic"] for item in retrieved[:4] if item.get("topic")})
     fallback_start = {
         "resume_brief": f"已读取{resume_source_label}，将围绕岗位匹配度、项目证据和关键能力进行验证。",
         "focus_points": ["项目真实性与个人职责", "目标岗位核心技术匹配", "量化结果和复盘能力"],
         "first_question": (
             f"{type_cfg['opening']} 当前风格是「{style_cfg['label']}」。"
             f"我已经先读取了{resume_source_label}。"
-            + (f"我看到你简历中提到了「{anchor_names[0]}」，请先说明你在其中承担的个人职责。" if anchor_names else f"请先说明你最近一个与「{target_role}」相关项目中的个人职责。")
+            + (
+                f"我看到你简历中提到了「{best_anchor}」，请先说明你在其中承担的个人职责——包括具体的技术方案、你负责的模块和最终达成的量化结果。"
+                if anchor_names
+                else f"请先介绍一个你与「{target_role}」最相关的项目经历，说明你在其中承担的个人职责和技术方案。"
+            )
         ),
-        "knowledge_points": [item["topic"] for item in retrieved[:3]] or ["项目证据", "岗位匹配"],
+        "knowledge_points": rag_topics or [item["topic"] for item in retrieved[:3]] or ["项目证据", "岗位匹配"],
         "question_reason": f"作为开场问题，要求候选人围绕目标岗位「{target_role}」展示最有说服力的项目经历",
         "question_type": "resume_deep_dive",
         "capability_tags": ["项目证据", "岗位匹配"],

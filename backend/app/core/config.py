@@ -54,6 +54,10 @@ class Settings(BaseSettings):
         default=r"D:\Ai Agent\Knowledge Base",
         alias="INTERVIEW_KNOWLEDGE_BASE_DIR",
     )
+    chroma_persist_dir: str = Field(
+        default="./data/chroma",
+        alias="CHROMA_PERSIST_DIR",
+    )
 
     @property
     def is_development(self) -> bool:

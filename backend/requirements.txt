@@ -18,3 +18,5 @@ openpyxl==3.1.5
 Pillow==11.2.1
 reportlab==4.2.2
 rl-renderPM==4.0.3
+sentence-transformers>=3.0.0
+chromadb>=0.5.0
