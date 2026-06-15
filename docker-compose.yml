@@ -90,6 +90,30 @@
           cpus: '4'
           memory: 2G
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zhipei-worker
+    env_file:
+      - ./backend/.env.docker
+    environment:
+      - INTERVIEW_KNOWLEDGE_BASE_DIR=/app/knowledge-base
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    volumes:
+      - skill-data:/app/data
+    command: rq worker pdf_jobs --url redis://:redis123456@redis:6379/0 --burst-poll-interval 0.5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
   frontend:
     build:
       context: ./frontend
