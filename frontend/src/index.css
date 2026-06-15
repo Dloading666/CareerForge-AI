@@ -8919,3 +8919,71 @@ textarea {
   border-radius: 6px;
   z-index: 2;
 }
+
+.new-resume-template-modal .arco-modal-close-icon {
+  top: 14px !important;
+  right: 14px !important;
+  width: 28px !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  border-radius: 50% !important;
+  background: #f53f3f !important;
+  color: #ffffff !important;
+  transition: background 0.15s ease, transform 0.15s ease;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.new-resume-template-modal .arco-modal-close-icon:hover {
+  background: #d63031 !important;
+  transform: scale(1.05);
+}
+
+.new-resume-template-modal .arco-modal-close-icon svg,
+.new-resume-template-modal .arco-modal-close-icon .arco-icon-hover {
+  color: #ffffff !important;
+  fill: currentColor;
+  width: 14px;
+  height: 14px;
+}
+
+.new-resume-template-modal .arco-btn,
+.new-resume-template-modal .arco-btn-size-default,
+.new-resume-template-modal .arco-btn-size-large,
+.new-resume-template-modal .arco-btn-shape-round {
+  border-radius: 999px !important;
+}
+
+.new-resume-template-modal .new-resume-template-card {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.new-resume-template-modal .new-resume-template-card .new-resume-template-thumb {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+
+/* Header row: description on the left, action buttons on the right, all in one line. */
+.new-resume-template-modal .new-resume-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.new-resume-template-modal .new-resume-modal-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.new-resume-template-modal .new-resume-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
