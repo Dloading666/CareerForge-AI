@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from html import escape
+import httpx
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
@@ -667,6 +668,15 @@ async def import_resume_file(
             parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)[:300])
+        except httpx.HTTPStatusError as exc:
+            # Upstream LLM provider rejected the request (4xx/5xx).
+            # Surface the actual provider message so the user can see whether
+            # the configured model / API key / base URL is wrong.
+            logger.warning("resume import upstream LLM error: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"LLM 解析失败: {str(exc)[:500]}",
+            )
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名
     resolved_title = (
