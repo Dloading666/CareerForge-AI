@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default="sqlite:///./zhipei_auth.db", alias="DATABASE_URL")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
-    jwt_secret_key: str = Field(default="change-me-in-production", alias="JWT_SECRET_KEY")
+    jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")  # REQUIRED: no default; missing env fails startup
     access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
     login_fail_limit: int = Field(default=10, alias="LOGIN_FAIL_LIMIT")
