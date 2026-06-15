@@ -5,7 +5,7 @@ import type {
   TemplateViewModel,
   ViewListItem,
 } from '../types'
-import { richTextToLines } from '../utils/content'
+import { richTextToInlineBlocks } from '../utils/content'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
@@ -163,28 +163,28 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
       title: resume.basic.title,
       contacts: getContacts(resume).map((item) => item.value),
     },
-    skills: richTextToLines(resume.skillContent),
+    skills: richTextToInlineBlocks(resume.skillContent),
     education: mapItems(resume.education, (item) => ({
       itemId: item.id,
       title: item.school || '学校',
       subtitle: [item.major, item.degree, item.gpa ? `GPA ${item.gpa}` : ''].filter(Boolean).join(' · '),
       meta: [item.startDate, item.endDate].filter(Boolean).join(' - '),
-      lines: richTextToLines(item.description ?? ''),
+      blocks: richTextToInlineBlocks(item.description ?? ''),
     })),
     experience: mapItems(resume.experience, (item) => ({
       itemId: item.id,
       title: item.company || '公司',
       subtitle: item.position,
       meta: item.date,
-      lines: richTextToLines(item.details),
+      blocks: richTextToInlineBlocks(item.details),
     })),
     projects: mapItems(resume.projects, (item) => ({
       itemId: item.id,
       title: item.name || '项目',
       subtitle: item.role,
       meta: item.date,
-      lines: richTextToLines(item.description),
+      blocks: richTextToInlineBlocks(item.description),
     })),
-    selfEvaluation: richTextToLines(resume.selfEvaluationContent),
+    selfEvaluation: richTextToInlineBlocks(resume.selfEvaluationContent),
   }
 }

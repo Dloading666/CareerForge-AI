@@ -1,4 +1,4 @@
-import { apiRequest } from '../shared/api'
+import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
 import { ensureResumeDefaults } from './constants'
 import type { ResumeData, ResumeSummary } from './types'
 
@@ -94,13 +94,20 @@ export async function deleteResume(resumeId: number) {
 }
 
 export async function downloadResumePdf(resumeId: number, filename: string) {
-  const stored = localStorage.getItem('zhipei-auth-session')
-  const access = stored ? JSON.parse(stored)?.access : null
-  const response = await fetch(`/api/v1/student/resumes/${resumeId}/export-pdf`, {
-    headers: access ? { Authorization: `Bearer ${access}` } : {},
-  })
+  let response: Response
+  try {
+    response = await authenticatedFetch(`/api/v1/student/resumes/${resumeId}/export-pdf`)
+  } catch (err) {
+    throw new ApiError(`网络错误: ${String((err as Error)?.message ?? err)}`, 0)
+  }
   if (!response.ok) {
-    throw new Error('导出失败')
+    let detail = ''
+    try {
+      detail = (await response.text()).slice(0, 200)
+    } catch {
+      /* ignore body read errors */
+    }
+    throw new ApiError(`导出失败 (HTTP ${response.status}): ${detail}`, response.status)
   }
   const blob = await response.blob()
   const url = URL.createObjectURL(blob)

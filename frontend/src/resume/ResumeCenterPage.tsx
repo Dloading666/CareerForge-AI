@@ -392,7 +392,14 @@ export function ResumeCenterPage() {
                   </Button>
                   <Button
                     icon={<IconDownload />}
-                    onClick={() => void downloadResumePdf(resume.id, resume.title)}
+                    onClick={() => {
+                      setBusyId(resume.id)
+                      downloadResumePdf(resume.id, resume.title)
+                        .catch((err: Error) => {
+                          Message.error(err.message || "导出失败")
+                        })
+                        .finally(() => setBusyId(null))
+                    }}
                     loading={busyId === resume.id}
                   >
                     导出

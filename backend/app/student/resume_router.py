@@ -4,6 +4,7 @@ import json
 from html import escape
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
@@ -1087,9 +1088,22 @@ def export_resume_pdf(
     row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
     pdf_bytes = _render_resume_pdf(row)
     filename = Path(_normalize_title(row.title)).stem
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}.pdf"',
-    }
+    # Some resume titles contain non-ASCII characters (e.g. CJK).
+    # Starlette encodes header values as latin-1, so we provide an ASCII
+    # fallback in `filename=` and the UTF-8 percent-encoded name in
+    # `filename*=` per RFC 5987 / RFC 6266.
+    ascii_fallback = (
+        filename.encode("ascii", "ignore").decode("ascii").strip()
+        or "resume"
+    ).replace(chr(34), "").replace(chr(92), "")
+    encoded_name = quote(filename or "resume", safe="")
+    disposition_template = (
+        'attachment; filename='
+        + chr(34) + '{0}.pdf' + chr(34)
+        + '; filename*=UTF-8' + chr(39) + chr(39) + '{1}.pdf'
+    )
+    disposition = disposition_template.format(ascii_fallback, encoded_name)
+    headers = {"Content-Disposition": disposition}
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
