@@ -5,6 +5,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import jwt
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, status
 from passlib.context import CryptContext
 
@@ -62,7 +63,7 @@ def decode_token(token: str, expected_type: str) -> dict:
     settings = get_settings()
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="认证信息无效或已过期",
+        detail="\u8ba4\u8bc1\u4fe1\u606f\u65e0\u6548\u6216\u5df2\u8fc7\u671f",
     )
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[ALGORITHM])
@@ -73,3 +74,34 @@ def decode_token(token: str, expected_type: str) -> dict:
     if token_type != expected_type:
         raise credentials_error
     return payload
+
+
+# --- API key encryption (Fernet) -----------------------------------------------
+# Replaces the base64 placeholder previously in admin/model_service.py.
+# Backed by API_KEY_ENCRYPTION_KEY (Fernet 32-byte url-safe base64).
+
+_fernet_instance: Fernet | None = None
+
+
+def _get_fernet() -> Fernet:
+    global _fernet_instance
+    if _fernet_instance is None:
+        key = get_settings().api_key_encryption_key.encode("utf-8")
+        _fernet_instance = Fernet(key)
+    return _fernet_instance
+
+
+def encrypt_api_key(plain: str) -> str:
+    """Encrypt an AI provider API key with Fernet (AES-128-CBC + HMAC-SHA256)."""
+    return _get_fernet().encrypt(plain.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_api_key(cipher: str | None) -> str | None:
+    """Decrypt a Fernet token. Returns None for empty input or invalid token."""
+    if not cipher:
+        return None
+    try:
+        return _get_fernet().decrypt(cipher.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        # Old base64 payloads or corrupted data; caller decides how to react.
+        return None
