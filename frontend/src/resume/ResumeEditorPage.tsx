@@ -1,4 +1,4 @@
-import { Button, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
+import { Button, Message, Modal, Result, Spin, Switch, Tooltip } from '@arco-design/web-react'
 import { IconArrowLeft, IconExport, IconSave, IconSelectAll, IconStar } from '@arco-design/web-react/icon'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -333,8 +333,22 @@ function ResumeEditorInner() {
           </label>
           <span className="wb-header-divider" />
           <Button size="small" icon={<IconSelectAll />} onClick={() => setTemplatePickerVisible(true)}>切换模板</Button>
-          <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
-                    <Button size="small" icon={<IconStar />} onClick={() => setAiAssistOpen(true)}>AI 辅助</Button>
+          <Tooltip content={aiAssistConfig ? "开启 AI 辅助盘" : "当前板块暂不支持 AI 辅助"}>
+            <Button
+              size="small"
+              icon={<IconStar />}
+              disabled={!aiAssistConfig}
+              onClick={() => {
+                if (!aiAssistConfig) {
+                  Message.warning("当前板块暂无内容可优化，请切换到工作经历/项目经历/教育经历/专业技能/自我评价")
+                  return
+                }
+                setAiAssistOpen(true)
+              }}
+            >
+              AI 辅助
+            </Button>
+          </Tooltip>
           <Button size="small" icon={<IconExport />} onClick={handleExport}>导出 PDF</Button>
           <Button size="small" type="primary" icon={<IconSave />} onClick={() => void handleSaveNow()}>保存</Button>
         </div>
@@ -406,6 +420,8 @@ function ResumeEditorInner() {
           </div>
           <div className="resume-export-modal-percent">{exportProgress}%</div>
         </div>
+      </Modal>
+
       <AiAssistPanel
         visible={aiAssistOpen && !!aiAssistConfig}
         onClose={() => setAiAssistOpen(false)}
@@ -413,10 +429,8 @@ function ResumeEditorInner() {
         currentText={aiAssistConfig?.value ?? ""}
         resumeId={resume.id}
         onApply={handleAiAssistApply}
-        applyLabel="搴旂敤鍒板綋鍓嶅瓧娈?"
+        applyLabel="应用到当前字段?"
       />
-
-      </Modal>
     </div>
   )
 }

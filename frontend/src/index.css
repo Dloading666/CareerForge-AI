@@ -8672,6 +8672,21 @@ textarea {
 .rich-text-ai-btn:hover {
   background: rgba(124, 58, 237, 0.08) !important;
 }
+.rich-text-toolbar-btn--wide {
+  width: auto;
+  height: 28px;
+  padding: 0 10px;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--color-primary, #165dff);
+}
+
+.rich-text-toolbar-btn--wide:hover:not(:disabled) {
+  background: var(--color-primary-light-1, #e8f1ff) !important;
+  color: var(--color-primary, #165dff) !important;
+}
+
 .rich-text-editor-surface {
   padding: 8px 12px;
   max-height: 480px;

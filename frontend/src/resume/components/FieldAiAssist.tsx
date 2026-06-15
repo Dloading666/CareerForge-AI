@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { useResumeEditor } from '../useResumeEditor'
 import { AiAssistPanel, type AiAssistSection } from './AiAssistPanel'
@@ -25,23 +25,26 @@ export function FieldAiAssist({
   const { resume } = useResumeEditor()
   const [open, setOpen] = useState(false)
   const resumeId = resume?.id ?? 0
-  if (resumeId <= 0) {
-    // No resume yet (e.g. loading); just render children without AI trigger.
-    return <>{children(() => undefined)}</>
-  }
+  // Stable trigger reference; no-op when the resume hasn't loaded yet so
+  // we never hand the child a () => undefined that gets cached by React.
+  const handleOpen = useCallback(() => {
+    if (resumeId > 0) setOpen(true)
+  }, [resumeId])
   return (
     <>
-      {children(() => setOpen(true))}
-      <AiAssistPanel
-        visible={open}
-        onClose={() => setOpen(false)}
-        section={section}
-        currentText={value}
-        jdText={jdText}
-        resumeId={resumeId}
-        onApply={onApply}
-        applyLabel={applyLabel}
-      />
+      {children(handleOpen)}
+      {resumeId > 0 ? (
+        <AiAssistPanel
+          visible={open}
+          onClose={() => setOpen(false)}
+          section={section}
+          currentText={value}
+          jdText={jdText}
+          resumeId={resumeId}
+          onApply={onApply}
+          applyLabel={applyLabel}
+        />
+      ) : null}
     </>
   )
 }
