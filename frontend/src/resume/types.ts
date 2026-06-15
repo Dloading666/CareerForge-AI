@@ -33,8 +33,6 @@ export type GlobalSettings = {
   centerSubtitle?: boolean
   flexibleHeaderLayout?: boolean
   autoOnePage?: boolean
-  /** 画布模式各 section 的位移偏移量，key 为 section id */
-  sectionOffsets?: Record<string, { x: number; y: number }>
 }
 
 export type PhotoConfig = {
