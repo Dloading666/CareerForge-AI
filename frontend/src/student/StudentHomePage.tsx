@@ -121,7 +121,7 @@ export function StudentHomePage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
   const [profileModalVisible, setProfileModalVisible] = useState(false)
-  const [profileTab, setProfileTab] = useState('profile')
+  const [profileTab, setProfileTab] = useState('account')
   const [notice, setNotice] = useState<string | null>(null)
 
   // Resizable module panel (简历助手对话历史栏)
@@ -560,9 +560,9 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           <div className="profile-modal-nav">
             <div className="profile-modal-nav-header">设置</div>
             {[
+              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号管理', color: '#e6fffa' },
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
-              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号设置', color: '#e6fffa' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
               { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
