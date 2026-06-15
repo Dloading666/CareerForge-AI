@@ -25,9 +25,13 @@ from app.interview.exceptions import (
     InterviewReportGenerationError,
 )
 from app.interview.progress import set_progress
+from app.interview.run_events import emit_interview_event, mark_interview_run_done
+from app.interview import voice_service
+from app.interview import resume_anchors as resume_anchor_service
 from app.interview.harness import (
     SCORE_KEYS,
     _filter_evidence_quotes,
+    _looks_like_single_question,
     _qa_score_question,
     _strict_bool,
     build_fallback_report,
@@ -46,6 +50,7 @@ from app.interview.prompts import (
     INTERVIEW_REPORT_SCORING_RUBRIC,
     INTERVIEW_REPORT_SUBPROMPT,
     INTERVIEW_START_SUBPROMPT,
+    INTERVIEW_STREAMING_SYSTEM_PROMPT,
     INTERVIEW_STYLE_CONFIG,
     INTERVIEW_SYSTEM_PROMPT,
     INTERVIEW_TYPE_CONFIG,
@@ -302,20 +307,116 @@ async def extract_uploaded_resume(upload: UploadFile) -> dict[str, Any]:
     }
 
 
-def _extract_resume_anchors(resume_snapshot: str) -> list[str]:
+def _extract_resume_anchors(resume_snapshot: str) -> list[dict[str, Any]]:
+    """从简历中提取结构化锚点。
+
+    优先解析 JSON 格式简历（projects/work_experience/skills/honors/education），
+    回退到纯文本行扫描。
+
+    返回列表，每项为 {"type": str, "name": str, "evidence": str, "keywords": list[str]}。
+    """
+    return resume_anchor_service.extract_resume_anchors(resume_snapshot)
+
     text = (resume_snapshot or "").strip()
     if not text or "暂未" in text:
         return []
-    anchors: list[str] = []
+
+    anchors: list[dict[str, Any]] = []
+
+    # 尝试 JSON 解析
+    try:
+        import json as _json
+        data = _json.loads(text)
+        if isinstance(data, dict):
+            # projects
+            for proj in (data.get("projects") or data.get("project") or [])[:5]:
+                if not isinstance(proj, dict):
+                    continue
+                name = str(proj.get("name") or proj.get("title") or "").strip()
+                desc = str(proj.get("description") or proj.get("detail") or proj.get("responsibility") or "").strip()
+                tech = proj.get("tech_stack") or proj.get("technologies") or []
+                keywords = [name] + (tech if isinstance(tech, list) else [str(tech)]) + _extract_keywords_from_text(desc)
+                if name or desc:
+                    anchors.append({"type": "project", "name": name or desc[:40], "evidence": desc[:120], "keywords": [k for k in keywords if k][:8]})
+            # work_experience
+            for work in (data.get("work_experience") or data.get("experience") or data.get("internships") or [])[:3]:
+                if not isinstance(work, dict):
+                    continue
+                company = str(work.get("company") or work.get("organization") or "").strip()
+                title = str(work.get("title") or work.get("position") or work.get("role") or "").strip()
+                desc = str(work.get("description") or work.get("detail") or "").strip()
+                name = f"{company} {title}".strip() or desc[:40]
+                keywords = [company, title] + _extract_keywords_from_text(desc)
+                if name:
+                    anchors.append({"type": "work", "name": name, "evidence": desc[:120], "keywords": [k for k in keywords if k][:8]})
+            # skills
+            skills = data.get("skills") or data.get("technical_skills") or []
+            if isinstance(skills, list) and skills:
+                skill_strs = [str(s) for s in skills[:10] if s]
+                anchors.append({"type": "skill", "name": "技能栈", "evidence": "、".join(skill_strs)[:120], "keywords": skill_strs})
+            # honors
+            for honor in (data.get("honors") or data.get("awards") or [])[:3]:
+                if not isinstance(honor, dict):
+                    h_name = str(honor).strip()
+                else:
+                    h_name = str(honor.get("name") or honor.get("title") or "").strip()
+                if h_name:
+                    anchors.append({"type": "honor", "name": h_name, "evidence": h_name, "keywords": _extract_keywords_from_text(h_name)[:5]})
+            if anchors:
+                return anchors[:8]
+    except (ValueError, TypeError, AttributeError):
+        pass
+
+    # 纯文本回退：按行扫描
     for line in text.splitlines():
         item = line.strip(" -•\t")
         if not item:
             continue
+        if _is_contact_or_intent_line(item):
+            continue
         if any(key in item for key in ("项目", "经历", "实习", "公司", "技术", "负责", "开发", "系统", "平台")):
-            anchors.append(item[:120])
+            keywords = _extract_keywords_from_text(item)
+            anchors.append({"type": "text", "name": item[:40], "evidence": item[:120], "keywords": keywords[:5]})
         if len(anchors) >= 5:
             break
     return anchors
+
+
+def _is_contact_or_intent_line(text: str) -> bool:
+    """联系方式、邮箱、求职意向等简历头部信息不能作为首问项目锚点。"""
+    return resume_anchor_service.is_contact_or_intent_line(text)
+
+    lowered = text.lower()
+    has_real_project_marker = any(marker in text for marker in ("项目：", "项目:", "项目经历", "项目经验"))
+    if has_real_project_marker:
+        return False
+    has_contact_label = any(label in text for label in ("电话", "手机", "微信", "邮箱", "联系方式", "求职意向"))
+    has_phone = bool(re.search(r"(?<!\d)1[3-9]\d{9}(?!\d)", text))
+    has_email = bool(re.search(r"[\w.+-]+@[\w.-]+\.\w+", lowered))
+    return has_contact_label or has_phone or has_email
+
+
+def _select_opening_anchor(resume_anchors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return resume_anchor_service.select_opening_anchor(resume_anchors)
+
+    for anchor in resume_anchors:
+        name = str(anchor.get("name") or "")
+        evidence = str(anchor.get("evidence") or "")
+        combined = f"{name} {evidence}"
+        if _is_contact_or_intent_line(combined):
+            continue
+        if anchor.get("type") == "project" or any(marker in combined for marker in ("项目", "平台", "系统", "开发", "RAG", "Agent", "Redis")):
+            return anchor
+    return None
+
+
+def _extract_keywords_from_text(text: str) -> list[str]:
+    """从文本中提取关键词片段。"""
+    return resume_anchor_service.extract_keywords_from_text(text)
+
+    import re as _re
+    parts = _re.split(r"[，,、。；;：:（）()\s/]+", text)
+    return [p.strip() for p in parts if len(p.strip()) >= 2][:8]
 
 
 def _candidate_chat_models(
@@ -433,13 +534,13 @@ def delete_report(db: Session, identity: AuthIdentity, session_id: int) -> None:
     db.commit()
 
 
-def _conversation_history(turns: list[InterviewTurn]) -> str:
+def _conversation_history(turns: list[InterviewTurn], max_turns: int = 16) -> str:
     lines: list[str] = []
-    for turn in turns:
+    for turn in turns[-max_turns:]:
         lines.append(f"Q{turn.turn_index}: {turn.question}")
         if turn.answer:
             lines.append(f"A{turn.turn_index}: {turn.answer}")
-    return "\n".join(lines[-16:])
+    return "\n".join(lines)
 
 
 def _score_to_100(scores: dict[str, Any]) -> dict[str, float]:
@@ -637,7 +738,7 @@ def _normalize_score_reasons(raw: Any) -> dict[str, str]:
 # ── 训练闭环 ──────────────────────────────────────────────────────────────────
 
 def _build_fallback_training_plan(weakest_dim: str) -> list[dict]:
-    """当 LLM 未返回训练计划时生成 fallback。"""
+    """当 LLM 未返回训练计划时生成 fallback（至少 3 天）。"""
     dim_label = {
         "technical_accuracy": "技术准确性",
         "project_evidence": "项目证据",
@@ -659,10 +760,22 @@ def _build_fallback_training_plan(weakest_dim: str) -> list[dict]:
             "tasks": ["用 STAR 结构重写 3 个常见回答", "准备 2 个技术细节追问的应对"],
             "expected_output": "3 个可直接使用的面试回答模板",
         },
+        {
+            "day": 3,
+            "focus": "模拟实战",
+            "tasks": ["找朋友做一次 15 分钟模拟面试", "录音回听，标记空泛表达", "补充 2 个量化案例"],
+            "expected_output": "一次完整模拟面试录音和复盘笔记",
+        },
     ]
 
 
-def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStartRequest) -> dict:
+def start_interview(
+    db: Session,
+    identity: AuthIdentity,
+    payload: InterviewStartRequest,
+    *,
+    event_run_id: str | None = None,
+) -> dict:
     request_id = payload.request_id
     # ── 目标岗位强制必填 ──
     target_role = (payload.target_role or "").strip()
@@ -675,6 +788,10 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         raise InterviewError(status_code=400, detail="请填写岗位 JD")
 
     set_progress(request_id, stage="resume", status="active", message="正在读取用户选择的在线简历")
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "resume", "title": "正在读取简历"})
+    resume_source_label = _resume_source_label(payload.resume_source)
+    company_name = (payload.company_name or "").strip() or None
+    seniority_level = (payload.seniority_level or "").strip() or None
     if payload.resume_source == "upload":
         resume_snapshot = (payload.uploaded_resume_text or "").strip()[:12000]
         if not resume_snapshot:
@@ -683,22 +800,53 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         resume_snapshot = _resume_snapshot_by_id(db, identity, payload.resume_id)
     else:
         resume_snapshot = _latest_resume_snapshot(db, identity)
+    resume_anchors = _extract_resume_anchors(resume_snapshot)
+    opening_anchor = _select_opening_anchor(resume_anchors)
+    prioritized_anchors = ([opening_anchor] if opening_anchor else []) + [a for a in resume_anchors if a is not opening_anchor]
+    anchor_names = [a.get("name", "") for a in prioritized_anchors[:5] if a.get("name")]
+    anchor_keywords = []
+    for a in resume_anchors[:5]:
+        anchor_keywords.extend(a.get("keywords", [])[:3])
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "resume",
+        "title": "已读取在线简历",
+        "summary": f"识别到候选人简历，核心项目/经历：{'、'.join(anchor_names[:3]) or '未识别到具体项目'}",
+        "details": [
+            f"简历来源：{resume_source_label}",
+            f"项目/经历：{'、'.join(anchor_names) or '无'}",
+            f"关键词：{'、'.join(list(dict.fromkeys(anchor_keywords))[:8]) or '无'}",
+            f"可用于首问的锚点：{len(resume_anchors)} 个",
+        ],
+        "evidence": [a.get("evidence", "")[:80] for a in resume_anchors[:3] if a.get("evidence")],
+    })
     set_progress(request_id, stage="jd", status="active", message="正在分析岗位 JD")
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "jd", "title": "正在分析岗位 JD"})
     index = get_knowledge_index()
     retrieved = index.search(
         f"{target_role} {job_description} 面试 项目 技术基础",
         target_role=target_role,
         limit=6,
     )
-    set_progress(request_id, stage="match", status="active", message="正在匹配简历经历与岗位要求")
     type_cfg = INTERVIEW_TYPE_CONFIG.get(payload.interview_type, INTERVIEW_TYPE_CONFIG["technical"])
     style_cfg = INTERVIEW_STYLE_CONFIG.get(payload.interview_style, INTERVIEW_STYLE_CONFIG["strict"])
-    resume_source_label = _resume_source_label(payload.resume_source)
+    job_skills = _extract_job_skills(job_description, list(payload.job_skills))
+    jd_keywords = job_skills[:8]
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "jd",
+        "title": "已分析岗位 JD",
+        "summary": f"岗位「{target_role}」核心要求：{'、'.join(jd_keywords[:3]) or '未提取到关键词'}",
+        "details": [
+            f"岗位：{target_role}",
+            f"技术关键词：{'、'.join(jd_keywords) or '无'}",
+            f"公司：{company_name or '未提供'}",
+            f"级别：{seniority_level or '未提供'}",
+        ],
+        "evidence": [job_description[:120]],
+    })
+    set_progress(request_id, stage="match", status="active", message="正在匹配简历经历与岗位要求")
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "match", "title": "正在匹配简历与岗位"})
 
     # ── 岗位画像 ──
-    job_skills = _extract_job_skills(job_description, list(payload.job_skills))
-    company_name = (payload.company_name or "").strip() or None
-    seniority_level = (payload.seniority_level or "").strip() or None
     job_profile_parts = [f"岗位：{target_role}"]
     if company_name:
         job_profile_parts.append(f"公司：{company_name}")
@@ -717,8 +865,8 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         "focus_points": ["项目真实性与个人职责", "目标岗位核心技术匹配", "量化结果和复盘能力"],
         "first_question": (
             f"{type_cfg['opening']} 当前风格是「{style_cfg['label']}」。"
-            f"我已经先读取了{resume_source_label}。请选一个最能证明你适合「{target_role}」的项目，"
-            "按背景、你的职责、关键方案、量化结果说清楚。"
+            f"我已经先读取了{resume_source_label}。"
+            + (f"我看到你简历中提到了「{anchor_names[0]}」，请先说明你在其中承担的个人职责。" if anchor_names else f"请先说明你最近一个与「{target_role}」相关项目中的个人职责。")
         ),
         "knowledge_points": [item["topic"] for item in retrieved[:3]] or ["项目证据", "岗位匹配"],
         "question_reason": f"作为开场问题，要求候选人围绕目标岗位「{target_role}」展示最有说服力的项目经历",
@@ -726,18 +874,35 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         "capability_tags": ["项目证据", "岗位匹配"],
     }
 
+    # 构建匹配分析
+    match_details = []
+    if anchor_names and jd_keywords:
+        match_details.append(f"简历项目：{'、'.join(anchor_names[:3])}")
+        match_details.append(f"岗位要求：{'、'.join(jd_keywords[:5])}")
+        match_details.append(f"最佳首问项目：{anchor_names[0] if anchor_names else '待确定'}")
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "match",
+        "title": "已匹配简历与岗位",
+        "summary": f"最适合作为第一问的项目：{anchor_names[0] if anchor_names else '待确定'}",
+        "details": match_details or ["简历信息不足，无法精确匹配"],
+        "evidence": [],
+    })
+
     # Prompt 注入岗位画像信息
     profile_injection = f"\n【岗位画像】{job_profile_summary}" if job_skills or company_name or seniority_level else ""
     set_progress(request_id, stage="rag", status="active", message="正在检索题库/RAG")
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "rag", "title": "正在检索题库/RAG"})
     effective_focus = _get_effective_focus_points(retrieved)
 
-    # P0: 简历事实锚点提取
-    resume_anchors = _extract_resume_anchors(resume_snapshot)
+    # 简历锚点注入 prompt（已在 resume 阶段提取）
     anchor_injection = ""
     if resume_anchors:
+        anchor_lines = []
+        for a in resume_anchors:
+            anchor_lines.append(f"- [{a['type']}] {a['name']}：{a['evidence']}")
         anchor_injection = (
             "\n\n【必须引用的简历事实锚点】\n"
-            + "\n".join(f"- {a}" for a in resume_anchors)
+            + "\n".join(anchor_lines)
             + '\n\n第一问必须至少引用其中一个具体项目、经历、技能或职责。不得只说"我已经读取了你的简历"。'
         )
 
@@ -758,11 +923,38 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         },
     )
     start_prompt += anchor_injection
+    # RAG 阶段完成
+    rag_sources = [{"title": item.get("title", ""), "topic": item.get("topic", "")} for item in retrieved[:3]]
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "rag",
+        "title": "已检索题库",
+        "summary": f"命中 {len(retrieved)} 条知识，top 主题：{'、'.join(s['topic'] for s in rag_sources if s['topic']) or '无'}",
+        "details": [
+            f"检索命中：{len(retrieved)} 条",
+            f"top sources：{'、'.join(s['title'] for s in rag_sources if s['title']) or '无'}",
+        ],
+        "evidence": [],
+    })
     set_progress(request_id, stage="llm", status="active", message="正在生成第一问")
-    start_parsed, start_llm_meta = run_harnessed_json_generation(
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "llm", "title": "正在生成第一问"})
+
+    # P0: 流式生成第一问
+    def _on_delta(delta: str):
+        emit_interview_event(event_run_id, "interview.stage.delta", {"stage": "llm", "delta": delta})
+        emit_interview_event(event_run_id, "interviewer.delta", {"target": "start_question", "delta": delta})
+
+    def _on_display_text(text: str):
+        if text:
+            emit_interview_event(event_run_id, "interviewer.snapshot", {"target": "start_question", "text": text})
+
+    def _on_completed(text: str):
+        emit_interview_event(event_run_id, "interviewer.completed", {"target": "start_question", "text": text})
+
+    from app.interview.harness import run_harnessed_streaming_generation
+    start_parsed, start_llm_meta = run_harnessed_streaming_generation(
         db,
         task_name="start_interview",
-        system_prompt=INTERVIEW_SYSTEM_PROMPT + "\n\n" + INTERVIEW_START_SUBPROMPT,
+        system_prompt=INTERVIEW_STREAMING_SYSTEM_PROMPT + "\n\n" + INTERVIEW_START_SUBPROMPT,
         user_prompt=start_prompt,
         fallback=fallback_start,
         validator=validate_start_output,
@@ -770,15 +962,91 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
         identity=identity,
         preferred_model_id=payload.model_id,
         temperature=0.35,
-        max_tokens=2500,
+        max_tokens=1500,
         max_retries=2,
+        on_delta=_on_delta,
+        on_display_text=_on_display_text,
+        on_completed=_on_completed,
     )
+    # LLM 阶段完成报告
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "llm",
+        "title": "已生成第一问草稿",
+        "summary": "模型已完成第一问草稿生成，进入 Harness 校验。",
+        "details": [
+            f"模型：{start_llm_meta.get('model') or '未使用模型'}",
+            f"fallback：{'是' if start_llm_meta.get('fallback_used') else '否'}",
+            f"尝试次数：{start_llm_meta.get('attempts', 0)}",
+        ],
+        "evidence": [],
+    })
     set_progress(request_id, stage="harness", status="active", message="正在校验第一问是否围绕简历和 JD")
+    emit_interview_event(event_run_id, "interview.stage.started", {"stage": "harness", "title": "正在校验第一问"})
+
+    # 判断是否使用了 fallback
+    fallback_used = start_llm_meta.get("fallback_used", False)
+    fallback_reason = None
+    if fallback_used:
+        model_was_found = bool(start_llm_meta.get("model"))
+        model_was_called = bool(start_llm_meta.get("used"))
+        if not model_was_found:
+            fallback_reason = "no_model_available"
+        elif not model_was_called:
+            # 模型找到了但调用失败（流式报错/超时/非法 JSON），从 errors 推断原因
+            errors_str = "; ".join(start_llm_meta.get("errors", [])[-5:])
+            if not errors_str:
+                fallback_reason = "unknown_error"
+            elif "timeout" in errors_str.lower():
+                fallback_reason = "llm_timeout"
+            elif "stream" in errors_str.lower():
+                fallback_reason = "llm_stream_error"
+            elif "json" in errors_str.lower():
+                fallback_reason = "json_parse_failed"
+            else:
+                fallback_reason = "llm_stream_error"
+        else:
+            errors_str = "; ".join(start_llm_meta.get("errors", [])[-3:])
+            if "timeout" in errors_str.lower():
+                fallback_reason = "llm_timeout"
+            elif "stream" in errors_str.lower():
+                fallback_reason = "llm_stream_error"
+            elif "json" in errors_str.lower():
+                fallback_reason = "json_parse_failed"
+            elif "锚点" in errors_str or "anchor" in errors_str.lower() or "引用" in errors_str:
+                fallback_reason = "harness_validation_failed"
+            elif errors_str:
+                fallback_reason = "harness_validation_failed"
+            else:
+                fallback_reason = "unknown_error"
+    # 将 fallback_reason 写入 llm meta
+    start_llm_meta["fallback_reason"] = fallback_reason
+    start_llm_meta["fallback_detail"] = "; ".join(start_llm_meta.get("errors", [])[-3:]) if start_llm_meta.get("errors") else None
+
     intro = str(start_parsed.get("first_question") or fallback_start["first_question"])
     knowledge_points = start_parsed.get("knowledge_points") if isinstance(start_parsed.get("knowledge_points"), list) else fallback_start["knowledge_points"]
     question_reason = str(start_parsed.get("question_reason") or fallback_start["question_reason"])
     question_type = str(start_parsed.get("question_type") or fallback_start["question_type"])
     capability_tags = start_parsed.get("capability_tags") if isinstance(start_parsed.get("capability_tags"), list) else fallback_start["capability_tags"]
+
+    # Harness 校验结果
+    harness_passed = not fallback_used
+    harness_checks = []
+    if resume_anchors:
+        anchor_hit = any(kw.lower() in intro.lower() for a in resume_anchors for kw in (a.get("keywords") or []) if kw)
+        harness_checks.append(f"引用简历锚点：{'是' if anchor_hit else '否'}")
+    harness_checks.append(f"单问题校验：{'通过' if _looks_like_single_question(intro) else '未通过'}")
+    harness_checks.append(f"已读简历表述：{'有' if any(w in intro for w in ['读取', '简历', '看过', '阅读', '了解了']) else '无'}")
+    harness_checks.append(f"是否 fallback：{'是' if fallback_used else '否'}")
+    if fallback_used:
+        harness_checks.append(f"fallback 原因：{fallback_reason or '未知'}")
+
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "harness",
+        "title": "已校验第一问",
+        "summary": f"校验{'通过' if harness_passed else '未通过，已使用保守策略'}",
+        "details": harness_checks,
+        "evidence": [],
+    })
 
     # 构建 top_sources（只保留 top 3）
     top_sources = [
@@ -841,7 +1109,23 @@ def start_interview(db: Session, identity: AuthIdentity, payload: InterviewStart
     db.refresh(session)
     db.refresh(turn)
     set_progress(request_id, stage="done", status="done", message="第一问已生成", done=True)
-    return {"session": _serialize_session(session), "first_turn": serialize_turn(turn), "knowledge_status": knowledge_status()}
+    result = {"session": _serialize_session(session), "first_turn": serialize_turn(turn), "knowledge_status": knowledge_status()}
+    emit_interview_event(event_run_id, "interview.stage.completed", {
+        "stage": "done",
+        "title": "第一问已生成",
+        "summary": f"第一问已准备就绪，考察方向：{'、'.join(capability_tags[:2]) if capability_tags else '综合能力'}",
+        "details": [
+            f"第一问：{intro[:80]}{'...' if len(intro) > 80 else ''}",
+            f"考察原因：{question_reason}",
+            f"考察点：{'、'.join(capability_tags) if capability_tags else '无'}",
+            f"知识点：{'、'.join(knowledge_points) if knowledge_points else '无'}",
+        ],
+        "evidence": [],
+    })
+    emit_interview_event(event_run_id, "interview.question.created", {"turn_id": turn.id, "question": intro})
+    emit_interview_event(event_run_id, "interview.started", result)
+    mark_interview_run_done(event_run_id)
+    return result
 
 
 def _get_session(db: Session, identity: AuthIdentity, session_id: int) -> InterviewSession:
@@ -887,7 +1171,9 @@ def submit_turn(
     *,
     request_id: str | None = None,
     turn_id: int | None = None,
+    event_run_id: str | None = None,
 ) -> dict:
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "receive_answer", "label": "正在读取你的回答"})
     session = _get_session(db, identity, session_id)
     if session.status != "active":
         raise InterviewNotActiveError
@@ -933,6 +1219,7 @@ def submit_turn(
     # 设置 current 为 target_turn，以便后续代码使用
     current = target_turn
 
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "retrieval", "label": "正在检索题库和岗位知识"})
     index = get_knowledge_index()
     retrieval_query = f"{session.target_role} {current.question} {answer}"[:500]
     retrieved = index.search(retrieval_query, target_role=session.target_role, limit=6)
@@ -963,18 +1250,27 @@ def submit_turn(
         f"{'如果空泛，下一问必须要求候选人补充个人职责、实现细节、量化指标或具体案例。' if pre_is_vague else ''}"
     )
 
-    # ── 构建 context_block ──
+    # ── 构建 context_block（截断长文本以加速推理）──
+    resume_text = (session.resume_snapshot or "未提供")
+    if len(resume_text) > 3000:
+        resume_text = resume_text[:3000] + "\n…[简历内容已截断，完整信息已在首轮注入]"
+    retrieved_brief = json.dumps(
+        [{"topic": item.get("topic", ""), "title": item.get("title", "")} for item in retrieved[:4]],
+        ensure_ascii=False,
+    )
+    asked_kps = sum((_json_loads(t.knowledge_points_json, []) for t in turns), [])
+    asked_kps_str = "、".join(asked_kps[-12:]) if len(asked_kps) > 12 else "、".join(asked_kps)
     context_parts = [
         f"【目标岗位】{session.target_role}",
-        f"【岗位 JD】{(session.job_description or '未提供') + stage_injection}",
+        f"【岗位 JD】{(session.job_description or '未提供')[:2000] + stage_injection}",
         f"【面试类型】{INTERVIEW_TYPE_CONFIG.get(session.interview_type, INTERVIEW_TYPE_CONFIG['technical'])['label']}",
         f"【面试风格】{INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG['strict'])['label']}——{INTERVIEW_STYLE_CONFIG.get(session.interview_style, INTERVIEW_STYLE_CONFIG['strict'])['rule']}",
-        f"【候选人简历摘要】{session.resume_snapshot or '未提供'}",
+        f"【候选人简历摘要】{resume_text}",
         job_profile_text,
         f"【上一轮问题】{current.question}",
         f"【候选人上一轮回答】{answer}",
-        f"【知识库检索结果】{json.dumps(retrieved, ensure_ascii=False)}",
-        f"【已问过的知识点】{', '.join(sum((_json_loads(t.knowledge_points_json, []) for t in turns), []))}",
+        f"【知识库检索结果】{retrieved_brief}",
+        f"【已问过的知识点】{asked_kps_str}",
         current_quality_injection,
     ]
     # 注入上一轮回答的质量反馈（供 Model 参考）
@@ -995,7 +1291,7 @@ def submit_turn(
             })
             context_parts.append("【上一轮已完成回答质量反馈】\n" + feedback_text)
     context_block = "\n\n".join(context_parts)
-    conversation_block = f"【历史问答】\n{_conversation_history(turns)}"
+    conversation_block = f"【历史问答】\n{_conversation_history(turns, max_turns=8)}"
 
     # ── 选择任务 sub-prompt ──
     task_subprompt = INTERVIEW_FOLLOWUP_SUBPROMPT
@@ -1018,15 +1314,36 @@ def submit_turn(
     # 构建 grounding context（供 Harness 校验 next_question 引用式幻觉）
     grounding_context = {
         "last_answer": answer,
-        "resume_snapshot": session.resume_snapshot or "",
-        "history_text": _conversation_history(turns),
-        "job_description": session.job_description or "",
+        "resume_snapshot": (session.resume_snapshot or "")[:3000],
+        "history_text": _conversation_history(turns, max_turns=8),
+        "job_description": (session.job_description or "")[:2000],
     }
 
-    parsed, llm_meta = run_harnessed_json_generation(
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "score", "label": "正在分析回答并评分"})
+
+    # P0: 流式生成追问 — 首个 delta 到达时才切换到 followup 阶段
+    _followup_stage_emitted = False
+
+    def _on_followup_delta(delta: str):
+        nonlocal _followup_stage_emitted
+        if not _followup_stage_emitted:
+            _followup_stage_emitted = True
+            emit_interview_event(event_run_id, "runtime.status", {"phase": "followup", "label": "正在生成追问"})
+        emit_interview_event(event_run_id, "interview.stage.delta", {"stage": "score", "delta": delta})
+        emit_interview_event(event_run_id, "interviewer.delta", {"target": "followup", "delta": delta})
+
+    def _on_followup_display(text: str):
+        if text:
+            emit_interview_event(event_run_id, "interviewer.snapshot", {"target": "followup", "text": text})
+
+    def _on_followup_completed(text: str):
+        emit_interview_event(event_run_id, "interviewer.completed", {"target": "followup", "text": text})
+
+    from app.interview.harness import run_harnessed_streaming_generation
+    parsed, llm_meta = run_harnessed_streaming_generation(
         db,
         task_name="submit_turn",
-        system_prompt=INTERVIEW_SYSTEM_PROMPT,
+        system_prompt=INTERVIEW_STREAMING_SYSTEM_PROMPT,
         user_prompt=prompt,
         fallback=fallback,
         validator=validate_followup_output,
@@ -1034,9 +1351,42 @@ def submit_turn(
         identity=identity,
         preferred_model_id=session.model_config_id,
         temperature=0.35,
-        max_tokens=2500,
+        max_tokens=1500,
         max_retries=2,
+        on_delta=_on_followup_delta,
+        on_display_text=_on_followup_display,
+        on_completed=_on_followup_completed,
     )
+
+    # 添加 fallback_reason 到 llm meta
+    if llm_meta.get("fallback_used"):
+        model_was_found = bool(llm_meta.get("model"))
+        model_was_called = bool(llm_meta.get("used"))
+        errors_str = "; ".join(llm_meta.get("errors", [])[-3:])
+        if not model_was_found:
+            llm_meta["fallback_reason"] = "no_model_available"
+        elif not model_was_called:
+            if not errors_str:
+                llm_meta["fallback_reason"] = "llm_stream_error"
+            elif "timeout" in errors_str.lower():
+                llm_meta["fallback_reason"] = "llm_timeout"
+            elif "stream" in errors_str.lower():
+                llm_meta["fallback_reason"] = "llm_stream_error"
+            elif "JSON" in errors_str or "json" in errors_str:
+                llm_meta["fallback_reason"] = "json_parse_failed"
+            else:
+                llm_meta["fallback_reason"] = "llm_stream_error"
+        elif "timeout" in errors_str.lower():
+            llm_meta["fallback_reason"] = "llm_timeout"
+        elif "stream" in errors_str.lower():
+            llm_meta["fallback_reason"] = "llm_stream_error"
+        elif "JSON" in errors_str or "json" in errors_str:
+            llm_meta["fallback_reason"] = "json_parse_failed"
+        elif "质量" in errors_str or "QA" in errors_str:
+            llm_meta["fallback_reason"] = "question_quality_failed"
+        else:
+            llm_meta["fallback_reason"] = "harness_validation_failed"
+        llm_meta["fallback_detail"] = errors_str
 
     # ── QA 打分：对 next_question 做质量检查，低于 6 分触发一次轻量重试 ──
     raw_next_q = str(parsed.get("next_question") or "").strip()
@@ -1255,12 +1605,19 @@ def submit_turn(
     db.refresh(current)
     if next_turn:
         db.refresh(next_turn)
-    return {
+    result = {
         "current_turn": serialize_turn(current),
         "next_turn": serialize_turn(next_turn) if next_turn else None,
         "is_finished": should_finish,
         "report_id": report_id,
     }
+    emit_interview_event(event_run_id, "interview.turn.scored", {"turn_id": current.id, "score": _json_loads(current.score_json, {})})
+    if next_turn:
+        emit_interview_event(event_run_id, "interview.question.created", {"turn_id": next_turn.id, "question": next_turn.question})
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "completed", "label": "已生成追问"})
+    emit_interview_event(event_run_id, "interview.turn.completed", result)
+    mark_interview_run_done(event_run_id)
+    return result
 
 
 # ── 语音面试管线（Voice Pipeline）──────────────────────────────────────────────
@@ -1289,6 +1646,152 @@ VOICE_TRANSCRIPT_SYSTEM_PROMPT = """你是一个音频转写模块。你会收�
 """
 
 
+VOICE_ALLOWED_MIME_PREFIXES = ("audio/", "video/webm", "application/octet-stream")
+VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024
+
+
+def _infer_audio_format(content_type: str | None, filename: str | None = None) -> str:
+    """Infer the compact audio format expected by voice-capable chat/STT APIs."""
+    return voice_service.infer_audio_format(content_type, filename)
+
+    normalized_type = (content_type or "").lower()
+    normalized_name = (filename or "").lower()
+    source = f"{normalized_type} {normalized_name}"
+    if "wav" in source or normalized_name.endswith(".wave"):
+        return "wav"
+    if "mp3" in source or "mpeg" in source or normalized_name.endswith(".mpga"):
+        return "mp3"
+    if "ogg" in source or "oga" in source:
+        return "ogg"
+    if "mp4" in source or "m4a" in source or normalized_name.endswith((".mp4", ".m4a")):
+        return "mp4"
+    if "webm" in source or normalized_name.endswith(".webm"):
+        return "webm"
+    return "webm"
+
+
+def _validate_voice_audio(audio_bytes: bytes, content_type: str | None, filename: str | None = None) -> str:
+    content_type = content_type or ""
+    lower_name = (filename or "").lower()
+    has_known_extension = lower_name.endswith((".webm", ".wav", ".mp3", ".mpeg", ".mpga", ".ogg", ".oga", ".mp4", ".m4a"))
+    if not any(content_type.startswith(prefix) for prefix in VOICE_ALLOWED_MIME_PREFIXES) and not has_known_extension:
+        raise InterviewError(
+            status_code=400,
+            detail=f"不支持的文件类型：{content_type or filename or 'unknown'}，请上传 webm/wav/mp3/ogg/m4a 音频。",
+        )
+    if len(audio_bytes) > VOICE_MAX_AUDIO_BYTES:
+        raise InterviewError(status_code=400, detail=f"音频文件过大（{len(audio_bytes) // (1024 * 1024)}MB），最大支持 10MB")
+    if len(audio_bytes) < 100:
+        raise InterviewError(status_code=400, detail="音频数据过短，请重新录音")
+    return _infer_audio_format(content_type, filename)
+
+
+def _transcribe_voice_audio_sync(
+    db: Session,
+    identity: AuthIdentity,
+    *,
+    audio_bytes: bytes,
+    content_type: str,
+    filename: str | None = None,
+) -> dict:
+    return voice_service.transcribe_voice_audio_sync(
+        db,
+        identity,
+        audio_bytes=audio_bytes,
+        content_type=content_type,
+        filename=filename,
+    )
+
+    audio_format = _validate_voice_audio(audio_bytes, content_type, filename)
+
+    import base64 as _b64
+
+    audio_base64 = _b64.b64encode(audio_bytes).decode("utf-8")
+    models = _candidate_voice_models(db, identity, None)
+    if not models:
+        raise InterviewError(status_code=503, detail="暂无支持语音转写的模型，请联系管理员配置。")
+
+    model_errors: list[str] = []
+    for model in models:
+        model_name = getattr(model, "display_name", None) or getattr(model, "model_name", None) or "voice_model"
+        try:
+            result = voice_chat_completion(
+                model,
+                system_prompt=VOICE_TRANSCRIPT_SYSTEM_PROMPT,
+                audio_base64=audio_base64,
+                audio_format=audio_format,
+                temperature=0.1,
+                max_tokens=1000,
+            )
+            parsed = _extract_json(result["reply"])
+            if parsed and parsed.get("text"):
+                return {
+                    "text": str(parsed["text"]).strip(),
+                    "language": str(parsed.get("language", "zh-CN")),
+                    "confidence": float(parsed.get("confidence", 0.8)),
+                    "audio_format": audio_format,
+                    "audio_size_bytes": len(audio_bytes),
+                }
+            model_errors.append(f"{model_name}: empty transcript")
+        except Exception as exc:  # noqa: BLE001 - expose provider errors to the caller.
+            model_errors.append(f"{model_name}: {str(exc)[:240]}")
+
+    detail = "音频转写失败，未识别到有效内容。请重新录音或切换为文字模式。"
+    if model_errors:
+        detail = f"{detail} 模型返回：{'; '.join(model_errors[:3])}"
+    raise InterviewError(status_code=422, detail=detail)
+
+
+async def transcribe_voice_audio(
+    db: Session,
+    identity: AuthIdentity,
+    *,
+    audio_file: UploadFile,
+) -> dict:
+    audio_bytes = await audio_file.read()
+    return _transcribe_voice_audio_sync(
+        db,
+        identity,
+        audio_bytes=audio_bytes,
+        content_type=audio_file.content_type or "",
+        filename=audio_file.filename,
+    )
+
+
+def transcribe_voice_audio_sync(
+    db: Session,
+    identity: AuthIdentity,
+    *,
+    audio_bytes: bytes,
+    content_type: str,
+    filename: str | None = None,
+) -> dict:
+    return _transcribe_voice_audio_sync(
+        db,
+        identity,
+        audio_bytes=audio_bytes,
+        content_type=content_type,
+        filename=filename,
+    )
+
+
+def _attach_voice_meta_to_turn_result(db: Session, turn_result: dict, transcript: dict) -> None:
+    current_turn_data = turn_result.get("current_turn")
+    if current_turn_data and isinstance(current_turn_data.get("answer_assessment"), dict):
+        assessment = current_turn_data["answer_assessment"]
+        assessment["voice_meta"] = {
+            "input_mode": "voice",
+            "audio_format": transcript.get("audio_format"),
+            "audio_size_bytes": transcript.get("audio_size_bytes"),
+            "transcript_confidence": transcript.get("confidence"),
+            "transcript_language": transcript.get("language"),
+        }
+        current_turn_obj = db.get(InterviewTurn, current_turn_data["id"])
+        if current_turn_obj:
+            current_turn_obj.answer_assessment = _json_dumps(assessment)
+            db.commit()
+
+
 async def voice_submit_turn(
     db: Session,
     identity: AuthIdentity,
@@ -1309,6 +1812,45 @@ async def voice_submit_turn(
     Mimo v2.5 只负责转写，评分/追问/阶段推进全部由 submit_turn 管线处理。
     """
     # ── 验证音频文件 ──
+    transcript = await transcribe_voice_audio(db, identity, audio_file=audio_file)
+    turn_result = submit_turn(
+        db, identity, session_id, transcript["text"],
+        request_id=request_id,
+        turn_id=turn_id,
+    )
+    _attach_voice_meta_to_turn_result(db, turn_result, transcript)
+    return {
+        "transcript": {
+            "text": transcript["text"],
+            "language": transcript["language"],
+            "confidence": transcript["confidence"],
+        },
+        "turn_result": turn_result,
+    }
+
+    transcript = transcribe_voice_audio_sync(
+        db,
+        identity,
+        audio_bytes=audio_bytes,
+        content_type=content_type,
+        filename=filename,
+    )
+    turn_result = submit_turn(
+        db, identity, session_id, transcript["text"],
+        request_id=request_id,
+        turn_id=turn_id,
+        event_run_id=event_run_id,
+    )
+    _attach_voice_meta_to_turn_result(db, turn_result, transcript)
+    return {
+        "transcript": {
+            "text": transcript["text"],
+            "language": transcript["language"],
+            "confidence": transcript["confidence"],
+        },
+        "turn_result": turn_result,
+    }
+
     _ALLOWED_MIME_PREFIXES = ["audio/", "video/webm"]
     _MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10MB
 
@@ -1403,6 +1945,135 @@ async def voice_submit_turn(
     }
 
 
+def voice_submit_turn_sync(
+    db: Session,
+    identity: AuthIdentity,
+    session_id: int,
+    *,
+    turn_id: int,
+    audio_bytes: bytes,
+    content_type: str,
+    filename: str | None = None,
+    request_id: str | None = None,
+    event_run_id: str | None = None,
+) -> dict:
+    """语音面试回答（同步版本，供后台任务使用）。
+
+    与 voice_submit_turn 功能相同，但接受原始字节而非 UploadFile，
+    避免在后台任务中使用 async。
+    """
+    transcript = transcribe_voice_audio_sync(
+        db,
+        identity,
+        audio_bytes=audio_bytes,
+        content_type=content_type,
+        filename=filename,
+    )
+    turn_result = submit_turn(
+        db, identity, session_id, transcript["text"],
+        request_id=request_id,
+        turn_id=turn_id,
+        event_run_id=event_run_id,
+    )
+    _attach_voice_meta_to_turn_result(db, turn_result, transcript)
+    return {
+        "transcript": {
+            "text": transcript["text"],
+            "language": transcript["language"],
+            "confidence": transcript["confidence"],
+        },
+        "turn_result": turn_result,
+    }
+
+    _ALLOWED_MIME_PREFIXES = ["audio/", "video/webm"]
+    _MAX_AUDIO_BYTES = 10 * 1024 * 1024
+
+    if not any(content_type.startswith(prefix) for prefix in _ALLOWED_MIME_PREFIXES):
+        raise InterviewError(
+            status_code=400,
+            detail=f"不支持的文件类型：{content_type}，请上传音频文件 (webm/wav/mp3/ogg)",
+        )
+
+    if len(audio_bytes) > _MAX_AUDIO_BYTES:
+        raise InterviewError(status_code=400, detail=f"音频文件过大（{len(audio_bytes) // (1024*1024)}MB），最大支持 10MB")
+    if len(audio_bytes) < 100:
+        raise InterviewError(status_code=400, detail="音频数据过短，请重新录音")
+
+    import base64 as _b64
+    audio_base64 = _b64.b64encode(audio_bytes).decode("utf-8")
+
+    audio_format = "webm"
+    if "wav" in content_type:
+        audio_format = "wav"
+    elif "mp3" in content_type or "mpeg" in content_type:
+        audio_format = "mp3"
+    elif "ogg" in content_type:
+        audio_format = "ogg"
+    elif "mp4" in content_type or "m4a" in content_type:
+        audio_format = "mp4"
+
+    models = _candidate_voice_models(db, identity, None)
+    if not models:
+        raise InterviewError(status_code=503, detail="暂无支持语音的模型，请联系管理员配置。")
+
+    transcript_text = ""
+    confidence = 0.0
+    language = "zh-CN"
+
+    for model in models:
+        try:
+            result = voice_chat_completion(
+                model,
+                system_prompt=VOICE_TRANSCRIPT_SYSTEM_PROMPT,
+                audio_base64=audio_base64,
+                audio_format=audio_format,
+                temperature=0.1,
+                max_tokens=1000,
+            )
+            parsed = _extract_json(result["reply"])
+            if parsed and parsed.get("text"):
+                transcript_text = str(parsed["text"]).strip()
+                confidence = float(parsed.get("confidence", 0.8))
+                language = str(parsed.get("language", "zh-CN"))
+                break
+        except Exception:
+            continue
+
+    if not transcript_text:
+        raise InterviewError(status_code=422, detail="音频转写失败，未识别到有效内容。请重新录音或切换为文字模式。")
+
+    turn_result = submit_turn(
+        db, identity, session_id, transcript_text,
+        request_id=request_id,
+        turn_id=turn_id,
+        event_run_id=event_run_id,
+    )
+
+    current_turn_data = turn_result.get("current_turn")
+    if current_turn_data and isinstance(current_turn_data.get("answer_assessment"), dict):
+        assessment = current_turn_data["answer_assessment"]
+        assessment["voice_meta"] = {
+            "input_mode": "voice",
+            "audio_format": audio_format,
+            "audio_size_bytes": len(audio_bytes),
+            "transcript_confidence": confidence,
+            "transcript_language": language,
+        }
+        current_turn_obj = db.get(InterviewTurn, current_turn_data["id"])
+        if current_turn_obj:
+            current_turn_obj.answer_assessment = _json_dumps(assessment)
+            db.commit()
+
+    return {
+        "transcript": {
+            "text": transcript_text,
+            "language": language,
+            "confidence": confidence,
+        },
+        "turn_result": turn_result,
+    }
+
+
 def get_turn_tts_text(
     db: Session,
     identity: AuthIdentity,
@@ -1432,11 +2103,22 @@ def get_turn_tts_text(
     }
 
 
-def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, commit: bool = True) -> InterviewReport:
+def generate_report(
+    db: Session,
+    identity: AuthIdentity,
+    session_id: int,
+    *,
+    commit: bool = True,
+    event_run_id: str | None = None,
+) -> InterviewReport:
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "collect_turns", "label": "正在整理面试记录"})
     session = _get_session(db, identity, session_id)
     existing = db.scalar(select(InterviewReport).where(InterviewReport.session_id == session.id).order_by(InterviewReport.id.desc()).limit(1))
     if existing:
+        emit_interview_event(event_run_id, "interview.report.created", serialize_report(existing))
+        mark_interview_run_done(event_run_id)
         return existing
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "score_summary", "label": "正在汇总维度评分"})
     turns = db.scalars(select(InterviewTurn).where(InterviewTurn.session_id == session.id).order_by(InterviewTurn.turn_index)).all()
     scores = [_json_loads(turn.score_json, {}) for turn in turns if turn.score_json]
     if scores:
@@ -1458,7 +2140,13 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         "training_plan": _build_fallback_training_plan(
             min(dim_scores, key=lambda k: dim_scores.get(k, 100)) if dim_scores else "project_evidence"
         ),
-        "rewrite_examples": [],
+        "rewrite_examples": [
+            {
+                "original": "我负责了项目的后端开发。",
+                "improved": "我主导了订单模块的后端重构，将接口 P99 延迟从 800ms 优化到 200ms，支撑了日均 10 万笔订单。",
+                "dimension": "project_evidence",
+            },
+        ],
         "next_session_preset": {
             "target_role": session.target_role,
             "interview_type": session.interview_type,
@@ -1494,10 +2182,25 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
             "conversation_block": f"【面试记录】\n{_conversation_history(turns)}",
         },
     )
-    parsed, llm_meta = run_harnessed_json_generation(
+    emit_interview_event(event_run_id, "runtime.status", {"phase": "training_plan", "label": "正在生成训练计划"})
+
+    # P0: 流式生成报告
+    def _on_report_delta(delta: str):
+        emit_interview_event(event_run_id, "interview.stage.delta", {"stage": "report", "delta": delta})
+        emit_interview_event(event_run_id, "interviewer.delta", {"target": "report", "delta": delta})
+
+    def _on_report_display(text: str):
+        if text:
+            emit_interview_event(event_run_id, "interviewer.snapshot", {"target": "report", "text": text})
+
+    def _on_report_completed(text: str):
+        emit_interview_event(event_run_id, "interviewer.completed", {"target": "report", "text": text})
+
+    from app.interview.harness import run_harnessed_streaming_generation
+    parsed, llm_meta = run_harnessed_streaming_generation(
         db,
         task_name="generate_report",
-        system_prompt=INTERVIEW_SYSTEM_PROMPT,
+        system_prompt=INTERVIEW_STREAMING_SYSTEM_PROMPT,
         user_prompt=prompt,
         fallback=fallback,
         validator=validate_report_output,
@@ -1506,6 +2209,9 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         temperature=0.2,
         max_tokens=4200,
         max_retries=3,
+        on_delta=_on_report_delta,
+        on_display_text=_on_report_display,
+        on_completed=_on_report_completed,
     )
     final_dim_scores = _normalize_report_dimensions(parsed.get("dimension_scores"), dim_scores)
     try:
@@ -1551,6 +2257,8 @@ def generate_report(db: Session, identity: AuthIdentity, session_id: int, *, com
         db.refresh(report)
     else:
         db.flush()
+    emit_interview_event(event_run_id, "interview.report.created", serialize_report(report))
+    mark_interview_run_done(event_run_id)
     return report
 
 

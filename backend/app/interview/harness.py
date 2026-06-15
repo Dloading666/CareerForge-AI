@@ -364,6 +364,347 @@ def run_harnessed_json_generation(
     }
 
 
+def _try_non_streaming_fallback(
+    *,
+    db: Session,
+    models: list[Any],
+    system_prompt: str,
+    user_prompt: str,
+    validator: Callable[[dict[str, Any], dict[str, Any]], list[str]],
+    context: dict[str, Any],
+    identity: Any | None,
+    temperature: float,
+    max_tokens: int,
+    max_retries: int,
+    started_at: float,
+    all_errors: list[str],
+    on_delta: Callable[[str], None] | None,
+    on_display_text: Callable[[str], None] | None,
+    on_completed: Callable[[str], None] | None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """流式全部失败后的降级：用非流式 chat_completion 调用模型，解析 JSON 后模拟流式输出。
+
+    返回 None 表示非流式也失败了，调用方应继续使用 hardcoded fallback。
+    """
+    from app.interview.service import _candidate_chat_models, _extract_json
+    from app.core.llm_client import chat_completion
+
+    if not models:
+        return None
+
+    for model in models:
+        if time.monotonic() - started_at >= 30.0:
+            break
+
+        for attempt in range(max_retries + 1):
+            if time.monotonic() - started_at >= 30.0:
+                break
+
+            if attempt == 0:
+                current_prompt = user_prompt
+            else:
+                current_prompt = _build_repair_prompt(
+                    "non_streaming_fallback", "", all_errors[-3:], original_prompt=user_prompt,
+                )
+
+            try:
+                result = chat_completion(
+                    model,
+                    system_prompt=system_prompt,
+                    variables={},
+                    memory=[],
+                    user_message=current_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            except Exception as exc:
+                all_errors.append(f"{model.display_name} [non-streaming]: {str(exc)[:180]}")
+                continue
+
+            raw_reply = str(result.get("reply") or "")
+            parsed = _extract_json(raw_reply)
+            if parsed is None:
+                all_errors.append(f"attempt {attempt + 1}: {model.display_name} [non-streaming] 输出不是合法 JSON")
+                continue
+
+            errors = validator(parsed, context)
+            if errors:
+                all_errors.extend(errors)
+                logger.warning(
+                    "harness non-streaming fallback %s attempt=%d validator errors: %s",
+                    "fallback", attempt + 1, errors,
+                )
+                continue
+
+            # ── 校验通过，模拟流式输出 ──
+            display_text = _extract_display_text(parsed)
+            _simulate_streaming_output(
+                display_text=display_text,
+                on_delta=on_delta,
+                on_display_text=on_display_text,
+                on_completed=on_completed,
+            )
+
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            return parsed, {
+                "used": True, "model": model.display_name, "usage": result.get("usage"),
+                "attempts": attempt + 1, "repaired": attempt > 0,
+                "errors": [], "fallback_used": False,
+                "non_streaming_fallback": True,
+                "elapsed_ms": elapsed_ms, "max_total_seconds": 30.0,
+                "display_text": display_text,
+                "models_tried": [m.display_name for m in models],
+            }
+
+    return None
+
+
+def _extract_display_text(parsed: dict[str, Any]) -> str:
+    """从模型输出的 JSON 中提取前端展示文本。"""
+    # 面试第一问：取 first_question
+    first_q = str(parsed.get("first_question") or "").strip()
+    if first_q:
+        return first_q
+    # 追问：取 next_question
+    next_q = str(parsed.get("next_question") or "").strip()
+    if next_q:
+        return next_q
+    # 报告：取 report_text
+    report = str(parsed.get("report_text") or "").strip()
+    if report:
+        return report
+    # 兜底：转全部 JSON 为字符串（避免展示原始 JSON 给用户）
+    return ""
+
+
+def _simulate_streaming_output(
+    *,
+    display_text: str,
+    on_delta: Callable[[str], None] | None,
+    on_display_text: Callable[[str], None] | None,
+    on_completed: Callable[[str], None] | None,
+) -> None:
+    """将完整文本拆成逐句 chunks，模拟流式打字机效果。
+
+    按标点切句，逐句通过 on_delta 发送，句间短暂 sleep 制造渐进感。
+    """
+    if not display_text or not on_delta:
+        if on_display_text:
+            on_display_text(display_text)
+        if on_completed:
+            on_completed(display_text)
+        return
+
+    # 按句子边界切分：保留标点附在前一句末尾
+    import re
+    sentences = re.split(r"(?<=[。！？?！\n])", display_text)
+    sentences = [s for s in sentences if s]
+
+    if not sentences:
+        sentences = [display_text]
+
+    for sentence in sentences:
+        on_delta(sentence)
+        time.sleep(0.06)  # 60ms 间隔，模拟真人口吻逐句输出
+
+    if on_display_text:
+        on_display_text(display_text)
+    if on_completed:
+        on_completed(display_text)
+
+
+def run_harnessed_streaming_generation(
+    db: Session,
+    *,
+    task_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    fallback: dict[str, Any],
+    validator: Callable[[dict[str, Any], dict[str, Any]], list[str]],
+    context: dict[str, Any] | None = None,
+    identity: Any | None = None,
+    preferred_model_id: int | None = None,
+    temperature: float = 0.35,
+    max_tokens: int = 2500,
+    max_retries: int = 2,
+    on_delta: Callable[[str], None] | None = None,
+    on_display_text: Callable[[str], None] | None = None,
+    on_completed: Callable[[str], None] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """流式 Harness 生成：调用流式模型 → 收集文本 → 解析 JSON → 校验 → fallback。
+
+    模型输出格式要求：
+    1. 先输出用户可见的工作进度说明（display text）
+    2. 然后输出 ---JSON--- 分隔符
+    3. 最后输出 JSON 结构化结果
+
+    **JSON 内容绝对不能通过 on_delta 发给前端。**
+
+    Args:
+        on_delta: 每收到一个 display delta 时回调（只发展示文本，不发 JSON）
+        on_display_text: display text 完成时回调（用于 SSE interviewer.snapshot）
+        on_completed: display 文本完成时回调（用于 SSE interviewer.completed）
+
+    Returns:
+        (result, llm_meta)
+    """
+    from app.interview.service import _candidate_chat_models, _extract_json
+    from app.core.llm_client import stream_chat_completion
+
+    started_at = time.monotonic()
+    ctx = context or {}
+
+    models = _candidate_chat_models(db, identity, preferred_model_id)
+    if not models:
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        fallback_detail = "No student-open chat model with API key"
+        return fallback, {
+            "used": False, "model": None, "usage": None,
+            "attempts": 0, "repaired": False, "errors": [fallback_detail],
+            "fallback_used": True,
+            "fallback_reason": "no_model_available",
+            "fallback_detail": fallback_detail,
+            "elapsed_ms": elapsed_ms, "max_total_seconds": 30.0,
+        }
+
+    all_errors: list[str] = []
+    attempts = 0
+    models_tried: list[str] = []
+
+    # 双层循环：外层遍历模型，内层重试
+    for model in models:
+        if time.monotonic() - started_at >= 30.0:
+            break
+
+        models_tried.append(model.display_name)
+
+        for attempt in range(max_retries + 1):
+            if time.monotonic() - started_at >= 30.0:
+                break
+
+            attempts += 1
+
+            if attempt == 0:
+                current_prompt = user_prompt
+            else:
+                current_prompt = _build_repair_prompt(
+                    task_name, json_buffer, all_errors, original_prompt=user_prompt,
+                )
+
+            display_buffer = ""
+            json_buffer = ""
+            usage_info = None
+            separator_seen = False
+            stream_error = False
+            raw_buffer = ""
+
+            for chunk in stream_chat_completion(
+                model,
+                system_prompt=system_prompt,
+                user_message=current_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ):
+                if chunk["type"] == "delta":
+                    content = chunk["content"]
+                    raw_buffer += content
+
+                    if separator_seen:
+                        # ---JSON--- 已出现，后续全部进 json_buffer，绝不发给前端
+                        json_buffer += content
+                    elif "---JSON---" in raw_buffer:
+                        # 检测到分隔符：分隔符之前是 display text，之后是 JSON
+                        before_sep, after_sep = raw_buffer.split("---JSON---", 1)
+                        display_buffer = before_sep
+                        separator_seen = True
+                        # 只把分隔符之前的文本发给前端
+                        if display_buffer and on_delta:
+                            on_delta(display_buffer)
+                        if on_display_text:
+                            on_display_text(display_buffer.strip())
+                        if on_completed:
+                            on_completed(display_buffer.strip())
+                        # 分隔符之后的部分进 json_buffer
+                        json_buffer = after_sep
+                    # 注意：未检测到分隔符时，不发任何 delta（缓冲中）
+
+                elif chunk["type"] == "usage":
+                    usage_info = chunk["usage"]
+                elif chunk["type"] == "error":
+                    all_errors.append(f"{model.display_name}: {chunk['message']}")
+                    stream_error = True
+                    break
+
+            if stream_error:
+                break
+
+            # 流式结束：如果没有分隔符，检查是否为纯 JSON
+            if not separator_seen:
+                parsed_check = _extract_json(raw_buffer)
+                if parsed_check is not None:
+                    # 纯 JSON 输出，不向前端发送任何内容
+                    display_buffer = ""
+                    json_buffer = raw_buffer
+                else:
+                    # 既不是 JSON 也没有分隔符，当作非法输出
+                    all_errors.append(f"attempt {attempts}: 输出不是合法 JSON，且缺少 ---JSON--- 分隔符")
+                    continue
+
+            parsed = _extract_json(json_buffer)
+            if parsed is None:
+                all_errors.append(f"attempt {attempts}: {model.display_name} 输出不是合法 JSON")
+                continue
+
+            errors = validator(parsed, ctx)
+            if not errors:
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                return parsed, {
+                    "used": True, "model": model.display_name, "usage": usage_info,
+                    "attempts": attempts, "repaired": attempt > 0,
+                    "errors": [], "fallback_used": False,
+                    "elapsed_ms": elapsed_ms, "max_total_seconds": 30.0,
+                    "display_text": display_buffer.strip(),
+                    "models_tried": models_tried,
+                }
+
+            all_errors.extend(errors)
+            logger.warning("harness_streaming %s attempt=%d validator errors: %s", task_name, attempts, errors)
+
+    # ── 降级：流式全部失败 → 尝试非流式调用 + 模拟流式输出 ──
+    non_streaming_result = _try_non_streaming_fallback(
+        db=db, models=models, system_prompt=system_prompt, user_prompt=user_prompt,
+        validator=validator, context=ctx, identity=identity,
+        temperature=temperature, max_tokens=max_tokens, max_retries=max_retries,
+        started_at=started_at, all_errors=all_errors,
+        on_delta=on_delta, on_display_text=on_display_text, on_completed=on_completed,
+    )
+    if non_streaming_result is not None:
+        return non_streaming_result
+
+    # 非流式也失败，返回 hardcoded fallback
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    fallback_detail = "; ".join(all_errors[-5:]) if all_errors else "Unknown generation failure (streaming + non-streaming exhausted)"
+    fallback_reason = "harness_validation_failed"
+    lowered_detail = fallback_detail.lower()
+    if "timeout" in lowered_detail:
+        fallback_reason = "llm_timeout"
+    elif "stream" in lowered_detail:
+        fallback_reason = "llm_stream_error"
+    elif "json" in lowered_detail:
+        fallback_reason = "json_parse_failed"
+    return fallback, {
+        "used": False, "model": models[0].display_name if models else None, "usage": None,
+        "attempts": attempts, "repaired": False,
+        "errors": all_errors[-5:],
+        "fallback_used": True,
+        "fallback_reason": fallback_reason,
+        "fallback_detail": fallback_detail,
+        "elapsed_ms": elapsed_ms, "max_total_seconds": 30.0,
+        "display_text": "",
+        "models_tried": models_tried,
+    }
+
+
 # ── StartInterviewLoop 校验 ──────────────────────────────────────────────────
 
 def validate_start_output(data: dict[str, Any], context: dict[str, Any]) -> list[str]:
@@ -398,17 +739,25 @@ def validate_start_output(data: dict[str, Any], context: dict[str, Any]) -> list
             fq_lower = first_question.lower()
             anchor_hit = False
             for anchor in resume_anchors:
-                # 从 anchor 中提取关键词（取 2-6 字的片段）
-                anchor_clean = anchor.strip(" -•\t")
-                if not anchor_clean:
-                    continue
-                # 检查 anchor 中的关键词是否出现在 first_question 中
-                keywords = [kw for kw in re.split(r"[，,、。；;：:（）()\s]+", anchor_clean) if len(kw) >= 2]
-                if any(kw.lower() in fq_lower for kw in keywords):
-                    anchor_hit = True
-                    break
+                if isinstance(anchor, dict):
+                    keywords = anchor.get("keywords") or []
+                    if any(kw.lower() in fq_lower for kw in keywords if kw):
+                        anchor_hit = True
+                        break
+                else:
+                    anchor_clean = str(anchor).strip(" -•\t")
+                    if not anchor_clean:
+                        continue
+                    keywords = [kw for kw in re.split(r"[，,、。；;：:（）()\s]+", anchor_clean) if len(kw) >= 2]
+                    if any(kw.lower() in fq_lower for kw in keywords):
+                        anchor_hit = True
+                        break
             if not anchor_hit:
                 errors.append("first_question 未引用简历中的具体项目/经历/技能")
+            # 有锚点时禁止泛问题
+            _generic_patterns = ["请选一个", "请选择一个", "选一个最能证明", "选一个项目", "请做自我介绍", "请介绍一下自己"]
+            if any(p in first_question for p in _generic_patterns):
+                errors.append("first_question 包含泛问题（有简历锚点时必须引用具体项目，不能让用户自己选择）")
 
     # focus_points 是 1 到 6 个字符串
     focus_points = data.get("focus_points")
@@ -901,8 +1250,20 @@ def build_fallback_report(
                 "tasks": ["用 STAR 结构重写 3 个常见回答", "准备 2 个技术细节追问的应对"],
                 "expected_output": "3 个可直接使用的面试回答模板",
             },
+            {
+                "day": 3,
+                "focus": "模拟实战",
+                "tasks": ["找朋友做一次 15 分钟模拟面试", "录音回听，标记空泛表达", "补充 2 个量化案例"],
+                "expected_output": "一次完整模拟面试录音和复盘笔记",
+            },
         ],
-        "rewrite_examples": [],
+        "rewrite_examples": [
+            {
+                "original": "我负责了项目的后端开发。",
+                "improved": "我主导了订单模块的后端重构，将接口 P99 延迟从 800ms 优化到 200ms，支撑了日均 10 万笔订单。",
+                "dimension": "project_evidence",
+            },
+        ],
         "next_session_preset": {
             "target_role": target_role,
             "interview_type": "second_round",

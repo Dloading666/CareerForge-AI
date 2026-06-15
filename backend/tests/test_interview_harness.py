@@ -207,6 +207,30 @@ class MaxTotalSecondsTests(unittest.TestCase):
         self.assertIn("max_total_seconds", meta)
 
 
+class StreamingMetaTests(unittest.TestCase):
+    """run_harnessed_streaming_generation 的 fallback 元数据必须可直接解释。"""
+
+    def test_streaming_no_models_returns_reason_and_detail(self):
+        from app.interview.harness import run_harnessed_streaming_generation
+
+        mock_db = MagicMock()
+        fallback = {"fallback": True}
+        with patch("app.interview.service._candidate_chat_models", return_value=[]):
+            result, meta = run_harnessed_streaming_generation(
+                mock_db,
+                task_name="start_interview",
+                system_prompt="test",
+                user_prompt="test",
+                fallback=fallback,
+                validator=lambda d, c: [],
+            )
+
+        self.assertEqual(result, fallback)
+        self.assertTrue(meta["fallback_used"])
+        self.assertEqual(meta["fallback_reason"], "no_model_available")
+        self.assertIn("No student-open chat model", meta["fallback_detail"])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # P0-4: repair prompt 必须带原始上下文
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -831,7 +855,10 @@ class ResumeAnchorTests(unittest.TestCase):
             "question_type": "resume_deep_dive",
             "capability_tags": ["项目证据"],
         }
-        context = {"resume_anchors": ["负责 Redis 缓存优化项目", "开发 Spring Boot 微服务系统"]}
+        context = {"resume_anchors": [
+            {"type": "project", "name": "Redis 缓存优化", "evidence": "负责 Redis 缓存优化项目", "keywords": ["Redis", "缓存", "优化"]},
+            {"type": "project", "name": "Spring Boot 微服务", "evidence": "开发 Spring Boot 微服务系统", "keywords": ["Spring Boot", "微服务"]},
+        ]}
         errors = validate_start_output(data, context)
         self.assertTrue(any("未引用简历" in e for e in errors),
                         f"Expected anchor reference error, got: {errors}")
@@ -847,13 +874,15 @@ class ResumeAnchorTests(unittest.TestCase):
             "question_type": "resume_deep_dive",
             "capability_tags": ["项目证据"],
         }
-        context = {"resume_anchors": ["负责 Redis 缓存优化项目", "开发 Spring Boot 微服务系统"]}
+        context = {"resume_anchors": [
+            {"type": "project", "name": "Redis 缓存优化", "evidence": "负责 Redis 缓存优化项目", "keywords": ["Redis", "缓存", "优化"]},
+        ]}
         errors = validate_start_output(data, context)
         anchor_errors = [e for e in errors if "未引用简历" in e]
         self.assertEqual(anchor_errors, [], f"Expected no anchor errors, got: {anchor_errors}")
 
     def test_no_anchor_no_requirement(self):
-        """无锚点时，不要求引用具体项目，但必须说明没有读到足够简历信息。"""
+        """无锚点时，不要求引用具体项目。"""
         data = {
             "resume_brief": "暂未读取到足够简历信息",
             "first_question": "我已经读取了你的简历，但信息有限。请先介绍一下你最近的一个项目经历、你的职责和使用的技术栈。",
@@ -868,6 +897,510 @@ class ResumeAnchorTests(unittest.TestCase):
         anchor_errors = [e for e in errors if "未引用简历" in e]
         self.assertEqual(anchor_errors, [], f"Empty anchors should not require reference: {anchor_errors}")
 
+    def test_json_resume_anchor_with_keywords(self):
+        """JSON 简历项目锚点通过 keywords 校验。"""
+        data = {
+            "resume_brief": "候选人有 AI Agent 开发经验",
+            "first_question": "我看到你简历中有 AI Agent 开发平台项目，请围绕 RAG 检索和工具编排说明你的具体职责。",
+            "focus_points": ["项目真实性"],
+            "knowledge_points": ["AI Agent"],
+            "question_reason": "验证项目",
+            "question_type": "resume_deep_dive",
+            "capability_tags": ["项目证据"],
+        }
+        context = {"resume_anchors": [
+            {"type": "project", "name": "AI Agent 开发平台", "evidence": "负责 RAG 检索和工具编排", "keywords": ["AI Agent", "RAG", "工具编排"]},
+        ]}
+        errors = validate_start_output(data, context)
+        anchor_errors = [e for e in errors if "未引用简历" in e]
+        self.assertEqual(anchor_errors, [], f"Expected no anchor errors: {anchor_errors}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 流式生成测试：JSON 不外流 + interviewer.completed + 模型 fallback
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class StreamingGenerationTests(unittest.TestCase):
+    """run_harnessed_streaming_generation 的核心行为测试。"""
+
+    def test_json_not_sent_to_frontend(self):
+        """模型输出 display text + ---JSON--- + JSON 时，on_delta 只收到 display text。"""
+        from app.interview.harness import run_harnessed_streaming_generation
+
+        model_output = '正在分析简历---JSON---{"first_question":"我已经读取了你的简历，请讲项目A？","resume_brief":"摘要","focus_points":["项目"],"knowledge_points":[],"question_reason":"原因","question_type":"resume_deep_dive","capability_tags":["项目证据"]}'
+
+        received_deltas = []
+
+        mock_db = MagicMock()
+        mock_model = MagicMock()
+        mock_model.display_name = "test-model"
+
+        def fake_stream(*_args, **_kwargs):
+            for char in model_output:
+                yield {"type": "delta", "content": char}
+            yield {"type": "usage", "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+
+        with patch("app.interview.service._candidate_chat_models", return_value=[mock_model]), \
+             patch("app.core.llm_client.stream_chat_completion", fake_stream):
+            result, meta = run_harnessed_streaming_generation(
+                mock_db,
+                task_name="test",
+                system_prompt="test",
+                user_prompt="test",
+                fallback={"first_question": "fallback"},
+                validator=lambda d, c: [],
+                on_delta=lambda d: received_deltas.append(d),
+            )
+
+        combined = "".join(received_deltas)
+        self.assertNotIn("{", combined, "JSON brace should not appear in deltas")
+        self.assertNotIn("first_question", combined, "first_question should not appear in deltas")
+        self.assertNotIn("score", combined, "score should not appear in deltas")
+        self.assertIn("正在分析简历", combined, "Display text should appear in deltas")
+
+    def test_completed_triggered_after_display_text(self):
+        """---JSON--- 出现后 on_completed 被调用，内容是 display text。"""
+        from app.interview.harness import run_harnessed_streaming_generation
+
+        model_output = '正在分析你的简历---JSON---{"first_question":"问题","resume_brief":"摘要","focus_points":["项目"],"knowledge_points":[],"question_reason":"原因","question_type":"resume_deep_dive","capability_tags":["项目证据"]}'
+
+        completed_texts = []
+
+        mock_db = MagicMock()
+        mock_model = MagicMock()
+        mock_model.display_name = "test-model"
+
+        def fake_stream(*_args, **_kwargs):
+            for char in model_output:
+                yield {"type": "delta", "content": char}
+            yield {"type": "usage", "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+
+        with patch("app.interview.service._candidate_chat_models", return_value=[mock_model]), \
+             patch("app.core.llm_client.stream_chat_completion", fake_stream):
+            result, meta = run_harnessed_streaming_generation(
+                mock_db,
+                task_name="test",
+                system_prompt="test",
+                user_prompt="test",
+                fallback={},
+                validator=lambda d, c: [],
+                on_completed=lambda t: completed_texts.append(t),
+            )
+
+        self.assertEqual(len(completed_texts), 1)
+        self.assertEqual(completed_texts[0], "正在分析你的简历")
+
+    def test_model_fallback_on_stream_error(self):
+        """第一个模型 stream error，第二个模型成功。"""
+        from app.interview.harness import run_harnessed_streaming_generation
+
+        valid_json = '{"first_question":"问题","resume_brief":"摘要","focus_points":["项目"],"knowledge_points":[],"question_reason":"原因","question_type":"resume_deep_dive","capability_tags":["项目证据"]}'
+        model_output = f'展示文本---JSON---{valid_json}'
+
+        mock_db = MagicMock()
+        mock_model_1 = MagicMock()
+        mock_model_1.display_name = "model-1"
+        mock_model_2 = MagicMock()
+        mock_model_2.display_name = "model-2"
+
+        def fake_stream(model, **_kwargs):
+            if model.display_name == "model-1":
+                yield {"type": "error", "message": "stream failed"}
+            else:
+                for char in model_output:
+                    yield {"type": "delta", "content": char}
+                yield {"type": "usage", "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+
+        with patch("app.interview.service._candidate_chat_models", return_value=[mock_model_1, mock_model_2]), \
+             patch("app.core.llm_client.stream_chat_completion", fake_stream):
+            result, meta = run_harnessed_streaming_generation(
+                mock_db,
+                task_name="test",
+                system_prompt="test",
+                user_prompt="test",
+                fallback={},
+                validator=lambda d, c: [],
+                max_retries=1,
+            )
+
+        self.assertEqual(result["first_question"], "问题")
+        self.assertIn("model-1", meta["models_tried"])
+        self.assertIn("model-2", meta["models_tried"])
+        self.assertFalse(meta["fallback_used"])
+
+    def test_pure_json_no_separator_no_delta_leak(self):
+        """无分隔符纯 JSON 输出时，on_delta 不收到任何内容。"""
+        from app.interview.harness import run_harnessed_streaming_generation
+
+        model_output = '{"first_question":"问题","resume_brief":"摘要","focus_points":["项目"],"knowledge_points":[],"question_reason":"原因","question_type":"resume_deep_dive","capability_tags":["项目证据"]}'
+
+        received_deltas = []
+
+        mock_db = MagicMock()
+        mock_model = MagicMock()
+        mock_model.display_name = "test-model"
+
+        def fake_stream(*_args, **_kwargs):
+            for char in model_output:
+                yield {"type": "delta", "content": char}
+            yield {"type": "usage", "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+
+        with patch("app.interview.service._candidate_chat_models", return_value=[mock_model]), \
+             patch("app.core.llm_client.stream_chat_completion", fake_stream):
+            result, meta = run_harnessed_streaming_generation(
+                mock_db,
+                task_name="test",
+                system_prompt="test",
+                user_prompt="test",
+                fallback={},
+                validator=lambda d, c: [],
+                on_delta=lambda d: received_deltas.append(d),
+            )
+
+        self.assertEqual(result["first_question"], "问题")
+        self.assertFalse(meta["fallback_used"])
+        combined = "".join(received_deltas)
+        self.assertEqual(combined, "", "纯 JSON 输出不应有任何 delta 发给前端")
+        self.assertNotIn("{", combined)
+        self.assertNotIn("first_question", combined)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# run_events 测试：after_seq + owner 校验
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RunEventsTests(unittest.TestCase):
+    """run_events.py 核心行为测试。"""
+
+    def tearDown(self):
+        from app.interview import run_events
+
+        run_events._EVENTS.clear()
+        run_events._DONE.clear()
+        run_events._CREATED_AT.clear()
+        run_events._RUN_OWNERS.clear()
+        run_events._REDIS_UNAVAILABLE_UNTIL = None
+
+    def test_after_seq_filters_old_events(self):
+        """get_interview_events(run_id, after_seq=1) 只返回 seq > 1 的事件。"""
+        from app.interview.run_events import (
+            create_interview_run, emit_interview_event, get_interview_events,
+        )
+
+        run_id = create_interview_run(tenant_id=1, student_id=100)
+        emit_interview_event(run_id, "runtime.status", {"phase": "resume"})
+        emit_interview_event(run_id, "runtime.status", {"phase": "jd"})
+        emit_interview_event(run_id, "runtime.status", {"phase": "match"})
+
+        all_events = get_interview_events(run_id, after_seq=0)
+        self.assertEqual(len(all_events), 3)
+
+        filtered = get_interview_events(run_id, after_seq=1)
+        self.assertEqual(len(filtered), 2)
+        self.assertTrue(all(e["seq"] > 1 for e in filtered))
+
+    def test_owner_check_passes_for_correct_user(self):
+        """用户 A 创建 run，用户 A 可以校验通过。"""
+        from app.interview.run_events import (
+            create_interview_run, assert_interview_run_owner,
+        )
+
+        run_id = create_interview_run(tenant_id=1, student_id=100)
+        # 不应抛出异常
+        assert_interview_run_owner(run_id, tenant_id=1, student_id=100)
+
+    def test_owner_check_fails_for_wrong_user(self):
+        """用户 B 不能校验用户 A 的 run。"""
+        from app.interview.run_events import (
+            create_interview_run, assert_interview_run_owner,
+        )
+
+        run_id = create_interview_run(tenant_id=1, student_id=100)
+        with self.assertRaises(KeyError):
+            assert_interview_run_owner(run_id, tenant_id=1, student_id=999)
+
+    def test_owner_check_fails_for_nonexistent_run(self):
+        """不存在的 run 不能校验通过。"""
+        from app.interview.run_events import assert_interview_run_owner
+
+        with self.assertRaises(KeyError):
+            assert_interview_run_owner("nonexistent-uuid", tenant_id=1, student_id=100)
+
+    def test_owner_check_fails_for_wrong_tenant(self):
+        """不同租户不能校验。"""
+        from app.interview.run_events import (
+            create_interview_run, assert_interview_run_owner,
+        )
+
+        run_id = create_interview_run(tenant_id=1, student_id=100)
+        with self.assertRaises(KeyError):
+            assert_interview_run_owner(run_id, tenant_id=2, student_id=100)
+
+    def test_redis_store_survives_local_memory_clear(self):
+        """Redis 可用时，事件不应只依赖当前进程内存。"""
+        from app.interview import run_events
+
+        class FakeRedis:
+            def __init__(self):
+                self.values = {}
+                self.hashes = {}
+                self.streams = {}
+                self.counters = {}
+
+            def set(self, key, value, ex=None):
+                self.values[key] = value
+
+            def get(self, key):
+                return self.values.get(key)
+
+            def hset(self, key, mapping=None, **kwargs):
+                self.hashes[key] = dict(mapping or kwargs.get("mapping") or {})
+
+            def hgetall(self, key):
+                return dict(self.hashes.get(key, {}))
+
+            def incr(self, key):
+                self.counters[key] = self.counters.get(key, 0) + 1
+                return self.counters[key]
+
+            def xadd(self, key, fields, maxlen=None, approximate=True):
+                stream = self.streams.setdefault(key, [])
+                stream_id = f"{len(stream) + 1}-0"
+                stream.append((stream_id, dict(fields)))
+                if maxlen and len(stream) > maxlen:
+                    del stream[:len(stream) - maxlen]
+                return stream_id
+
+            def xrange(self, key, min="-", max="+"):
+                return list(self.streams.get(key, []))
+
+            def expire(self, key, seconds):
+                return True
+
+            def delete(self, *keys):
+                for key in keys:
+                    self.values.pop(key, None)
+                    self.hashes.pop(key, None)
+                    self.streams.pop(key, None)
+                    self.counters.pop(key, None)
+
+        fake = FakeRedis()
+        with patch("app.interview.run_events.get_redis", return_value=fake, create=True):
+            run_id = run_events.create_interview_run(tenant_id=1, student_id=100)
+            run_events.emit_interview_event(run_id, "runtime.status", {"phase": "resume"})
+            run_events.mark_interview_run_done(run_id)
+
+            run_events._EVENTS.clear()
+            run_events._DONE.clear()
+            run_events._CREATED_AT.clear()
+            run_events._RUN_OWNERS.clear()
+
+            run_events.assert_interview_run_owner(run_id, tenant_id=1, student_id=100)
+            events = run_events.get_interview_events(run_id, after_seq=0)
+            is_done = run_events.is_interview_run_done(run_id)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "runtime.status")
+        self.assertTrue(is_done)
+        self.assertTrue(
+            any(key.endswith(":events") for key in fake.streams),
+            "interview run events must be persisted with Redis Stream xadd/xrange",
+        )
+
+
+class VoiceTranscriptionTests(unittest.TestCase):
+    """语音转写输入格式和错误可见性测试。"""
+
+    def test_infer_audio_format_supports_browser_recorder_variants(self):
+        from app.interview.service import _infer_audio_format
+
+        self.assertEqual(_infer_audio_format("audio/webm;codecs=opus", "recording.webm"), "webm")
+        self.assertEqual(_infer_audio_format("application/octet-stream", "answer.m4a"), "mp4")
+        self.assertEqual(_infer_audio_format("audio/wav", "answer.wav"), "wav")
+
+    def test_transcription_failure_includes_provider_error_detail(self):
+        from app.interview.service import InterviewError, _transcribe_voice_audio_sync
+
+        model = MagicMock()
+        model.display_name = "Mimo Voice"
+        identity = MagicMock()
+
+        with patch("app.interview.voice_service.candidate_voice_models", return_value=[model]), \
+             patch("app.interview.voice_service.voice_chat_completion", side_effect=RuntimeError("invalid audio format: webm")):
+            with self.assertRaises(InterviewError) as ctx:
+                _transcribe_voice_audio_sync(
+                    MagicMock(),
+                    identity,
+                    audio_bytes=b"0" * 200,
+                    content_type="audio/webm;codecs=opus",
+                    filename="recording.webm",
+                )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertIn("invalid audio format: webm", ctx.exception.detail)
+
+
+class ReportRunEventsTests(unittest.TestCase):
+    """报告生成 run 即使命中已有报告，也必须正常收尾。"""
+
+    def test_generate_report_existing_report_emits_created_and_done(self):
+        from app.interview.service import generate_report
+
+        session = MagicMock()
+        session.id = 10
+        session.student_id = 100
+        session.tenant_id = 1
+        existing_report = MagicMock()
+        db = MagicMock()
+        db.get.return_value = session
+        db.scalar.return_value = existing_report
+        identity = MagicMock()
+        identity.user_id = 100
+        identity.tenant_id = 1
+
+        with patch("app.interview.service.emit_interview_event") as emit, \
+             patch("app.interview.service.mark_interview_run_done") as mark_done, \
+             patch("app.interview.service.serialize_report", return_value={"id": 99}):
+            result = generate_report(db, identity, 10, event_run_id="report-run")
+
+        self.assertIs(result, existing_report)
+        emit.assert_any_call("report-run", "interview.report.created", {"id": 99})
+        mark_done.assert_called_once_with("report-run")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# start_interview 真实路径回归测试
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class StartInterviewFlowTests(unittest.TestCase):
+    """覆盖 start_interview() 完整执行路径，防止 UnboundLocalError 等回归。"""
+
+    def _make_payload(self, resume_text="项目：Redis 缓存优化平台\n负责后端开发，使用 Spring Boot 和 Redis。"):
+        from app.interview.schemas import InterviewStartRequest
+        return InterviewStartRequest(
+            target_role="后端开发工程师",
+            job_description="要求 Redis、Spring Boot，有项目经验",
+            resume_source="upload",
+            uploaded_resume_text=resume_text,
+        )
+
+    def _make_identity(self):
+        from unittest.mock import MagicMock
+        identity = MagicMock()
+        identity.user_id = 1
+        identity.tenant_id = 0
+        identity.role = "student"
+        return identity
+
+    def _run_start(self, payload, model_output, events_collector):
+        from unittest.mock import MagicMock, patch
+        from app.interview.service import start_interview
+        import json
+
+        mock_db = MagicMock()
+        mock_index = MagicMock()
+        mock_index.search.return_value = []
+        mock_model = MagicMock()
+        mock_model.display_name = "test-model"
+        mock_model.id = 1
+
+        def capture(run_id, event, data):
+            events_collector.append({"event": event, "data": data})
+
+        def fake_stream(*_a, **_k):
+            for char in model_output:
+                yield {"type": "delta", "content": char}
+            yield {"type": "usage", "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+
+        with patch("app.interview.service.get_knowledge_index", return_value=mock_index), \
+             patch("app.interview.service._candidate_chat_models", return_value=[mock_model]), \
+             patch("app.interview.service._candidate_voice_models", return_value=[]), \
+             patch("app.interview.service.emit_interview_event", side_effect=capture), \
+             patch("app.interview.service.set_progress"), \
+             patch("app.core.llm_client.stream_chat_completion", side_effect=fake_stream):
+            return start_interview(mock_db, self._make_identity(), payload, event_run_id="test-flow")
+
+    def test_with_anchors_references_project(self):
+        """有锚点时 start_interview 不崩溃，第一问引用具体项目名。"""
+        import json
+        first_q = "我看到你简历中提到了「Redis 缓存优化平台」项目，请围绕这个项目说明你的具体职责、技术方案和量化结果。"
+        model_output = f"正在分析简历---JSON---{json.dumps({'resume_brief':'摘要','focus_points':['项目'],'first_question':first_q,'question_reason':'原因','question_type':'resume_deep_dive','capability_tags':['项目证据'],'knowledge_points':['Redis']}, ensure_ascii=False)}"
+        events = []
+        result = self._run_start(self._make_payload(), model_output, events)
+        q = result["first_turn"]["question"]
+        self.assertIn("Redis", q)
+        self.assertNotIn("请选一个最能证明", q)
+        # 验证阶段事件完整
+        stage_keys = [(e["event"], e["data"].get("stage", "")) for e in events if e["event"].startswith("interview.stage.")]
+        for stage in ("resume", "jd", "match", "rag", "llm", "harness", "done"):
+            self.assertIn(("interview.stage.completed", stage), stage_keys, f"缺少 interview.stage.completed {stage}")
+
+    def test_without_anchors_allows_generic(self):
+        """无锚点时 fallback 可以使用泛问题。"""
+        import json
+        first_q = "请选一个最能证明你适合「后端开发工程师」的项目，按背景、你的职责、关键方案、量化结果说清楚。"
+        model_output = f"---JSON---{json.dumps({'resume_brief':'摘要','focus_points':['项目'],'first_question':first_q,'question_reason':'原因','question_type':'resume_deep_dive','capability_tags':['项目证据'],'knowledge_points':[]}, ensure_ascii=False)}"
+        events = []
+        # 使用不含锚点触发词的简历文本
+        result = self._run_start(self._make_payload(resume_text="无"), model_output, events)
+        q = result["first_turn"]["question"]
+        # 无锚点时允许泛项目，但仍只能问一个主问题
+        self.assertIn("个人职责", q)
+        self.assertNotIn("技术方案和量化结果", q)
+
+    def test_resume_anchor_extraction_ignores_contact_and_job_intent(self):
+        """联系方式和求职意向不能被当成项目锚点。"""
+        from app.interview.service import _extract_resume_anchors
+
+        resume_text = "\n".join([
+            "电话/微信：18050656775 求职意向：Agent开发实习生",
+            "项目：CareerForge AI 面试官优化平台",
+            "负责 RAG 检索、SSE 事件流、语音转写确认和面试评分护栏。",
+        ])
+
+        anchors = _extract_resume_anchors(resume_text)
+        names = [anchor.get("name", "") for anchor in anchors]
+        joined = " ".join(names)
+
+        self.assertTrue(any("CareerForge" in name or "AI 面试官" in name for name in names))
+        self.assertNotIn("18050656775", joined)
+        self.assertNotIn("求职意向", joined)
+
+    def test_no_model_fallback_reason(self):
+        """无模型时 fallback_reason 为 no_model_available。"""
+        from unittest.mock import MagicMock, patch
+        from app.interview.service import start_interview
+        from app.interview.schemas import InterviewStartRequest
+
+        payload = InterviewStartRequest(
+            target_role="后端开发工程师",
+            job_description="要求 Redis",
+            resume_source="upload",
+            uploaded_resume_text="项目：Redis 缓存优化平台",
+        )
+        mock_db = MagicMock()
+        mock_index = MagicMock()
+        mock_index.search.return_value = []
+        identity = self._make_identity()
+        events = []
+        def capture(run_id, event, data):
+            events.append({"event": event, "data": data})
+
+        with patch("app.interview.service.get_knowledge_index", return_value=mock_index), \
+             patch("app.interview.service._candidate_chat_models", return_value=[]), \
+             patch("app.interview.service.emit_interview_event", side_effect=capture), \
+             patch("app.interview.service.set_progress"):
+            result = start_interview(mock_db, identity, payload, event_run_id="test-no-model")
+        # 无模型时应 fallback，第一问仍存在
+        self.assertIn("first_turn", result)
+        self.assertIn("question", result["first_turn"])
+
+        # 断言 fallback_reason / fallback_used / fallback_detail
+        llm_meta = result["first_turn"]["answer_assessment"]["llm"]
+        self.assertTrue(llm_meta["fallback_used"])
+        self.assertEqual(llm_meta["fallback_reason"], "no_model_available")
+        self.assertIsNotNone(llm_meta["fallback_detail"])
+        self.assertIn("No student-open chat model", llm_meta["fallback_detail"])
 
 
 if __name__ == "__main__":

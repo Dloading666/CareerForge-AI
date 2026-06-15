@@ -1,4 +1,4 @@
-﻿@font-face {
+@font-face {
   font-family: 'Alibaba PuHuiTi';
   src: url('/fonts/AlibabaPuHuiTi-3-55-Regular.ttf') format('truetype');
   font-weight: 400;
@@ -6502,6 +6502,58 @@ textarea {
   font-size: 12px;
 }
 
+.interview-answer-progress {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.interview-answer-progress .interview-progress-bar {
+  margin-top: 0;
+}
+
+.interview-answer-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.interview-answer-progress-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.interview-answer-progress-step svg {
+  color: #00b42a;
+}
+
+.interview-answer-progress-step i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.interview-answer-progress-step--active {
+  background: rgba(22, 93, 255, 0.08);
+  color: #165dff;
+  font-weight: 600;
+}
+
+.interview-answer-progress-step--done {
+  background: rgba(0, 180, 42, 0.08);
+  color: #166534;
+}
+
 .interview-answer-box {
   display: flex;
   flex-direction: column;
@@ -6627,6 +6679,38 @@ textarea {
   background: #165dff;
 }
 
+.interview-voice-draft {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe6f3;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.interview-voice-draft-head,
+.interview-voice-draft-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.interview-voice-draft-head strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.interview-voice-draft-head span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.interview-voice-draft-actions {
+  justify-content: flex-end;
+}
+
 .voice-dot--1 { animation-delay: 0s; }
 .voice-dot--2 { animation-delay: 0.15s; }
 .voice-dot--3 { animation-delay: 0.3s; }
@@ -6642,20 +6726,24 @@ textarea {
 
 .interview-progress-stages {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .interview-progress-stage {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 13px;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
   color: #86909c;
   transition: all 0.2s ease;
+  cursor: pointer;
 }
 
 .interview-progress-stage svg {
@@ -6698,7 +6786,91 @@ textarea {
   display: block;
   font-size: 11px;
   color: #f53f3f;
-  margin-left: 22px;
+  margin-left: 4px;
+}
+
+.interview-progress-stage--selected {
+  background: rgba(22, 93, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(22, 93, 255, 0.16);
+}
+
+.interview-progress-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.interview-progress-bar-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5eaf3;
+}
+
+.interview-progress-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #165dff, #00b42a);
+  transition: width 0.25s ease;
+}
+
+.interview-progress-bar span {
+  min-width: 40px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.interview-stage-report {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  border-left: 3px solid #165dff;
+  font-size: 13px;
+  animation: fadeIn 0.25s ease-in;
+}
+
+.interview-stage-report strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #1d2129;
+}
+
+.interview-stage-report p {
+  margin: 4px 0;
+  color: #4e5969;
+}
+
+.interview-stage-report ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  color: #4e5969;
+}
+
+.interview-stage-report li {
+  margin: 2px 0;
+}
+
+.stage-report-evidence {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #e5e6eb;
+}
+
+.stage-report-evidence small {
+  display: block;
+  color: #86909c;
+  font-style: italic;
+  margin: 2px 0;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ── 语音草稿确认 ─────────────────────────────────── */
