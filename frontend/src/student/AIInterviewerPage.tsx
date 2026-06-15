@@ -1,6 +1,8 @@
 import { Button, Input, InputNumber, Message, Select, Spin, Tag } from '@arco-design/web-react'
 import {
   IconBulb,
+  IconCaretDown,
+  IconCaretUp,
   IconCheckCircle,
   IconExclamationCircle,
   IconLeft,
@@ -220,6 +222,7 @@ export function AIInterviewerPage() {
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState<Report | null>(null)
   const [configCollapsed, setConfigCollapsed] = useState(false)
+  const [reportCollapsed, setReportCollapsed] = useState(false)
   const [listening, setListening] = useState(false)
   const [reportProgress, setReportProgress] = useState<string[]>([])
   const [interviewProgress, setInterviewProgress] = useState<string[]>([])
@@ -905,62 +908,108 @@ export function AIInterviewerPage() {
         )}
 
         {report && (
-          <section className="interview-report">
-            <div className="report-score-panel">
-              <div className="report-score-ring">
-                <span>{Math.round(report.overall_score)}</span>
-                <p>综合评分</p>
-              </div>
-              {weakestDimension && (
-                <div className="report-weakest">
-                  <IconExclamationCircle />
-                  <span>最薄弱</span>
-                  <strong>{DIMENSION_LABELS[weakestDimension[0]] ?? weakestDimension[0]}</strong>
-                  <small>{Math.round(weakestDimension[1])} 分，下一轮优先补这里</small>
+          <section className={`interview-report${reportCollapsed ? ' interview-report--collapsed' : ''}`}>
+            {reportCollapsed ? (
+              <button
+                type="button"
+                className="report-collapsed-bar"
+                onClick={() => setReportCollapsed(false)}
+              >
+                <div className="report-collapsed-score">
+                  <strong>{Math.round(report.overall_score)}</strong>
+                  <span>分</span>
                 </div>
-              )}
-            </div>
-            <div className="report-body">
-              <div className="report-body-head">
-                <div>
-                  <h3>面试复盘</h3>
-                  <p>先看最低分，再看怎么练。报告会把“最容易被面试官继续追”的地方放在前面。</p>
-                  {report.comparison?.scoring && (
-                    <p className="report-scoring-meta">
-                      {report.comparison.scoring.mode === 'llm_rubric' ? '大模型 Rubric 终评' : 'Rubric 本地兜底'}
-                      {report.comparison.scoring.model ? ` · ${report.comparison.scoring.model}` : ''}
-                      {report.comparison.scoring.usage?.total_tokens ? ` · ${report.comparison.scoring.usage.total_tokens.toLocaleString()} tokens` : ''}
+                <div className="report-collapsed-info">
+                  <h3>面试复盘已生成</h3>
+                  {weakestDimension && (
+                    <p>
+                      最薄弱：<em>{DIMENSION_LABELS[weakestDimension[0]] ?? weakestDimension[0]}</em>（{Math.round(weakestDimension[1])} 分），下一轮优先补这里
                     </p>
                   )}
                 </div>
-                {report.comparison?.overall_delta !== undefined && (
-                  <Tag color={report.comparison.overall_delta >= 0 ? 'green' : 'red'}>
-                    {report.comparison.overall_delta >= 0 ? '+' : ''}{report.comparison.overall_delta} 分
-                  </Tag>
-                )}
-              </div>
-              <div className="report-summary-card">{report.report_text}</div>
-              {report.comparison?.message && <div className="report-comparison">{report.comparison.message}</div>}
-              <div className="score-grid">
-                {Object.entries(report.dimension_scores).map(([key, value]) => (
-                  <div key={key} className={`score-item score-item--${scoreLevel(value)}`}>
-                    <div>
-                      <span>{DIMENSION_LABELS[key] ?? key}</span>
-                      <small>{DIMENSION_DESCRIPTIONS[key] ?? '按面试回答证据评分'}</small>
-                      {weakestDimension?.[0] === key && <em>重点突破</em>}
-                    </div>
-                    <strong>{Math.round(value)}</strong>
-                    <i style={{ width: `${Math.max(8, Math.min(100, value))}%` }} />
+                <div className="report-collapsed-actions">
+                  {report.comparison?.overall_delta !== undefined && (
+                    <Tag color={report.comparison.overall_delta >= 0 ? 'green' : 'red'}>
+                      {report.comparison.overall_delta >= 0 ? '+' : ''}{report.comparison.overall_delta} 分
+                    </Tag>
+                  )}
+                  <span className="report-collapsed-toggle">
+                    展开 <IconCaretDown />
+                  </span>
+                </div>
+              </button>
+            ) : (
+              <>
+                <div className="report-score-panel">
+                  <div className="report-score-ring">
+                    <span>{Math.round(report.overall_score)}</span>
+                    <p>综合评分</p>
                   </div>
-                ))}
-              </div>
-              <div className="report-columns">
-                <ReportList title="优势" tone="good" items={report.strengths} />
-                <ReportList title="待改进" tone="risk" items={report.weaknesses} />
-                <ReportList title="训练建议" tone="coach" items={report.suggestions} />
-                <ReportList title="下一轮题目" tone="next" items={report.next_questions} />
-              </div>
-            </div>
+                  {weakestDimension && (
+                    <div className="report-weakest">
+                      <IconExclamationCircle />
+                      <span>最薄弱</span>
+                      <strong>{DIMENSION_LABELS[weakestDimension[0]] ?? weakestDimension[0]}</strong>
+                      <small>{Math.round(weakestDimension[1])} 分，下一轮优先补这里</small>
+                    </div>
+                  )}
+                </div>
+                <div className="report-body">
+                  <div className="report-body-head">
+                    <div>
+                      <h3>面试复盘</h3>
+                      <p>先看最低分，再看怎么练。报告会把“最容易被面试官继续追”的地方放在前面。</p>
+                      {report.comparison?.scoring && (
+                        <p className="report-scoring-meta">
+                          {report.comparison.scoring.mode === 'llm_rubric' ? '大模型 Rubric 终评' : 'Rubric 本地兜底'}
+                          {report.comparison.scoring.model ? ` · ${report.comparison.scoring.model}` : ''}
+                          {report.comparison.scoring.usage?.total_tokens ? ` · ${report.comparison.scoring.usage.total_tokens.toLocaleString()} tokens` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <div className="report-body-head-actions">
+                      {report.comparison?.overall_delta !== undefined && (
+                        <Tag color={report.comparison.overall_delta >= 0 ? 'green' : 'red'}>
+                          {report.comparison.overall_delta >= 0 ? '+' : ''}{report.comparison.overall_delta} 分
+                        </Tag>
+                      )}
+                      <Button
+                        type="text"
+                        size="small"
+                        className="report-toggle"
+                        icon={<IconCaretUp />}
+                        onClick={() => setReportCollapsed(true)}
+                      >
+                        收起
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="report-body-content">
+                    <div className="report-summary-card">{report.report_text}</div>
+                    {report.comparison?.message && <div className="report-comparison">{report.comparison.message}</div>}
+                    <div className="score-grid">
+                      {Object.entries(report.dimension_scores).map(([key, value]) => (
+                        <div key={key} className={`score-item score-item--${scoreLevel(value)}`}>
+                          <div>
+                            <span>{DIMENSION_LABELS[key] ?? key}</span>
+                            <small>{DIMENSION_DESCRIPTIONS[key] ?? '按面试回答证据评分'}</small>
+                            {weakestDimension?.[0] === key && <em>重点突破</em>}
+                          </div>
+                          <strong>{Math.round(value)}</strong>
+                          <i style={{ width: `${Math.max(8, Math.min(100, value))}%` }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="report-columns">
+                      <ReportList title="优势" tone="good" items={report.strengths} />
+                      <ReportList title="待改进" tone="risk" items={report.weaknesses} />
+                      <ReportList title="训练建议" tone="coach" items={report.suggestions} />
+                      <ReportList title="下一轮题目" tone="next" items={report.next_questions} />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
         )}
       </section>
