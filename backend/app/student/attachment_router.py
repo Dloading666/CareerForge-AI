@@ -40,7 +40,7 @@ def list_my_attachments(
 
 
 @router.post("/attachments/upload")
-async def upload_resume(
+def upload_resume(
     file: UploadFile = File(...),
     current=Depends(require_role("student")),
     db: Session = Depends(get_db),
@@ -52,7 +52,9 @@ async def upload_resume(
     if ext not in allowed:
         raise HTTPException(400, "简历仅支持 PDF / Word（.docx/.doc）格式")
 
-    content = await file.read()
+    # Sync read of the underlying SpooledTemporaryFile. Function is sync because all
+    # downstream IO (disk write, DB) is blocking — wrapping in async only starves the loop.
+    content = file.file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(400, "文件不能超过 20MB")
 
