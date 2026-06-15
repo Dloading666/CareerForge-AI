@@ -24,12 +24,16 @@ from app.auth.service import ensure_admin_bootstrap
 from app.core.config import get_settings
 from app.infra.db import Base, SessionLocal, engine
 from app.infra.redis_client import ping_redis
+from app.infra.rate_limit import IPRateLimitMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from app.mcp import models as mcp_models  # noqa: F401
 from app.mcp.router import router as mcp_router
 from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
 from app.student import resume_models as student_resume_models  # noqa: F401
+from app.student import event_models as student_event_models  # noqa: F401
 from app.student.router import router as student_router
 from app.student.profile_details_router import router as student_profile_details_router
 from app.student.event_router import router as event_router
@@ -110,8 +114,11 @@ allowed_frontend_origins = list(dict.fromkeys([
 allowed_origin_regex = r"^http://(localhost|127\.0\.0\.1):\d+$" if settings.is_development else None
 
 app.add_middleware(CORSMiddleware, allow_origins=allowed_frontend_origins,
-    allow_origin_regex=allowed_origin_regex, allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"])
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(IPRateLimitMiddleware)
 
 os.makedirs("data/avatars", exist_ok=True)
 os.makedirs("/app/data/feedbacks", exist_ok=True)
@@ -255,7 +262,21 @@ def read_root():
 
 @app.get("/healthz")
 def healthz():
-    return {
-        "status": "ok",
-        "redis": "ok" if ping_redis() else "unavailable",
-    }
+    """Liveness + readiness probe. 200 when both Redis and MySQL respond; 503 otherwise."""
+    redis_ok = bool(ping_redis())
+    mysql_ok = False
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        mysql_ok = True
+    except Exception:
+        mysql_ok = False
+    healthy = redis_ok and mysql_ok
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={
+            "status": "ok" if healthy else "degraded",
+            "redis": "ok" if redis_ok else "unavailable",
+            "mysql": "ok" if mysql_ok else "unavailable",
+        },
+    )
