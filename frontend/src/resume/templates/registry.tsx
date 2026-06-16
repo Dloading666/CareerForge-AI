@@ -1,5 +1,4 @@
 import { useState } from 'react'
-/* eslint-disable react-refresh/only-export-components */
 import type { CSSProperties, ReactNode } from 'react'
 
 import type {
@@ -598,6 +597,7 @@ function RichList({ blocks, resume, inverse = false }: { blocks: RichInlineBlock
         const Tag = block.type === 'ordered' ? 'ol' : 'ul'
         return (
           <Tag
+            // eslint-disable-next-line react/no-array-index-key
             key={`${block.type}-${idx}`}
             style={{
               margin: '4px 0 0',
@@ -616,21 +616,26 @@ function RichList({ blocks, resume, inverse = false }: { blocks: RichInlineBlock
         )
       })}
       {paraLines.length > 0 ? (
-        <ul
+        // Paragraph fallback: render as plain text blocks (NO bullet points)
+        // so the preview matches what the user sees in the editor when they
+        // haven't explicitly used list syntax (e.g. typed free-text skills).
+        <div
           style={{
             margin: '4px 0 0',
-            paddingLeft: '1.45em',
             color: baseColor,
             fontSize,
             lineHeight,
+            whiteSpace: 'pre-wrap',
           }}
         >
           {paraLines.map((line, index) => (
-            <li key={`para-${line}-${index}`} style={{ paddingLeft: 2 }}>
-              <span dangerouslySetInnerHTML={{ __html: line }} />
-            </li>
+            <p
+              key={`para-${line}-${index}`}
+              style={{ margin: 0 }}
+              dangerouslySetInnerHTML={{ __html: line }}
+            />
           ))}
-        </ul>
+        </div>
       ) : null}
     </div>
   )
@@ -676,11 +681,13 @@ function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: Re
         if (block.type === 'paragraph') {
           return (
             <div
+              // eslint-disable-next-line react/no-array-index-key
               key={`p-${idx}`}
               style={{ ...baseStyle, marginBottom: 4 }}
             >
               {block.lines.map((line, j) => (
                 <p
+                  // eslint-disable-next-line react/no-array-index-key
                   key={`p-${idx}-${j}`}
                   style={{ margin: 0 }}
                 >
@@ -693,6 +700,7 @@ function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: Re
         const Tag = block.type === 'ordered' ? 'ol' : 'ul'
         return (
           <Tag
+            // eslint-disable-next-line react/no-array-index-key
             key={`${block.type}-${idx}`}
             style={{
               ...baseStyle,
@@ -715,29 +723,22 @@ function MixedBlocks({ blocks, resume }: { blocks: RichInlineBlock[]; resume: Re
 function EntryList({
   items,
   resume,
-  offsets,
 }: {
   items: ViewListItem[]
   resume: ResumeData
-  offsets?: Record<string, { x: number; y: number }>
 }) {
   const centerSubtitle = resume.globalSettings.centerSubtitle ?? false
   const subheaderSize = resume.globalSettings.subheaderSize ?? 16
   return (
     <>
       {items.map((item, index) => {
-        const dragId = item.itemId ? `item:${item.itemId}` : undefined
-        const off = dragId ? offsets?.[dragId] : undefined
         return (
           <article
             key={`${item.title}-${index}`}
-            data-drag-id={dragId}
             style={{
               marginTop: resume.globalSettings.paragraphSpacing ?? 12,
               breakInside: 'avoid',
               pageBreakInside: 'avoid',
-              position: 'relative',
-              transform: off ? `translate(${off.x}px, ${off.y}px)` : undefined,
             }}
           >
             <div
@@ -807,12 +808,11 @@ function StandardSection({
   model: TemplateViewModel
   variant?: TitleVariant
 }) {
-  const offsets = resume.globalSettings.sectionOffsets ?? {}
   let content: ReactNode = null
   if (id === 'skills') content = <RichList blocks={model.skills} resume={resume} />
-  if (id === 'experience') content = <EntryList items={model.experience} resume={resume} offsets={offsets} />
-  if (id === 'projects') content = <EntryList items={model.projects} resume={resume} offsets={offsets} />
-  if (id === 'education') content = <EntryList items={model.education} resume={resume} offsets={offsets} />
+  if (id === 'experience') content = <EntryList items={model.experience} resume={resume} />
+  if (id === 'projects') content = <EntryList items={model.projects} resume={resume} />
+  if (id === 'education') content = <EntryList items={model.education} resume={resume} />
   if (id === 'selfEvaluation') content = <Paragraphs blocks={model.selfEvaluation} resume={resume} />
   if (id === 'certificates' && resume.certificates.length) {
     content = (
@@ -867,14 +867,7 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
   const template = getTemplateConfig(resume.templateId)
   const model = buildTemplateViewModel(resume)
   const sections = enabledSections(resume)
-  const sectionOffsets = resume.globalSettings.sectionOffsets ?? {}
   const themeColor = resume.globalSettings.themeColor || '#000000'
-
-  // Section-level offsets are keyed as "section:<id>"; item-level as "item:<itemId>"
-  const sectionWrapStyle = (id: string): CSSProperties => {
-    const off = sectionOffsets[`section:${id}`]
-    return off ? { transform: `translate(${off.x}px, ${off.y}px)`, position: 'relative' } : {}
-  }
 
   // ── modern: two-column with dark sidebar ──────────────────────────────
   // ── blank: no template chrome, plain section headers stacked ───────────────────────────────
@@ -930,7 +923,7 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
     )
     return (
       <div data-resume-print-root className="resume-document" style={base}>
-        <div data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+        <div >
           <div style={{ fontSize: 22, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
             {model.header.name || '未命名简历'}
           </div>
@@ -941,23 +934,23 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
             <div style={{ fontSize: 12, color: '#6b7280' }}>{model.header.contacts.join('  ·  ')}</div>
           ) : null}
         </div>
-        <div data-drag-id="section:skills" style={sectionWrapStyle('skills')}>
+        <div >
           <div style={sectionTitleStyle}>{blankSectionTitle('skills', '专业技能')}</div>
           {renderLines(model.skills)}
         </div>
-        <div data-drag-id="section:experience" style={sectionWrapStyle('experience')}>
+        <div >
           <div style={sectionTitleStyle}>{blankSectionTitle('experience', '工作经历')}</div>
           {model.experience.map(renderItem)}
         </div>
-        <div data-drag-id="section:projects" style={sectionWrapStyle('projects')}>
+        <div >
           <div style={sectionTitleStyle}>{blankSectionTitle('projects', '项目经历')}</div>
           {model.projects.map(renderItem)}
         </div>
-        <div data-drag-id="section:education" style={sectionWrapStyle('education')}>
+        <div >
           <div style={sectionTitleStyle}>{blankSectionTitle('education', '教育经历')}</div>
           {model.education.map(renderItem)}
         </div>
-        <div data-drag-id="section:selfEvaluation" style={sectionWrapStyle('selfEvaluation')}>
+        <div >
           <div style={sectionTitleStyle}>{blankSectionTitle('selfEvaluation', '自我评价')}</div>
           {renderLines(model.selfEvaluation)}
         </div>
@@ -974,16 +967,16 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
         style={{ ...basePageStyle(resume, template), display: 'grid', gridTemplateColumns: '33.333333% 66.666667%', padding: 0, overflow: 'hidden' }}
       >
         <aside style={{ minHeight: '297mm', padding: 16, paddingTop: resume.globalSettings.sectionSpacing ?? 8, background: themeColor, color: '#ffffff' }}>
-          <div data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+          <div >
             <ModernHeader resume={resume} />
           </div>
-          <div data-drag-id="section:education" style={sectionWrapStyle('education')}>
+          <div >
             <SidebarEducation resume={resume} items={model.education} />
           </div>
         </aside>
         <main style={{ padding: '0 16px 24px', background: '#ffffff' }}>
           {rightSections.map((section) => (
-            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+            <div key={section.id} >
               <StandardSection id={section.id} title={section.title} resume={resume} model={model} />
             </div>
           ))}
@@ -998,17 +991,15 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
     return (
       <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
         {sections.find((s) => s.id === 'basic') && (
-          <div data-drag-id="section:basic" style={{ ...sectionWrapStyle('basic'), marginBottom: 16 }}>
+          <div style={{  marginBottom: 16 }}>
             <ClassicHeader resume={resume} />
           </div>
         )}
         <div style={{ paddingLeft: 6 }}>
           {nonBasicSections.map((section) => (
             <div
-              key={section.id}
-              data-drag-id={`section:${section.id}`}
-              style={{
-                ...sectionWrapStyle(section.id),
+              key={section.id}style={{
+                
                 position: 'relative',
                 paddingLeft: 28,
                 marginTop: resume.globalSettings.sectionSpacing ?? 16,
@@ -1074,10 +1065,8 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
         style={{ ...basePageStyle(resume, template), padding: 0, overflow: 'hidden' }}
       >
         {/* colored header block */}
-        <div
-          data-drag-id="section:basic"
-          style={{
-            ...sectionWrapStyle('basic'),
+        <div style={{
+            
             background: themeColor,
             color: '#ffffff',
             padding: `24px ${padding}px`,
@@ -1089,7 +1078,7 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
         {/* content area */}
         <div style={{ padding: `0 ${padding}px ${padding}px` }}>
           {otherSections.map((section) => (
-            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+            <div key={section.id} >
               <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant="creative" />
             </div>
           ))}
@@ -1104,11 +1093,11 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
       <div data-resume-print-root className="resume-document" style={basePageStyle(resume, template)}>
         {sections.map((section) =>
           section.id === 'basic' ? (
-            <div key={section.id} data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+            <div key={section.id} >
               <EditorialHeader resume={resume} />
             </div>
           ) : (
-            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+            <div key={section.id} >
               <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant="editorial" />
             </div>
           ),
@@ -1133,11 +1122,11 @@ export function ResumeTemplatePreview({ resume }: { resume: ResumeData }) {
       <div style={isCentered ? { width: '100%', maxWidth: 896, margin: '0 auto' } : undefined}>
         {sections.map((section) =>
           section.id === 'basic' ? (
-            <div key={section.id} data-drag-id="section:basic" style={sectionWrapStyle('basic')}>
+            <div key={section.id} >
               <ClassicHeader resume={resume} centered={isCentered} />
             </div>
           ) : (
-            <div key={section.id} data-drag-id={`section:${section.id}`} style={sectionWrapStyle(section.id)}>
+            <div key={section.id} >
               <StandardSection id={section.id} title={section.title} resume={resume} model={model} variant={titleVariant} />
             </div>
           ),

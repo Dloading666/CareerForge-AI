@@ -1,5 +1,11 @@
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+// Defer heavy PDF deps (html2canvas ~150KB + jspdf ~200KB) until user clicks Export.
+type Html2CanvasFn = (el: HTMLElement, opts?: Record<string, unknown>) => Promise<HTMLCanvasElement>;
+type JsPdfCtor = new (opts?: Record<string, unknown>) => {
+  internal: { pageSize: { getWidth(): number; getHeight(): number } };
+  addImage: (...args: unknown[]) => void;
+  addPage: () => void;
+  output: (type?: "blob" | "datauristring" | "dataurlstring" | "save") => Blob | string;
+};
 
 const A4_WIDTH_MM = 210;
 const DEFAULT_FILENAME = "简历";
@@ -84,6 +90,7 @@ export async function exportResumeElementToPdf(
     message: "正在拍照预览区…",
   });
 
+  const { default: html2canvas } = (await import("html2canvas")) as { default: Html2CanvasFn };
   const canvas = await html2canvas(element, {
     scale,
     backgroundColor: "#ffffff",
@@ -104,7 +111,8 @@ export async function exportResumeElementToPdf(
   const imgWidth = A4_WIDTH_MM;
   const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-  const pdf = new jsPDF({
+  const { default: JsPDF } = (await import("jspdf")) as { default: JsPdfCtor };
+  const pdf = new JsPDF({
     orientation: "portrait",
     unit: "mm",
     format: "a4",
@@ -134,6 +142,6 @@ export async function exportResumeElementToPdf(
     message: "正在下载…",
   });
 
-  const blob = pdf.output("blob");
+  const blob = pdf.output("blob") as Blob;
   triggerDownload(blob, outName);
 }

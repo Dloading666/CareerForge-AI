@@ -7,16 +7,19 @@ import '@arco-design/web-react/dist/css/arco.css'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './shared/AuthProvider'
+import { ErrorBoundary } from './shared/ErrorBoundary'
 
 // Arco Design internally detects React >= 18, but createRoot moved to react-dom/client in React 19
 setCreateRoot(createRoot)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 )

@@ -2049,119 +2049,144 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         )}
 
         {inModal && activeTab === 'account' && (
-          <div style={{ padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
-            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: '#1d2129' }}>账号设置</h3>
-            <div style={{ fontSize: 13, color: '#86909c', marginTop: -16 }}>管理你的账号头像、个人昵称以及邮箱地址。</div>
-            <div
-              style={{
-                background: '#fff',
-                border: '1px solid var(--surface-border)',
-                borderRadius: 12,
-                padding: 20,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 20,
-              }}
-            >
+          <div className="profile-account-tab">
+            <div className="profile-account-header">
+              <h3 className="profile-account-title">账号管理</h3>
+              <p className="profile-account-subtitle">管理你的账号身份、头像与登录邮箱。</p>
+            </div>
+
+            {/* Identity card */}
+            <div className="profile-account-identity">
               <div
-                style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: '50%',
-                  overflow: 'hidden',
-                  background: 'linear-gradient(135deg, #165dff, #2c73ff)',
-                  color: '#fff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 28,
-                  fontWeight: 600,
-                  flexShrink: 0,
-                }}
+                className="profile-account-avatar profile-account-avatar--lg"
+                onClick={() => accountAvatarInputRef.current?.click()}
+                title="点击更换头像"
+                role="button"
               >
                 {profile?.avatar_url ? (
-                  <img src={profile.avatar_url} alt="账号头像" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={profile.avatar_url} alt="账号头像" />
                 ) : (
-                  <span>{(profile?.nickname || profile?.name || profile?.email || '?')[0].toUpperCase()}</span>
+                  <span className="profile-account-avatar-fallback">
+                    {(profile?.nickname || profile?.name || profile?.email || '?')[0].toUpperCase()}
+                  </span>
                 )}
+                <div className="profile-account-avatar-overlay">
+                  <IconCamera style={{ fontSize: 18 }} />
+                </div>
+                {uploading && <div className="profile-account-avatar-loading">上传中…</div>}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#1d2129', marginBottom: 4 }}>账号头像</div>
-                <div style={{ fontSize: 13, color: '#86909c', marginBottom: 12 }}>仅用于账号与聊天区显示，不影响简历模板。JPG / PNG / WebP，2MB 以内。</div>
-                <Button icon={<IconCamera />} loading={uploading} onClick={() => accountAvatarInputRef.current?.click()}>
-                  上传头像
-                </Button>
-                <input
-                  ref={accountAvatarInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  style={{ display: 'none' }}
-                  onChange={handleAvatarChange}
-                />
+              <input
+                ref={accountAvatarInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                style={{ display: 'none' }}
+                onChange={handleAvatarChange}
+              />
+              <div className="profile-account-identity-body">
+                <div className="profile-account-identity-name">
+                  <span className="profile-account-name">
+                    {profile?.nickname || profile?.name || '未设置昵称'}
+                  </span>
+                  <span className="profile-account-chip profile-account-chip--role">学生</span>
+                  {profile?.email_verified_at ? (
+                    <span className="profile-account-chip profile-account-chip--ok">已验证</span>
+                  ) : (
+                    <span className="profile-account-chip profile-account-chip--warn">未验证</span>
+                  )}
+                </div>
+                <div className="profile-account-identity-meta">
+                  <span>{profile?.email || '尚未绑定邮箱'}</span>
+                  <span className="profile-account-dot" />
+                  <span>注册于 {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('zh-CN') : '-'}</span>
+                  {typeof profile?.id === 'number' && (
+                    <>
+                      <span className="profile-account-dot" />
+                      <span>ID {profile.id}</span>
+                    </>
+                  )}
+                </div>
+                <div className="profile-account-identity-actions">
+                  <Button size="small" type="secondary" icon={<IconCamera />} onClick={() => accountAvatarInputRef.current?.click()}>
+                    更换头像
+                  </Button>
+                </div>
               </div>
             </div>
-            <div
-              style={{
-                background: '#fff',
-                border: '1px solid var(--surface-border)',
-                borderRadius: 12,
-                padding: 20,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 14,
-              }}
-            >
-              <FieldRow label="个人昵称" required>
-                <Input
-                  size="large"
-                  value={nicknameDraft}
-                  onChange={setNicknameDraft}
-                  placeholder="请输入个人昵称，用于聊天区、评论与社区展示"
-                  maxLength={64}
-                  showWordLimit
-                  prefix={<IconUser />}
-                />
-              </FieldRow>
-              <Button
-                type="primary"
-                size="default"
-                loading={savingNickname}
-                disabled={(profile?.nickname ?? '') === nicknameDraft.trim()}
-                onClick={handleSaveNickname}
-                style={{ alignSelf: 'flex-start', minWidth: 120 }}
-              >
-                保存昵称
-              </Button>
+
+            {/* Settings list */}
+            <div className="profile-account-settings">
+              <div className="profile-account-row">
+                <div className="profile-account-row-label">个人昵称</div>
+                <div className="profile-account-row-content">
+                  <Input
+                    value={nicknameDraft}
+                    onChange={setNicknameDraft}
+                    placeholder="请输入个人昵称"
+                    maxLength={64}
+                    showWordLimit
+                  />
+                </div>
+                <div className="profile-account-row-action">
+                  <Button
+                    type="primary"
+                    loading={savingNickname}
+                    disabled={(profile?.nickname ?? '') === nicknameDraft.trim()}
+                    onClick={handleSaveNickname}
+                  >
+                    保存
+                  </Button>
+                </div>
+              </div>
+
+              <div className="profile-account-divider" />
+
+              <div className="profile-account-row">
+                <div className="profile-account-row-label">邮箱地址</div>
+                <div className="profile-account-row-content">
+                  <div className="profile-account-email-value">
+                    <span>{profile?.email || '尚未绑定邮箱'}</span>
+                    {profile?.email_verified_at ? (
+                      <span className="profile-account-chip profile-account-chip--ok">已验证</span>
+                    ) : (
+                      <span className="profile-account-chip profile-account-chip--warn">未验证</span>
+                    )}
+                  </div>
+                  <div className="profile-account-row-hint">
+                    {profile?.email_verified_at
+                      ? '邮箱已身份验证，修改后需重新验证。'
+                      : '邮箱尚未验证，更换后可接收验证码。'}
+                  </div>
+                </div>
+                <div className="profile-account-row-action">
+                  <Button onClick={openChangeEmail}>更换</Button>
+                </div>
+              </div>
             </div>
-            <div
-              style={{
-                background: '#fff',
-                border: '1px solid var(--surface-border)',
-                borderRadius: 12,
-                padding: 20,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 14,
-              }}
-            >
-              <FieldRow label="邮箱地址">
-                <Input
-                  size="large"
-                  value={profile?.email || ''}
-                  disabled
-                  prefix={<IconSafe />}
-                />
-              </FieldRow>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {profile?.email_verified_at ? '邮箱已身份验证，修改后需重新验证。' : '邮箱未验证，你可以更换为可接收的新邮箱。'}
-              </Typography.Text>
-              <Button size="default" onClick={openChangeEmail} style={{ alignSelf: 'flex-start' }}>
-                更换邮箱
-              </Button>
+
+            {/* Read-only account info */}
+            <div className="profile-account-info">
+              <div className="profile-account-info-label">账号信息</div>
+              <div className="profile-account-info-list">
+                <div className="profile-account-info-row">
+                  <span className="profile-account-info-key">账号 ID</span>
+                  <span className="profile-account-info-val">{typeof profile?.id === 'number' ? '#' + profile.id : '-'}</span>
+                </div>
+                <div className="profile-account-info-row">
+                  <span className="profile-account-info-key">角色</span>
+                  <span className="profile-account-info-val">学生</span>
+                </div>
+                <div className="profile-account-info-row">
+                  <span className="profile-account-info-key">登录账号</span>
+                  <span className="profile-account-info-val">{profile?.account || profile?.email || '-'}</span>
+                </div>
+                <div className="profile-account-info-row">
+                  <span className="profile-account-info-key">注册时间</span>
+                  <span className="profile-account-info-val">{profile?.created_at ? new Date(profile.created_at).toLocaleString('zh-CN') : '-'}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
-
         {inModal && activeTab === 'about' && (
           <div style={{ padding: '40px 36px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
             <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" style={{ width: 64, height: 64, margin: '0 auto 16px' }} />
@@ -2175,7 +2200,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         )}
       </div>
       <Modal
-        title="账号设置 · 更换邮箱"
+        title="账号管理 · 更换邮箱"
         visible={changeEmailVisible}
         onCancel={() => setChangeEmailVisible(false)}
         onOk={handleChangeEmail}

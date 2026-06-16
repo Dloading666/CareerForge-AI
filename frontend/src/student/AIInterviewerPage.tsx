@@ -1499,7 +1499,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
             style={{ width: '100%' }}
           >
             {modelOptions.map((m) => (
-              <Select.Option key={m.id} value={String(m.id)}>{`${m.display_name} · ${m.model_identifier}`}</Select.Option>
+              <Select.Option key={m.id} value={String(m.id)} title={`${m.display_name} · ${m.model_identifier}`}>{m.display_name}</Select.Option>
             ))}
           </Select>
           {modelError && <small className="interview-warning-text">{modelError}</small>}

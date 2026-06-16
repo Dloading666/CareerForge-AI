@@ -1,103 +1,44 @@
-# CHANGELOG
+## 2026-06-15 — 后端安全加固 + 性能优化 + 前后端改造
 
-## 2026-06-12 — 简历防造假三道防线 + 简历助手核心能力升级
+### 🔴 P0：AI 提供商 API Key 真加密（Fernet）
 
-### 简历防造假三道防线（fact guard）
+- 现状：`model_config.api_key_cipher` 和 `agent.dify_api_key_cipher` 都是 base64 假加密，数据库 dump 后明文可读。
+- 改动：
+  - 新增 `cryptography>=43.0.0` 依赖
+  - 新增 `API_KEY_ENCRYPTION_KEY` 必填环境变量（Fernet 32-byte url-safe），启动时缺失直接 fail-at-startup
+  - 核心函数 `encrypt_api_key / decrypt_api_key` 从 `admin/model_service.py` 迁到 `core/security.py`，实现改为 Fernet（AES-128-CBC + HMAC-SHA256）
+  - `model_service.py` 改为 `from app.core.security import ...`（re-export，`agent_service.py` 不破）
+  - 一次性迁移脚本 `scripts/reencrypt_api_keys.py`：同时覆盖 `model_config` + `agent` 两张表，干跑默认 dry-run，`--apply` 才提交
 
-#### 防线1：程度词阶梯检测
-- 新增 `_ROLE_ESCALATION_LADDER` 常量（9 个中文角色动词，5 级阶梯）
-- 新增 `_check_role_escalation()` 函数
-- 拦截逻辑：从证据中提取每段经历的角色词等级，与生成内容比对，升级即拦截
-- 调用点：`generate_resume_data` / `optimize_resume_data` / `update_resume_data` / `export_resume_pdf`
-- 测试：4 个用例（升级拦截、同级通过、降级通过、跨级拦截）
+### 🟠 P1：后端性能 + 可观测性
 
-#### 防线2：条目归属校验（shadow mode）
-- 新增 `_check_item_attribution()` 函数
-- 新增 `ITEM_ATTRIBUTION_SHADOW_MODE` 开关（当前为 `True`，只记日志不拦截）
-- 按条目粒度校验 bullet 中的数字/技术词是否出现在对应经历的证据中
-- 防止把项目 A 的数字安到项目 B 头上（张冠李戴）
-- 测试：2 个用例（跨条目数字检测、同条目通过）
+- `test_batch` 改为 `asyncio.gather`，6 个模型的连接测试从最坏 3 分钟压到 30 秒；每个分支拿独立 `SessionLocal`（避免共享 session 并发 commit 冲突）
+- `/healthz` 新增 MySQL ping（`SELECT 1`），任一依赖不通返回 503 + `status: degraded`
+- 新增 alembic migration `20260615_0001_add_business_indexes.py`：6 个业务索引（agent / model_config / user_feedback ×2 / student_event / student_resume），对 `user_feedback` 表不存在场景防御性跳过，merge 依赖两个现 head
 
-#### 防线3：JD GAP 铁律（prompt + fact guard 双保险）
-- **Prompt 层**：在 `_harness_system_prompt` 行动准则后添加 4 条 JD 匹配铁律
-  - GAP 项禁止写入简历正文
-  - GAP 项只能出现在差距分析中
-  - 用户坚持写入时需告知风险
-  - 违反等同于简历造假
-- **Fact Guard 层**：
-  - `SessionEvidencePool` 新增 `gap_keywords` 字段和 `set_gap_keywords()` 方法
-  - 新增 `_check_gap_violations()` 函数（大小写不敏感子串匹配）
-  - `analyze_jd_match` 返回前自动提取 GAP 项存入 evidence_pool
-  - 调用点：`generate_resume_data` / `optimize_resume_data` / `update_resume_data`
-- 测试：3 个用例（GAP 拦截、非 GAP 通过、无关键词通过）
+### 🟡 P2：运维加固 + 前端体验
 
-#### 集成测试
-- 新增 `test_combined_defenses` 验证三道防线协同工作
+- 全局 IP 限流中间件 `app/infra/rate_limit.py`：Redis 固定窗口计数，200 rps/IP/60s 默认，Redis 挂掉 fail-open 不阻塞业务，`/healthz` `/docs` `/openapi.json` `/redoc` `/data/` `/static/` `/uploads/` 豁免
+- `attachment_router.upload_resume` 去 async 包装，`await file.read()` → `file.file.read()`（同步 SpooledTemporaryFile）；以前是 async def 包同步 IO，会饿死 event loop
+- Docker：worker 补 healthcheck（查 `rq:workers:*` 中有 idle/busy worker）；5 个服务全部加 `logging: json-file max-size:10m max-file:5`
+- Nginx：`/assets/*` 加 `Cache-Control: public, max-age=31536000, immutable`（Vite 哈希资源永不过期）；`/index.html` 反过来加 `no-cache, no-store, must-revalidate`（必须重新验证拿到新 hash 资源）
+- 前端：
+  - 新增 `useDebouncedValue` hook（300ms 延迟）
+  - `AgentManagementPage` 接入 debounce + AbortController；原先的 `alive` flag 模式完全清除，连续输入会中止上一轮 in-flight 请求
 
----
+### 🟢 P3：重构 + 前端动态错误防护
 
-### 简历助手核心能力升级
+- 新增 `app/student/event_models.py` ORM 模型 `StudentEvent`
+- `event_router.py` 6 处 raw SQL + f-string 拼列名全部改为 SQLAlchemy 2.0 ORM（`select` / `db.add` / `update` / `delete`），`text` 导入删除，跨 student 隔离由 WHERE 子句编码
+- 新增 `ErrorBoundary` 组件包在 `<StrictMode>` 与 `<BrowserRouter>` 之间；任何子树抛错都会呈现中文错误面 + 两个按钮（刷新 / 恢复），不再是一片空白
 
-#### 分层上下文压缩（D2）
-- 新增 `_estimate_message_tokens()` / `_context_budget()` / `_compress_context()`
-- 参数：`_COMPRESS_THRESHOLD=0.70`，`_SAFETY_MARGIN=0.15`
-- 超过 token 预算时自动触发滚动摘要压缩
+### 迁移手手
 
-#### 会话记忆（C1）
-- `session.memory_json` 存储 constraints / facts / preferences
-- 新增 `save_session_note` 工具，模型可主动写入记忆
-- 记忆以 pinned 方式注入 system prompt，永不被截断挤掉
-- 新增 `search_past_sessions` 工具（按关键词搜索历史会话）
+生产环境升级前（依赖顺序不可反）：
 
-#### 工作简历绑定（A2）
-- `session.active_resume_id` 绑定当前工作简历
-- `read_resume` 重构为两层：列表层（全部简历 id/标题/时间）+ 全文层（工作简历）
-- 新增 `set_active_resume_id` 工具切换工作简历
-
-#### 写前快照与撤销（B2）
-- 新增 `student_resume_revision` 表（迁移 `20260612_0023`）
-- `_snapshot_resume_revision()` 在 AI 修改前自动存快照（每份保留 20 条）
-- `POST /student/resumes/{id}/revert` 撤销到指定版本
-
-#### 版本检查防覆盖（A3）
-- `update_resume_data` 支持 `base_updated_at` 参数
-- 写前检查 `updated_at`，防止覆盖用户在编辑器中的手改
-
-#### 档案完整度引导（G3）
-- 档案缺项时注入 system prompt 提示模型引导学生补充
-- 避免每次对话都注入，节省 token
-
-#### 新增工具
-- `save_session_note`：保存会话记忆
-- `search_past_sessions`：搜索历史会话
-- `propose_profile_update`：建议学生补充档案字段
-- `set_active_resume_id`：切换工作简历
+1. 后端 - 拾起新增 env：复制 `.env.example` 的 `API_KEY_ENCRYPTION_KEY` + `API_RATE_LIMIT_RPS` + `API_RATE_LIMIT_WINDOW_SECONDS` 到 `.env.docker` / `.env`
+2. 运行迁移脚本：`python scripts/reencrypt_api_keys.py`（dry-run） → 确认 → `python scripts/reencrypt_api_keys.py --apply`
+3. 升级索引：`cd backend && alembic upgrade 20260615_0001`（不要用 `head`，仓库历史有重名的 `20260612_0024`，`alembic upgrade head` 会报 Multiple heads）
+4. `docker compose up -d --build`，`docker ps` 应看到五个容器都 `(healthy)`
 
 ---
-
-### 前端改动
-
-#### 简历中心
-- 简历列表 API 支持 `resume_id` + `title` + `updated_at` 返回
-- 简历编辑器支持工作简历绑定
-
-#### AgentChatView
-- 时间线渲染优化（text/actions 段交错）
-- 活动胶囊支持自定义 PNG 图标 + CSS 动画
-
-#### 个人中心
-- 重构为 Modal 弹窗（不再是路由页面）
-- 档案完整度引导
-
----
-
-### 迁移清单
-
-| 迁移文件 | 说明 |
-|---------|------|
-| `20260612_0021_merge_jd_text_and_metrics.py` | 合并 JD 文本和指标字段 |
-| `20260612_0022_session_active_resume_memory.py` | session 新增 active_resume_id + memory_json |
-| `20260612_0023_resume_revision.py` | 新增 student_resume_revision 表 |
-| `20260612_0024_session_summarized_until.py` | session 新增 summarized_until_message_id |
-| `20260612_0025_profile_proposal.py` | 新增 profile_proposal 相关表 |
-| `20260612_0026_expand_skill_name.py` | 扩展 skill_name 字段长度 |

@@ -27,6 +27,11 @@
       retries: 10
       start_period: 30s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:
@@ -48,6 +53,11 @@
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:
@@ -85,11 +95,60 @@
       retries: 10
       start_period: 20s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:
           cpus: '4'
           memory: 2G
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zhipei-worker
+    env_file:
+      - ./backend/.env.docker
+    environment:
+      - INTERVIEW_KNOWLEDGE_BASE_DIR=/app/knowledge-base
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    volumes:
+      - skill-data:/app/data
+    # Override Dockerfile ENTRYPOINT (which runs uvicorn) so the worker image
+    # actually runs rq worker instead of a duplicate backend on port 8000.
+    entrypoint: ["rq", "worker", "pdf_jobs", "--url", "redis://:redis123456@redis:6379/0"]
+    # Worker is healthy if at least one RQ worker is registered with Redis (idle or busy).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from rq import Worker; from redis import Redis;
+          r=Redis.from_url('redis://:redis123456@redis:6379/0');
+          ws=[w for w in Worker.all(connection=r) if w.state in ('idle','busy')];
+          exit(0 if ws else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
 
   frontend:
     build:
@@ -104,6 +163,11 @@
     ports:
       - "8080:80"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:

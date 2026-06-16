@@ -145,6 +145,14 @@ export function ResumeCenterPage() {
     }
   }
 
+  const handleCreateFromTemplate = () => {
+    setNewResumeModalVisible(false)
+    const url = selectedTemplateId === 'blank'
+      ? '/student/resumes/new'
+      : `/student/resumes/new?template=${selectedTemplateId}`
+    navigate(url)
+  }
+
   const handleInlineTitleSave = async (resumeId: number, newTitle: string) => {
     const trimmed = newTitle.trim()
     if (!trimmed) {
@@ -392,7 +400,14 @@ export function ResumeCenterPage() {
                   </Button>
                   <Button
                     icon={<IconDownload />}
-                    onClick={() => void downloadResumePdf(resume.id, resume.title)}
+                    onClick={() => {
+                      setBusyId(resume.id)
+                      downloadResumePdf(resume.id, resume.title)
+                        .catch((err: Error) => {
+                          Message.error(err.message || "导出失败")
+                        })
+                        .finally(() => setBusyId(null))
+                    }}
                     loading={busyId === resume.id}
                   >
                     导出
@@ -412,23 +427,22 @@ export function ResumeCenterPage() {
 
       {/* 新建简历 — 选择模板弹窗 */}
       <Modal
+        className="new-resume-template-modal"
         visible={newResumeModalVisible}
         title="选择简历模板"
-        okText="开始创作"
-        cancelText="取消"
-        onOk={() => {
-          setNewResumeModalVisible(false)
-          const url = selectedTemplateId === 'blank'
-            ? '/student/resumes/new'
-            : `/student/resumes/new?template=${selectedTemplateId}`
-          navigate(url)
-        }}
+        footer={null}
         onCancel={() => setNewResumeModalVisible(false)}
         style={{ width: 900 }}
       >
-        <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: 14 }}>
-          选择一个模板开始创作，包括从空白开始。
-        </p>
+        <div className="new-resume-modal-head">
+          <p className="new-resume-modal-desc">
+            选择一个模板开始创作，包括从空白开始。
+          </p>
+          <div className="new-resume-modal-actions">
+            <Button shape="round" onClick={() => setNewResumeModalVisible(false)}>取消</Button>
+            <Button shape="round" type="primary" onClick={handleCreateFromTemplate}>开始创作</Button>
+          </div>
+        </div>
         <div className="new-resume-template-grid">
           {TEMPLATE_REGISTRY.map((template) => (
             <button

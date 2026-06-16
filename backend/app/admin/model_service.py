@@ -1,7 +1,7 @@
 """模型广场 + 系统设置 — 业务逻辑层"""
 from __future__ import annotations
 
-import base64
+import asyncio
 import time
 from typing import Optional
 
@@ -12,16 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.admin.models import ModelConfig, ModelTestLog, SystemConfig
 from app.admin.schemas import ModelCreate, ModelUpdate, ModelListQuery, ModelResponse, ModelTestResponse
-
-
-# ── API Key 加解密（base64，后续可升级 AES） ─────
-
-def encrypt_api_key(plain: str) -> str:
-    return base64.urlsafe_b64encode(plain.encode("utf-8")).decode("utf-8")
-
-
-def decrypt_api_key(cipher: str) -> str:
-    return base64.urlsafe_b64decode(cipher.encode("utf-8")).decode("utf-8")
+from app.core.security import encrypt_api_key, decrypt_api_key  # Fernet-backed; re-exported for legacy callers
+from app.infra.db import SessionLocal
 
 
 # ── 模型 CRUD ────────────────────────────────────
@@ -155,11 +147,17 @@ async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse
 
 
 async def test_batch(db: Session) -> list[ModelTestResponse]:
-    models = db.scalars(select(ModelConfig).where(ModelConfig.is_deleted == False)).all()
-    results = []
-    for model in models:
-        results.append(await test_model_connection(db, model.id))
-    return results
+    # Snapshot model ids on the request-scoped session, then run each test on its own
+    # session. Sharing one Session across asyncio.gather would race on commit().
+    model_ids = [m.id for m in db.scalars(
+        select(ModelConfig.id).where(ModelConfig.is_deleted == False)
+    ).all()]
+
+    async def _run(mid: int) -> ModelTestResponse:
+        with SessionLocal() as local_db:
+            return await test_model_connection(local_db, mid)
+
+    return list(await asyncio.gather(*(_run(mid) for mid in model_ids)))
 
 
 # ── 种子数据 ────────────────────────────────────

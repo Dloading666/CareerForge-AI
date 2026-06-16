@@ -22,3 +22,5 @@ rl-renderPM==4.0.3
 torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
 sentence-transformers>=3.0.0
 chromadb>=0.5.0
+rq==2.1.0
+cryptography>=43.0.0

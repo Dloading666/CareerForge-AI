@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from html import escape
+import httpx
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
@@ -666,6 +668,15 @@ async def import_resume_file(
             parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)[:300])
+        except httpx.HTTPStatusError as exc:
+            # Upstream LLM provider rejected the request (4xx/5xx).
+            # Surface the actual provider message so the user can see whether
+            # the configured model / API key / base URL is wrong.
+            logger.warning("resume import upstream LLM error: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"LLM 解析失败: {str(exc)[:500]}",
+            )
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名
     resolved_title = (
@@ -1077,20 +1088,11 @@ def duplicate_resume(
     db.commit()
     db.refresh(row)
     return ok(_serialize_detail(row).model_dump(mode="json"), msg="duplicated")
-@router.get("/{resume_id}/export-pdf")
-def export_resume_pdf(
-    resume_id: int,
-    db: Session = Depends(get_db),
-    current=Depends(require_role("student")),
-):
-    identity, _ = current
-    row = _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)
-    pdf_bytes = _render_resume_pdf(row)
-    filename = Path(_normalize_title(row.title)).stem
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}.pdf"',
-    }
-    return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+# NOTE: synchronous export-pdf removed in favor of the async flow in app.jobs_router.
+# Frontend now calls:
+#   POST /api/v1/student/resumes/{id}/export-pdf  ->  { job_id }
+#   GET  /api/v1/jobs/{job_id}                   ->  { status, progress, download_url }
+#   GET  /api/v1/jobs/{job_id}/download          ->  application/pdf
 
 
 _THUMB_W = 360
