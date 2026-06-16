@@ -616,21 +616,26 @@ function RichList({ blocks, resume, inverse = false }: { blocks: RichInlineBlock
         )
       })}
       {paraLines.length > 0 ? (
-        <ul
+        // Paragraph fallback: render as plain text blocks (NO bullet points)
+        // so the preview matches what the user sees in the editor when they
+        // haven't explicitly used list syntax (e.g. typed free-text skills).
+        <div
           style={{
             margin: '4px 0 0',
-            paddingLeft: '1.45em',
             color: baseColor,
             fontSize,
             lineHeight,
+            whiteSpace: 'pre-wrap',
           }}
         >
           {paraLines.map((line, index) => (
-            <li key={`para-${line}-${index}`} style={{ paddingLeft: 2 }}>
-              <span dangerouslySetInnerHTML={{ __html: line }} />
-            </li>
+            <p
+              key={`para-${line}-${index}`}
+              style={{ margin: 0 }}
+              dangerouslySetInnerHTML={{ __html: line }}
+            />
           ))}
-        </ul>
+        </div>
       ) : null}
     </div>
   )
