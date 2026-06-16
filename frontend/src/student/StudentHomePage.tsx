@@ -29,6 +29,7 @@ import { chatRuntimeStore } from './chatRuntimeStore'
 import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
 import { ProfilePage } from './ProfilePage'
 import { AIInterviewerPage } from './AIInterviewerPage'
+import { InterviewReportPage } from './InterviewReportPage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
 import { ResumeEditorPage } from '../resume/ResumeEditorPage'
 
@@ -478,6 +479,10 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
                 onOpenProfile={() => { setProfileTab('profile'); setProfileModalVisible(true) }}
               />
             }
+          />
+          <Route
+            path="interviewer/report/:sessionId"
+            element={<main className="page-content"><InterviewReportPage /></main>}
           />
           <Route
             path="interviewer"
