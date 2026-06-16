@@ -80,10 +80,10 @@
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - skill-data:/app/data
-      - "D:/Ai Agent/Knowledge Base:/app/knowledge-base:ro"
+      - "./knowledge-base:/app/knowledge-base:ro"
     healthcheck:
       test:
         [

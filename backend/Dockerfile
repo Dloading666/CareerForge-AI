@@ -11,6 +11,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
+# 可选 pip 主索引镜像：默认官方 PyPI，国内构建可传
+# --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple 加速普通包下载。
+# torch 走 requirements.txt 里的 --extra-index-url（PyTorch CPU 源），不受此影响。
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
