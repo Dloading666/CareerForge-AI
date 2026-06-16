@@ -5,6 +5,7 @@ import {
   IconCheckCircle,
   IconDelete,
   IconExclamationCircle,
+  IconHistory,
   IconPlayArrow,
   IconRefresh,
   IconSend,
@@ -17,14 +18,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest, authenticatedFetch } from '../shared/api'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import aiInterviewerIcon from '../assets/interview-icons/cute-ai-interviewer.png'
-import harnessIcon from '../assets/interview-icons/cute-harness-shield.png'
 import knowledgeIcon from '../assets/interview-icons/cute-knowledge-base.png'
 import reportIcon from '../assets/interview-icons/cute-score-report.png'
 import resumeIcon from '../assets/interview-icons/cute-resume.png'
 import retryIcon from '../assets/interview-icons/cute-retry.png'
 import voiceIcon from '../assets/interview-icons/cute-voice.png'
-import { InterviewReportDrawer } from './InterviewReportDrawer'
-import type { InterviewReportData } from './InterviewReportDrawer'
 import { subscribeInterviewRun } from './interview/stream'
 import { extensionForAudioMimeType, pickSupportedAudioMimeType } from './interview/voice'
 
@@ -409,10 +407,11 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
   const [progressElapsed, setProgressElapsed] = useState(0)
   const [collapsedHistoryDates, setCollapsedHistoryDates] = useState<Set<string>>(() => new Set())
+  const [reportCollapsed, setReportCollapsed] = useState(false)
   const [modelError, setModelError] = useState<string | null>(null)
   const [optimisticAnswer, setOptimisticAnswer] = useState<{ turnId: number; text: string } | null>(null)
   const [resumePickerVisible, setResumePickerVisible] = useState(false)
-  const [reportDrawerVisible, setReportDrawerVisible] = useState(false)
+
   // 语音面试状态
   const [interviewMode, setInterviewMode] = useState<'text' | 'voice'>('text')
   const [recording, setRecording] = useState(false)
@@ -1416,7 +1415,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
 
         if (reportData && isReport(reportData as ReportLookupResponse)) {
           setReport(reportData)
-          setReportDrawerVisible(true)
+          setReportCollapsed(false)
           setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
           await loadInterviewSessions()
         }
@@ -1434,7 +1433,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         const data = await apiRequest<ReportLookupResponse>(`/api/v1/student/interviews/${sessionId}/report`)
         if (isReport(data)) {
           setReport(data)
-          setReportDrawerVisible(true)
+          setReportCollapsed(false)
         } else {
           Message.info(data.message || '报告尚未生成')
         }
@@ -1702,20 +1701,6 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
               </Tag>
             </div>
 
-            <div className="interview-harness-card">
-              <div className="interview-harness-title">
-                <img className="interview-card-icon" src={harnessIcon} alt="" aria-hidden="true" />
-                <strong>面试 Harness</strong>
-              </div>
-              <div className="interview-harness-steps">
-                <span>开场</span>
-                <span>简历深挖</span>
-                <span>岗位题</span>
-                <span>反问</span>
-                <span>复盘</span>
-              </div>
-              <p>一次只问一个问题，回答越空泛，追问越具体；报告优先指出最低分维度。</p>
-            </div>
 
             <div className="knowledge-status">
               <img className="interview-card-icon" src={knowledgeIcon} alt="" aria-hidden="true" />
@@ -1750,7 +1735,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                         >
                           <b>{formatTimeLabel(item.created_at)}</b>
                           <em>{item.target_role || '未填写目标岗位'}</em>
-                          <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.round_limit} 轮</small>
+                          <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.status === 'completed' ? `${item.round_limit}/${item.round_limit}` : `0/${item.round_limit}`} 轮</small>
                         </button>
                         <button
                           type="button"
@@ -1771,11 +1756,27 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         </details>
       </section>
 
-      <section className="interview-room">
+      <section className={`interview-room${report && !reportCollapsed ? ' interview-room--report-expanded' : ''}`}>
         <div className="interview-room-header">
           <div>
             <h2>{session ? session.target_role : '准备进入面试房间'}</h2>
             <p>{session ? `${formatDateLabel(session.created_at)} ${formatTimeLabel(session.created_at)} · 第 ${turns.length}/${session.round_limit} 轮 · ${session.status === 'active' ? '面试中' : '已结束'}` : '选择岗位、模型和风格后进入沉浸式训练。Enter 发送，Shift + Enter 换行。'}</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {report && (
+              <Button type={reportCollapsed ? 'outline' : 'primary'} size="small" onClick={() => setReportCollapsed((c) => !c)}>
+                {reportCollapsed ? '展开报告' : '收起报告'}
+              </Button>
+            )}
+            <Button type="text" icon={<IconHistory />} onClick={() => {
+              if (configCollapsed) {
+                setTargetRole(''); setJobDescription(''); setInterviewType('first_round')
+                setInterviewStyle('strict'); setRoundLimit('8'); setSelectedResumeId(null)
+                setFocusTags(['resume_project']); setCustomInstruction('')
+                setUploadedResumeName(''); setUploadedResumeText(''); setResumeSource('online')
+              }
+              setConfigCollapsed((c) => !c)
+            }}>{configCollapsed ? '再试一次' : '收起设置'}</Button>
           </div>
         </div>
 
@@ -2149,21 +2150,13 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           </div>
         )}
 
-        {report && (
+        {report && !reportCollapsed && (
           <section className="interview-report">
             <div className="report-score-panel">
               <div className="report-score-ring">
                 <span>{Math.round(report.overall_score)}</span>
                 <p>综合评分</p>
               </div>
-              <Button
-                type="outline"
-                size="small"
-                style={{ marginTop: 8 }}
-                onClick={() => setReportDrawerVisible(true)}
-              >
-                查看完整报告
-              </Button>
               {weakestDimension && (
                 <div className="report-weakest">
                   <IconExclamationCircle />
@@ -2218,24 +2211,6 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         )}
       </section>
     </main>
-
-    <InterviewReportDrawer
-      visible={reportDrawerVisible}
-      onClose={() => setReportDrawerVisible(false)}
-      report={report as InterviewReportData | null}
-      onPracticeAgain={(preset) => {
-        if (!preset) return
-        if (preset.target_role) setTargetRole(preset.target_role)
-        if (preset.interview_type) setInterviewType(preset.interview_type)
-        if (preset.interview_style) setInterviewStyle(preset.interview_style)
-        setSession(null)
-        setTurns([])
-        setReport(null)
-        setAnswer('')
-        setConfigCollapsed(false)
-        Message.success('已加载预设配置，请检查后开始新一轮面试')
-      }}
-    />
     </>
   )
 }
