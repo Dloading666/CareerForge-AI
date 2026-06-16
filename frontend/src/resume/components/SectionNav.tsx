@@ -1,8 +1,16 @@
-import { Slider } from '@arco-design/web-react'
+import { Select, Slider } from '@arco-design/web-react'
 import { Reorder, useDragControls } from 'framer-motion'
 
 import { useResumeEditor } from '../useResumeEditor'
 import type { MenuSection, ResumeSectionId } from '../types'
+
+const FONT_OPTIONS = [
+  { label: '阿里巴巴普惠体', value: '"Alibaba PuHuiTi", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif' },
+  { label: '苹方/微软雅黑', value: '"PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif' },
+  { label: '思源黑体', value: '"Source Han Sans SC", "Noto Sans SC", -apple-system, sans-serif' },
+  { label: '宋体', value: 'SimSun, "Songti SC", "Source Han Serif SC", serif' },
+  { label: '等宽', value: 'ui-monospace, "SF Mono", Monaco, Consolas, "Liberation Mono", monospace' },
+]
 
 const PRESET_COLORS = [
   '#000000', '#0f172a', '#1e40af', '#0369a1',
@@ -175,6 +183,23 @@ export function SidePanel() {
           <span>排版</span>
         </div>
         <div className="wb-setting-rows">
+          <div className="wb-setting-row">
+            <div className="wb-setting-row-top">
+              <span className="wb-setting-row-label">字体</span>
+              <Select
+                size="mini"
+                style={{ width: 140 }}
+                value={globalSettings.fontFamily || FONT_OPTIONS[0].value}
+                onChange={(val) => updateGlobalSettings({ fontFamily: val })}
+              >
+                {FONT_OPTIONS.map((o) => (
+                  <Select.Option key={o.value} value={o.value}>
+                    <span style={{ fontFamily: o.value }}>{o.label}</span>
+                  </Select.Option>
+                ))}
+              </Select>
+            </div>
+          </div>
           <div className="wb-setting-row">
             <div className="wb-setting-row-top">
               <span className="wb-setting-row-label">字号</span>
