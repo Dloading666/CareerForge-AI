@@ -123,8 +123,17 @@ async function requestWithRetry<T>(path: string, init: RequestInit | undefined, 
   }
 
   let payload: (ApiEnvelope<T> & { detail?: unknown }) | undefined
+  const responseForPreview = response.clone()
   try { payload = (await response.json()) as ApiEnvelope<T> & { detail?: unknown } }
-  catch { throw new ApiError("服务返回了不可识别的内容", response.status) }
+  catch {
+    // Non-JSON response — try to read text for debugging
+    let preview = ''
+    try {
+      preview = (await responseForPreview.text()).slice(0, 300)
+    } catch { /* ignore */ }
+    console.error('Non-JSON API response', { path, status: response.status, preview })
+    throw new ApiError('服务接口异常，请稍后重试或联系管理员', response.status)
+  }
 
   if (!response.ok || payload.code !== 0) throw new ApiError(extractErrorMessage(payload, response.status), response.status)
   return payload.data

@@ -24,6 +24,7 @@ class AgentModelOptionResponse(BaseModel):
     display_name: str
     provider: str
     model_identifier: str
+    capability: str
     context_length: int | None
     default_temp: float | None
     max_output: int | None

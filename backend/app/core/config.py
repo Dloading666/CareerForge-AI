@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
     api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")
 
+    api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
+    api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")
+
     admin_bootstrap_username: str = Field(default="admin", alias="ADMIN_BOOTSTRAP_USERNAME")
     admin_bootstrap_email: str = Field(default="admin@example.com", alias="ADMIN_BOOTSTRAP_EMAIL")
     admin_bootstrap_password: str = Field(default="123456", alias="ADMIN_BOOTSTRAP_PASSWORD")
@@ -57,6 +60,10 @@ class Settings(BaseSettings):
     interview_knowledge_base_dir: str = Field(
         default=r"D:\Ai Agent\Knowledge Base",
         alias="INTERVIEW_KNOWLEDGE_BASE_DIR",
+    )
+    chroma_persist_dir: str = Field(
+        default="./data/chroma",
+        alias="CHROMA_PERSIST_DIR",
     )
 
     @property

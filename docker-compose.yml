@@ -83,6 +83,7 @@
       - "8000:8000"
     volumes:
       - skill-data:/app/data
+      - "D:/Ai Agent/Knowledge Base:/app/knowledge-base:ro"
     healthcheck:
       test:
         [
@@ -121,7 +122,9 @@
         condition: service_healthy
     volumes:
       - skill-data:/app/data
-    command: rq worker pdf_jobs --url redis://:redis123456@redis:6379/0 --burst-poll-interval 0.5
+    # Override Dockerfile ENTRYPOINT (which runs uvicorn) so the worker image
+    # actually runs rq worker instead of a duplicate backend on port 8000.
+    entrypoint: ["rq", "worker", "pdf_jobs", "--url", "redis://:redis123456@redis:6379/0"]
     # Worker is healthy if at least one RQ worker is registered with Redis (idle or busy).
     healthcheck:
       test:

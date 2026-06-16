@@ -119,7 +119,7 @@ async def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_
     filepath = os.path.join(upload_dir, filename)
     with open(filepath, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    user.avatar_url = f"/data/avatars/{filename}"
+    user.avatar_url = f"/static/avatars/{filename}"
     db.commit(); db.refresh(user)
     return ok({"avatar_url": user.avatar_url})
 

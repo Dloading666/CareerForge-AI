@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -59,6 +59,18 @@ async def api_test_model(model_id: int, db: Session = Depends(get_db), _current=
 @router.post("/models/test-batch")
 async def api_test_batch(db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
     return ok(await test_batch(db))
+
+@router.post("/knowledge/reload")
+def api_reload_knowledge(_current=Depends(require_role("admin"))):
+    """重新索引知识库：扫描目录，增量更新变更的文件。"""
+    from app.interview.service import reload_knowledge_status
+    return ok(reload_knowledge_status())
+
+@router.get("/knowledge/status")
+def api_knowledge_status(_current=Depends(require_role("admin"))):
+    """查看知识库索引状态。"""
+    from app.interview.service import knowledge_status
+    return ok(knowledge_status())
 
 @router.patch("/models/{model_id}/open")
 def api_toggle_open(model_id: int, payload: ModelToggleOpen, db: Session = Depends(get_db), _current=Depends(require_role("admin"))):
