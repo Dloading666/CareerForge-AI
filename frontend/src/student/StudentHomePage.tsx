@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, Modal, Popconfirm } from '@arco-design/web-react'
+import { Button, Checkbox, Dropdown, Modal, Popconfirm, Spin } from '@arco-design/web-react'
 import {
   IconBook,
   IconCamera,
@@ -19,18 +19,19 @@ import {
   IconUser,
 } from '@arco-design/web-react/icon'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest } from '../shared/api'
 import { useAuth } from '../shared/auth'
 import { UserAvatar } from '../shared/UserAvatar'
 import { AnnouncementBellDropdown } from './StudentAnnouncementBar'
 import { chatRuntimeStore } from './chatRuntimeStore'
-import { AgentChatView, type AgentChatSession, type AgentModelOption } from './AgentChatView'
+import type { AgentChatSession, AgentModelOption } from './AgentChatView'
+const AgentChatView = lazy(() => import('./AgentChatView').then((m) => ({ default: m.AgentChatView })))
 import { ProfilePage } from './ProfilePage'
-import { AIInterviewerPage } from './AIInterviewerPage'
-import { ResumeCenterPage } from '../resume/ResumeCenterPage'
-import { ResumeEditorPage } from '../resume/ResumeEditorPage'
+const AIInterviewerPage = lazy(() => import('./AIInterviewerPage').then((m) => ({ default: m.AIInterviewerPage })))
+const ResumeCenterPage = lazy(() => import('../resume/ResumeCenterPage').then((m) => ({ default: m.ResumeCenterPage })))
+const ResumeEditorPage = lazy(() => import('../resume/ResumeEditorPage').then((m) => ({ default: m.ResumeEditorPage })))
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export function StudentHomePage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
   const [profileModalVisible, setProfileModalVisible] = useState(false)
-  const [profileTab, setProfileTab] = useState('profile')
+  const [profileTab, setProfileTab] = useState('account')
   const [notice, setNotice] = useState<string | null>(null)
 
   // Resizable module panel (简历助手对话历史栏)
@@ -460,35 +461,43 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           </div>
         </header>
 
-        <Routes>
-          <Route
-            index
-            element={
-              <AgentChatView
-                agentType="resume"
-                modelOptions={modelOptions}
-                loadTrigger={resumeLoadTrigger}
-                sessionToLoad={resumeSessionToLoad}
-                newChatTrigger={resumeNewChatTrigger}
-                onSessionUpdated={handleResumeSessionUpdated}
-                onActiveSessionChange={setResumeActiveId}
-                todayEvents={todayEvents}
-                remindersDismissed={remindersDismissed}
-                onDismissReminders={() => setRemindersDismissed(true)}
-                onOpenProfile={() => { setProfileTab('profile'); setProfileModalVisible(true) }}
-              />
-            }
-          />
-          <Route
-            path="interviewer"
-            element={<AIInterviewerPage />}
-          />
+        <Suspense
+          fallback={
+            <div className="page-content" style={{ display: 'grid', placeItems: 'center' }}>
+              <Spin size={40} tip="页面加载中..." />
+            </div>
+          }
+        >
+          <Routes>
+            <Route
+              index
+              element={
+                <AgentChatView
+                  agentType="resume"
+                  modelOptions={modelOptions}
+                  loadTrigger={resumeLoadTrigger}
+                  sessionToLoad={resumeSessionToLoad}
+                  newChatTrigger={resumeNewChatTrigger}
+                  onSessionUpdated={handleResumeSessionUpdated}
+                  onActiveSessionChange={setResumeActiveId}
+                  todayEvents={todayEvents}
+                  remindersDismissed={remindersDismissed}
+                  onDismissReminders={() => setRemindersDismissed(true)}
+                  onOpenProfile={() => { setProfileTab('profile'); setProfileModalVisible(true) }}
+                />
+              }
+            />
+            <Route
+              path="interviewer"
+              element={<AIInterviewerPage />}
+            />
 
-          <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
-          <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
-          <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
-          <Route path="*" element={<Navigate to="/student" replace />} />
-        </Routes>
+            <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
+            <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
+            <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
+            <Route path="*" element={<Navigate to="/student" replace />} />
+          </Routes>
+        </Suspense>
       </section>
 
       <Modal
@@ -551,9 +560,9 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           <div className="profile-modal-nav">
             <div className="profile-modal-nav-header">设置</div>
             {[
+              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号管理', color: '#e6fffa' },
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
-              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号设置', color: '#e6fffa' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
               { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
