@@ -9721,6 +9721,21 @@ textarea {
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* --wide variant: auto-width so "AI 优化" doesn't wrap to vertical lines in a 28px square */
+.rich-text-toolbar-btn--wide {
+  width: auto;
+  height: 28px;
+  padding: 0 10px;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: #165DFF;
+  font-weight: 500;
+}
+.rich-text-toolbar-btn--wide:hover:not(:disabled) {
+  background: #e6f0ff;
+  color: #0E42D2;
+}
 .rich-text-ai-btn {
   display: inline-flex;
   align-items: center;
