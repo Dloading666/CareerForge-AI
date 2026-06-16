@@ -6166,7 +6166,10 @@ textarea {
 
 .interview-config-panel {
   padding: 18px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* allow Arco Select dropdown popup to overflow horizontally */
+  position: relative;
 }
 
 .interview-brand {
@@ -6291,7 +6294,21 @@ textarea {
   margin-bottom: 14px;
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
   overflow: visible;
+}
+.interview-field .arco-select {
+  width: 100%;
+  min-width: 0;
+}
+.interview-field .arco-select-view {
+  min-width: 0;
+  overflow: hidden;
+}
+.interview-field .arco-select-view-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .interview-field-row {
