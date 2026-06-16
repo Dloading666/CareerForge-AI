@@ -9887,3 +9887,26 @@ textarea {
 
 /* ── 底部操作区两行布局 ── */
 /* (样式已在 .interview-answer-box 区域定义) */
+
+/* New resume template modal — head layout: description left (nowrap), actions right */
+.new-resume-template-modal .new-resume-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.new-resume-template-modal .new-resume-modal-desc {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.new-resume-template-modal .new-resume-modal-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
