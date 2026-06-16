@@ -1,4 +1,6 @@
-import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
+import { ApiError, apiRequest, authenticatedFetch, getAccessToken } from '../shared/api'
+
+const API_BASE_URL_FOR_XHR = (import.meta as any).env?.VITE_API_BASE_URL ?? ''
 import { ensureResumeDefaults } from './constants'
 import type { ResumeData, ResumeSummary } from './types'
 
@@ -61,13 +63,98 @@ export async function uploadResume(file: File) {
   })
 }
 
-export async function importResumeFile(file: File, title?: string) {
-  const form = new FormData()
-  form.append('file', file)
-  if (title) form.append('title', title)
-  return apiRequest<{ resume_id: number; title: string; sections_summary: Record<string, number | boolean> }>('/api/v1/student/resumes/import/file', {
-    method: 'POST',
-    body: form,
+export type ImportResumeFileResult = {
+  resume_id: number
+  title: string
+  sections_summary: Record<string, number | boolean>
+}
+
+export type ImportProgressEvent = {
+  loaded: number
+  total: number
+  percent: number  // 0-100, only valid when total > 0
+}
+
+export function importResumeFile(
+  file: File,
+  title?: string,
+  onProgress?: (event: ImportProgressEvent) => void,
+): Promise<ImportResumeFileResult> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (title) form.append('title', title)
+
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE_URL_FOR_XHR}/api/v1/student/resumes/import/file`, true)
+    const token = getAccessToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+
+    xhr.upload.onprogress = (evt) => {
+      if (!onProgress) return
+      if (evt.lengthComputable && evt.total > 0) {
+        onProgress({ loaded: evt.loaded, total: evt.total, percent: Math.round((evt.loaded / evt.total) * 100) })
+      } else {
+        onProgress({ loaded: evt.loaded, total: 0, percent: 0 })
+      }
+    }
+
+    xhr.onerror = () => reject(new ApiError('网络异常，导入失败', 0))
+    xhr.onabort = () => reject(new ApiError('已取消导入', 0))
+
+    xhr.onload = () => {
+      const status = xhr.status
+      let body: any = null
+      try { body = xhr.responseText ? JSON.parse(xhr.responseText) : null } catch { body = null }
+
+      if (status >= 200 && status < 300) {
+        // 后端 ApiEnvelope: { code, msg, data: {...} }
+        const data = body?.data ?? body
+        if (data && typeof data === 'object' && 'resume_id' in data) {
+          resolve(data as ImportResumeFileResult)
+        } else {
+          reject(new ApiError('后端返回数据格式异常', status))
+        }
+        return
+      }
+
+      // 401: try refresh once and retry
+      if (status === 401) {
+        import('../shared/api').then(async ({ tryRefreshAccessToken }) => {
+          const newAccess = await tryRefreshAccessToken()
+          if (!newAccess) {
+            reject(new ApiError('登录已过期，请重新登录', 401))
+            return
+          }
+          const retry = new XMLHttpRequest()
+          retry.open('POST', `${API_BASE_URL_FOR_XHR}/api/v1/student/resumes/import/file`, true)
+          retry.setRequestHeader('Authorization', `Bearer ${newAccess}`)
+          retry.upload.onprogress = xhr.upload.onprogress
+          retry.onerror = () => reject(new ApiError('网络异常，导入失败', 0))
+          retry.onload = () => {
+            if (retry.status >= 200 && retry.status < 300) {
+              try {
+                const rbody = JSON.parse(retry.responseText)
+                const rdata = rbody?.data ?? rbody
+                resolve(rdata as ImportResumeFileResult)
+              } catch {
+                reject(new ApiError('后端返回数据格式异常', retry.status))
+              }
+            } else {
+              const msg = (() => { try { return JSON.parse(retry.responseText)?.msg } catch { return null } })()
+              reject(new ApiError(msg || `导入失败 (HTTP ${retry.status})`, retry.status))
+            }
+          }
+          retry.send(form)
+        })
+        return
+      }
+
+      const msg = (() => { try { return body?.msg } catch { return null } })()
+      reject(new ApiError(msg || `导入失败 (HTTP ${status})`, status))
+    }
+
+    xhr.send(form)
   })
 }
 
