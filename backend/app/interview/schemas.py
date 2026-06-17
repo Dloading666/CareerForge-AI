@@ -74,6 +74,9 @@ class InterviewStartRequest(BaseModel):
     job_skills: list[str] = Field(
         default_factory=list, description="岗位核心技能"
     )
+    interview_mode: str = Field(
+        default="text", max_length=16, description="面试模式：text / voice"
+    )
 
 
 class InterviewTurnRequest(BaseModel):
@@ -99,6 +102,7 @@ class InterviewSessionResponse(BaseModel):
     difficulty: str
     round_limit: int
     model_config_id: int | None = None
+    interview_mode: str = "text"
     status: str
     # 岗位画像
     company_name: str | None = None

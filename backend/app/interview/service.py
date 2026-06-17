@@ -143,6 +143,7 @@ def _serialize_session(session: InterviewSession) -> dict:
         "interview_style": session.interview_style,
         "difficulty": session.difficulty,
         "round_limit": session.round_limit,
+        "interview_mode": session.interview_mode or "text",
         "model_config_id": session.model_config_id,
         "status": session.status,
         "company_name": session.company_name,
@@ -1143,6 +1144,7 @@ def start_interview(
         interview_style=payload.interview_style,
         difficulty=payload.difficulty,
         round_limit=payload.round_limit,
+        interview_mode=payload.interview_mode,
         model_config_id=payload.model_id,
         resume_snapshot=f"【简历来源】{resume_source_label}\n【面试类型】{type_cfg['label']}：{type_cfg['focus']}\n【面试风格】{style_cfg['label']}：{style_cfg['rule']}\n【面试重点】{'、'.join(payload.focus_tags[:8]) or '默认'}\n【用户自定义要求】{payload.custom_instruction or '无'}\n\n【岗位画像】{job_profile_summary}\n\n【简历内容】\n{resume_snapshot}",
         # 岗位画像

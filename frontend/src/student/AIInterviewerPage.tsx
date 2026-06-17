@@ -52,6 +52,7 @@ type InterviewSession = {
   round_limit: number
   model_config_id?: number | null
   status: string
+  interview_mode?: string
   created_at?: string | null
   ended_at?: string | null
 }
@@ -378,6 +379,43 @@ const createAnswerProgressStages = (): ProgressStage[] =>
 
 void deprecatedSubscribeInterviewRun
 
+function TypewriterText({ text, enabled, speed = 60, onDone }: {
+  text: string
+  enabled: boolean
+  speed?: number
+  onDone?: () => void
+}) {
+  const [revealed, setRevealed] = useState(1)
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
+
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    let i = 1
+    const max = text.length
+    if (i >= max) {
+      setRevealed(max)
+      return
+    }
+    const timer = setInterval(() => {
+      i++
+      if (i >= max) {
+        clearInterval(timer)
+        setRevealed(max)
+        onDoneRef.current?.()
+      } else {
+        setRevealed(i)
+      }
+    }, speed)
+    return () => clearInterval(timer)
+  }, [text, enabled, speed])
+
+  if (!enabled) return <MarkdownMessage content={text} />
+  return <MarkdownMessage content={text.slice(0, revealed)} />
+}
+
 export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActiveChange?: (active: boolean) => void } = {}) {
   const stageOrder: PrepareStageKey[] = ['resume', 'jd', 'match', 'rag', 'llm', 'harness', 'done']
   const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null)
@@ -452,6 +490,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle')
   const [voiceDraft, setVoiceDraft] = useState<VoiceTranscriptDraft | null>(null)
   const [voiceDraftText, setVoiceDraftText] = useState('')
+  const [viewOnly, setViewOnly] = useState(false)
   // P1: 静音检测状态
   const [silenceDetected, setSilenceDetected] = useState(false)
   const [hasSpoken, setHasSpoken] = useState(false)
@@ -557,6 +596,13 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       setTurns(detail.turns)
       setAnswer('')
       setConfigCollapsed(true)
+      setViewOnly(true)
+      // 恢复面试模式（文字/语音）
+      if (detail.session.interview_mode === 'voice') {
+        setInterviewMode('voice')
+      } else {
+        setInterviewMode('text')
+      }
       if (detail.session.status === 'completed') {
         const data = await apiRequest<ReportLookupResponse>(`/api/v1/student/interviews/${sessionId}/report`)
         if (isReport(data)) {
@@ -677,6 +723,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
     setLoading(true)
     setReport(null)
     setReportProgress([])
+    setViewOnly(false)
     clearStreamingTarget('start_question')
     clearStreamingTarget('followup')
     clearStreamingTarget('report')
@@ -714,6 +761,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       uploaded_resume_text: resumeSource === 'upload' ? uploadedResumeText : undefined,
       focus_tags: focusTags,
       custom_instruction: customInstruction,
+      interview_mode: interviewMode,
       request_id: crypto.randomUUID(),
     }
 
@@ -1804,7 +1852,10 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                           className={`interview-history-item${session?.id === item.id ? ' active' : ''}`}
                           onClick={() => void loadInterviewDetail(item.id)}
                         >
-                          <b>{formatTimeLabel(item.created_at)}</b>
+                          <b>
+                            {item.interview_mode === 'voice' && <IconVideoCamera style={{ marginRight: 4, fontSize: 13, color: '#165dff', verticalAlign: 'middle' }} />}
+                            {formatTimeLabel(item.created_at)}
+                          </b>
                           <em>{item.target_role || '未填写目标岗位'}</em>
                           <small>{item.status === 'active' ? '进行中' : '已结束'} · {item.status === 'completed' ? `${item.round_limit}/${item.round_limit}` : `0/${item.round_limit}`} 轮</small>
                         </button>
@@ -1943,7 +1994,13 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
             <div key={turn.id} className="interview-turn">
               <div className="interview-message interviewer">
                 <div className="bubble-title">AI 面试官 · Q{turn.turn_index}</div>
-                <div className="bubble-content"><MarkdownMessage content={normalizeQuestionMarkdown(turn.question)} /></div>
+                <div className="bubble-content">
+                  {interviewMode === 'voice' ? (
+                    <TypewriterText text={normalizeQuestionMarkdown(turn.question)} enabled={true} speed={60} />
+                  ) : (
+                    <MarkdownMessage content={normalizeQuestionMarkdown(turn.question)} />
+                  )}
+                </div>
                 {turn.knowledge_points && turn.knowledge_points.length > 0 && (
                   <div className="knowledge-tags">
                     {turn.knowledge_points.slice(0, 4).map((item) => <Tag key={item}>{item}</Tag>)}
@@ -1980,84 +2037,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                   )}
                 </div>
               )}
-              {turn.answer_assessment && (
-                <div className="interview-feedback">
-                  {turn.answer_assessment.llm?.fallback_used && (
-                    <div className="interview-feedback-section" style={{ background: '#fff7e6', borderLeft: '3px solid #faad14', padding: '8px 12px', marginBottom: 8, borderRadius: 4 }}>
-                      <span style={{ color: '#d46b08', fontWeight: 500 }}>
-                        ⚠ 模型已调用但未通过校验
-                        {turn.answer_assessment.llm?.fallback_reason && `：${({
-                          no_model_available: '无可用模型',
-                          llm_timeout: '模型响应超时',
-                          llm_stream_error: '模型流式输出异常',
-                          json_parse_failed: '模型输出格式异常',
-                          harness_validation_failed: 'Harness 校验失败',
-                          question_quality_failed: '问题质量不达标',
-                          unknown_error: '未知错误',
-                        } as Record<string, string>)[turn.answer_assessment.llm.fallback_reason] || turn.answer_assessment.llm.fallback_reason}`}
-                        。系统已使用保守追问策略。
-                      </span>
-                      {turn.answer_assessment.llm?.fallback_detail && (
-                        <small style={{ display: 'block', color: '#86909c', marginTop: 4, fontSize: 11 }}>{turn.answer_assessment.llm.fallback_detail}</small>
-                      )}
-                    </div>
-                  )}
-                  <div className="interview-feedback-section">
-                    <strong>本轮反馈</strong>
-                    <p>{turn.answer_assessment.summary}</p>
-                  </div>
-                  {(turn.answer_assessment.positive_points ?? []).length > 0 && (
-                    <div className="interview-feedback-section">
-                      <span className="feedback-label good">✓ 回答亮点</span>
-                      <ul>
-                        {(turn.answer_assessment.positive_points ?? []).map((pt: string, i: number) => <li key={i}>{pt}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  {(turn.answer_assessment.risk_points ?? []).length > 0 && (
-                    <div className="interview-feedback-section">
-                      <span className="feedback-label risk">△ 需要补充</span>
-                      <ul>
-                        {(turn.answer_assessment.risk_points ?? []).map((pt: string, i: number) => <li key={i}>{pt}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  {turn.followup_reason && (
-                    <div className="interview-feedback-section">
-                      <span className="feedback-label next">→ 追问方向</span>
-                      <p>{turn.followup_reason}</p>
-                    </div>
-                  )}
-                  {/* P1-3: 维度扣分原因 */}
-                  {turn.score_reasons && Object.keys(turn.score_reasons).length > 0 && (
-                    <div className="interview-feedback-section">
-                      <span className="feedback-label detail">📊 维度评语</span>
-                      <div className="interview-score-reasons">
-                        {Object.entries(turn.score_reasons).map(([key, reason]) => (
-                          <div key={key} className="interview-score-reason-item">
-                            <span className="interview-score-reason-dim">{DIMENSION_LABELS[key] ?? key}</span>
-                            <span>{reason as string}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {/* P1-3: 证据引用 */}
-                  {turn.evidence_quotes && turn.evidence_quotes.length > 0 && (
-                    <div className="interview-feedback-section">
-                      <span className="feedback-label evidence">💬 引用了你的原话</span>
-                      <ul className="interview-evidence-quotes">
-                        {turn.evidence_quotes.map((eq: { quote?: string; dimension?: string }, i: number) => (
-                          <li key={i}>
-                            <em>"{eq.quote}"</em>
-                            {eq.dimension && <small> — {DIMENSION_LABELS[eq.dimension] ?? eq.dimension}</small>}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* 本轮反馈已按产品需求移除 */}
             </div>
           ))}
 
@@ -2105,7 +2085,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           <div ref={bottomRef} />
         </div>
 
-        {session?.status === 'active' && pendingTurn && (
+        {session?.status === 'active' && pendingTurn && !viewOnly && (
           <div className="interview-answer-box">
             {interviewMode === 'text' ? (
               <>

@@ -21,6 +21,7 @@ class InterviewSession(Base):
     interview_style: Mapped[str] = mapped_column(String(32), nullable=False, default="strict")
     difficulty: Mapped[str] = mapped_column(String(32), nullable=False, default="normal")
     round_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    interview_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="text", server_default="text")
     model_config_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
     resume_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
