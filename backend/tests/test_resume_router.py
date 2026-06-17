@@ -274,5 +274,133 @@ class ResumeRouterTests(unittest.TestCase):
         self.assertEqual(details["projects"][0]["link_label"], "在线访问")
 
 
+    def test_scanned_pdf_unrenderable_returns_clear_error(self):
+        """扫描件 PDF 无法渲染时给出清晰提示，提示用户重新上传或下载 JSON 模板。"""
+        from unittest.mock import patch
+        fake_pdf = b"%PDF-1.4\nfake content\n" + b"\x00" * 200
+        files = {"file": ("resume.pdf", fake_pdf, "application/pdf")}
+        with patch("app.student.resume_import_service.extract_resume_file", return_value=""), \
+             patch("app.student.file_text.render_pdf_pages_to_png", return_value=[]):
+            response = self.client.post(
+                "/api/v1/student/resumes/import/file",
+                headers=self._headers(self.token_a),
+                files=files,
+            )
+        self.assertEqual(response.status_code, 400)
+        detail = response.json().get("detail", "")
+        self.assertIn("\u65e0\u6cd5\u6e32\u67d3", detail)
+        self.assertIn("JSON \u6a21\u677f", detail)
+
+    def test_scanned_pdf_without_multimodal_model_returns_clear_error(self):
+        """扫描件 PDF 在管理员没配多模态模型时给出清晰提示。"""
+        from unittest.mock import patch
+        from app.student.resume_import_service import NoMultimodalModelError
+        fake_pdf = b"%PDF-1.4\nfake content\n" + b"\x00" * 200
+        fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        files = {"file": ("resume.pdf", fake_pdf, "application/pdf")}
+        with patch("app.student.resume_import_service.extract_resume_file", return_value=""), \
+             patch("app.student.file_text.render_pdf_pages_to_png", return_value=[fake_png]), \
+             patch(
+                 "app.student.resume_import_service.parse_resume_images_to_data",
+                 side_effect=NoMultimodalModelError("no multimodal model configured for students"),
+             ):
+            response = self.client.post(
+                "/api/v1/student/resumes/import/file",
+                headers=self._headers(self.token_a),
+                files=files,
+            )
+        self.assertEqual(response.status_code, 400)
+        detail = response.json().get("detail", "")
+        self.assertIn("\u591a\u6a21\u6001", detail)
+        self.assertIn("\u6a21\u578b\u5e7f\u573a", detail)
+
+    def test_ocr_hallucination_detection_flags_john_doe_sample(self):
+        """OCR 结果检测：占位符示例简历（John Doe / Tech Innovations / Software Developer 等）应被识别为幻觉。"""
+        from app.student.resume_import_service import _looks_like_hallucinated_resume
+        sample = {
+            "basic": {
+                "name": "John Doe",
+                "target_position": "Software Developer",
+                "email": "example@email.com",
+                "phone": "(123) 456-7890",
+                "location": "New York, NY",
+            },
+            "experience": [
+                {"company": "Tech Innovations Inc.", "position": "Junior Software Developer"},
+                {"company": "CodeMasters", "position": "Intern"},
+            ],
+            "projects": [
+                {"name": "CodeConnect", "role": "Full Stack Developer"},
+            ],
+        }
+        self.assertTrue(_looks_like_hallucinated_resume(sample))
+
+    def test_ocr_hallucination_detection_accepts_real_chinese_resume(self):
+        """OCR 结果检测：真实中文简历（罗世明 / 重庆工程学院）不应被误判为幻觉。"""
+        from app.student.resume_import_service import _looks_like_hallucinated_resume
+        real = {
+            "basic": {
+                "name": "罗世明",
+                "target_position": "后端开发",
+                "email": "1336273056@qq.com",
+                "phone": "+86 17882225523",
+                "location": "四川成都",
+            },
+            "experience": [],
+            "projects": [
+                {"name": "RPA 爬虫金融系统", "role": "前端开发"},
+                {"name": "SSM 学生成绩管理系统", "role": "全栈开发"},
+            ],
+        }
+        self.assertFalse(_looks_like_hallucinated_resume(real))
+
+    def test_ocr_hallucination_detection_accepts_empty_result(self):
+        """OCR 结果检测：空结果（模型未能读取时）不应被误判为幻觉，避免死循环重试。"""
+        from app.student.resume_import_service import _looks_like_hallucinated_resume
+        self.assertFalse(_looks_like_hallucinated_resume({}))
+        self.assertFalse(_looks_like_hallucinated_resume({"basic": {}}))
+
+    def test_ocr_result_useful_detects_real_content(self):
+        """OCR 结果有用性检测：包含真实信息时被判定为有用。"""
+        from app.student.resume_import_service import _is_ocr_result_useful
+        # 只有 name 有值
+        self.assertTrue(_is_ocr_result_useful({"basic": {"name": "张三"}}))
+        # email 有值
+        self.assertTrue(_is_ocr_result_useful({"basic": {"email": "a@b.com"}}))
+        # 有 education
+        self.assertTrue(_is_ocr_result_useful({"education": [{"school": "X"}]}))
+        # 有 skills
+        self.assertTrue(_is_ocr_result_useful({"skills": "Python"}))
+
+    def test_ocr_result_useful_detects_empty_as_useless(self):
+        """OCR 结果有用性检测：空结果或全空白字段被判定为无用（应触发下一模型 fallback）。"""
+        from app.student.resume_import_service import _is_ocr_result_useful
+        self.assertFalse(_is_ocr_result_useful({}))
+        self.assertFalse(_is_ocr_result_useful({"basic": {}}))
+        self.assertFalse(_is_ocr_result_useful({"basic": {"name": "   "}}))  # 纯空白
+        self.assertFalse(_is_ocr_result_useful({"basic": {}, "skills": ""}))
+        self.assertFalse(_is_ocr_result_useful({"education": [], "experience": [], "projects": []}))
+
+    def test_ocr_list_multimodal_models_returns_only_multimodal(self):
+        """OCR 模型列表：只返回 active + multimodal + 对学生开放的模型。"""
+        from app.student.resume_import_service import _list_open_multimodal_models
+        sess = self.SessionLocal()
+        try:
+            models = _list_open_multimodal_models(sess, _FakeIdentity())
+        finally:
+            sess.close()
+        for m in models:
+            self.assertEqual(m.capability, "multimodal")
+            self.assertTrue(m.open_to_student)
+            self.assertEqual(m.status, "active")
+            self.assertFalse(m.is_deleted)
+
+
+
+class _FakeIdentity:
+    """用于单元测试 OCR 模型列表的最小身份对象。"""
+    tenant_id = 0
+    user_id = 1
+
 if __name__ == "__main__":
     unittest.main()
