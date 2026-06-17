@@ -77,6 +77,7 @@ def parse_resume_text_to_data(
         )
     if not model:
         raise ValueError("没有可用的模型，请管理员在模型广场开启「对学生开放」的模型")
+    model_name = getattr(model, "display_name", None) or getattr(model, "model_identifier", None) or "未知模型"
 
     system_prompt = (
         "你是一个简历信息提取助手。你的任务是从用户提供的简历文本中提取结构化信息。\n\n"
@@ -183,7 +184,7 @@ def parse_resume_text_to_data(
             if attempt == 1:
                 raise
 
-    raise ValueError("模型未能返回有效的结构化数据，请重试")
+    raise ValueError(f"模型「{model_name}」未能返回有效的结构化数据，请重试或联系管理员更换模型")
 
 
 

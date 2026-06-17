@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.admin.models import ModelConfig
 from app.auth.service import AuthIdentity
-from app.core.llm_client import chat_completion, voice_chat_completion
+from app.core.llm_client import chat_completion, speech_synthesis_completion, voice_chat_completion
 from app.interview.exceptions import (
     InterviewError,
     InterviewLLMError,
@@ -268,29 +268,40 @@ async def extract_uploaded_resume(upload: UploadFile) -> dict[str, Any]:
         tmp.write(content)
         tmp_path = Path(tmp.name)
     try:
-        if ext == ".pdf":
-            from pypdf import PdfReader
+        try:
+            if ext == ".pdf":
+                from pypdf import PdfReader
 
-            reader = PdfReader(str(tmp_path))
-            chunks = []
-            for index, page in enumerate(reader.pages[:12], start=1):
-                page_text = (page.extract_text() or "").strip()
-                if page_text:
-                    chunks.append(f"[PDF 第 {index} 页]\n{page_text}")
-            text = "\n\n".join(chunks)
-        elif ext == ".docx":
-            from docx import Document
+                reader = PdfReader(str(tmp_path))
+                chunks = []
+                for index, page in enumerate(reader.pages[:12], start=1):
+                    page_text = (page.extract_text() or "").strip()
+                    if page_text:
+                        chunks.append(f"[PDF ? {index} ?]\n{page_text}")
+                text = "\n\n".join(chunks)
+            elif ext == ".docx":
+                from docx import Document
 
-            doc = Document(str(tmp_path))
-            chunks = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-            for table in doc.tables[:6]:
-                for row in table.rows[:24]:
-                    values = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-                    if any(values):
-                        chunks.append(" | ".join(values))
-            text = "\n".join(chunks)
-        else:
-            text = tmp_path.read_text(encoding="utf-8", errors="ignore")
+                doc = Document(str(tmp_path))
+                chunks = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+                for table in doc.tables[:6]:
+                    for row in table.rows[:24]:
+                        values = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                        if any(values):
+                            chunks.append(" | ".join(values))
+                text = "\n".join(chunks)
+            else:
+                text = tmp_path.read_text(encoding="utf-8", errors="ignore")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "\u7b80\u5386\u89e3\u6790\u5931\u8d25\uff0c\u8bf7\u6362\u4e00\u4efd\u53ef\u590d\u5236\u6587\u5b57\u7684 "
+                    f"PDF/DOCX\uff0c\u6216\u6539\u7528 TXT/Markdown\u3002\u539f\u56e0\uff1a{str(exc)[:120]}"
+                ),
+            ) from exc
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -490,6 +501,62 @@ def _candidate_voice_models(
     if preferred_model_id:
         models.sort(key=lambda item: 0 if item.id == preferred_model_id else 1)
     return models
+
+
+def _candidate_tts_models(
+    db: Session,
+    identity: AuthIdentity,
+) -> list[ModelConfig]:
+    """选择 TTS 模型：优先 tts 能力，回退到 multimodal（如 mimo-v2.5 兼具多模态+TTS）。"""
+    base_filter = (
+        ModelConfig.tenant_id == identity.tenant_id,
+        ModelConfig.is_deleted.is_(False),
+        ModelConfig.status == "active",
+        ModelConfig.open_to_student.is_(True),
+        ModelConfig.api_key_cipher.is_not(None),
+    )
+    models: list[ModelConfig] = []
+    # 一级：纯 TTS 模型
+    models.extend(list(db.scalars(
+        select(ModelConfig).where(*base_filter, ModelConfig.capability == "tts").order_by(ModelConfig.id.asc())
+    ).all()))
+    # 二级：voice_multimodal 模型（如 mimo-v2.5-tts）
+    models.extend(list(db.scalars(
+        select(ModelConfig).where(*base_filter, ModelConfig.capability == "voice_multimodal").order_by(ModelConfig.id.asc())
+    ).all()))
+    # 三级：multimodal 模型兜底（如 mimo-v2.5 通用多模态）
+    models.extend(list(db.scalars(
+        select(ModelConfig).where(*base_filter, ModelConfig.capability == "multimodal").order_by(ModelConfig.id.asc())
+    ).all()))
+    return models
+
+
+def _tts_style_prompt(interview_style: str) -> tuple[str, str]:
+    """返回 (user_prompt, style_tag) 用于 MIMO TTS 风格化。
+
+    user_prompt 作为 user 消息调整语气；
+    style_tag 用 <style>...</style> 标签直接嵌入 assistant 文本开头，实现 MIMO 原生风格控制。
+    """
+    style_map = {
+        "strict": ("中文女声，专业、直接、略微严肃，语速中等，提问有压迫感但不失礼貌。", "专业 严肃 语速中等"),
+        "pressure": ("中文女声，节奏紧凑，语气冷静有压力，重点词略加重，适合压力追问。", "语速快 冷峻"),
+        "warm": ("中文女声，温和、鼓励、耐心，语速略慢，让候选人感到放松但仍然专业。", "温和 语速慢"),
+        "coach": ("中文女声，像教练一样清晰引导，语气友好但有要求，停顿明确。", "友好 清晰 语速中等"),
+        "executive": ("中文女声，成熟、沉稳、高管式审视，语速稳定，更关注判断力和业务价值。", "沉稳 严肃 语速中等"),
+    }
+    default_style = style_map.get("strict")
+    user_prompt, style_tag = style_map.get(interview_style, default_style)
+    return user_prompt, style_tag
+
+
+def _is_invalid_tts_key_error(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "invalid api key" in lowered
+        or "invalid_key" in lowered
+        or "please provide valid api key" in lowered
+        or ("401" in lowered and "api key" in lowered)
+    )
 
 
 def _llm_json(
@@ -2102,6 +2169,67 @@ def get_turn_tts_text(
     session = _get_session(db, identity, session_id)
     turn = db.get(InterviewTurn, turn_id)
     if not turn or turn.session_id != session.id:
+        raise InterviewError(status_code=404, detail="Question not found")
+
+    models = _candidate_tts_models(db, identity)
+    if not models:
+        return {
+            "mode": "server_tts_unavailable",
+            "text": turn.question,
+            "audio_base64": None,
+            "content_type": None,
+            "provider": None,
+            "reason": "\u672a\u914d\u7f6e\u5df2\u5f00\u653e\u7ed9\u5b66\u751f\u7684 TTS \u8bed\u97f3\u6a21\u578b\uff0c\u8bf7\u5728\u6a21\u578b\u5e7f\u573a\u6dfb\u52a0 mimo-v2.5-tts\u3002",
+            "turn_id": turn.id,
+            "question_text": turn.question,
+            "turn_index": turn.turn_index,
+        }
+
+    errors: list[str] = []
+    for model in models:
+        model_name = getattr(model, "display_name", None) or getattr(model, "model_identifier", None) or "tts_model"
+        try:
+            style_user, style_tag = _tts_style_prompt(session.interview_style)
+            result = speech_synthesis_completion(
+                model,
+                text=turn.question,
+                style_prompt=style_user,
+                style_tag=style_tag,
+                voice="\u8309\u8389",
+                audio_format="wav",
+            )
+            return {
+                "mode": "server_tts",
+                "text": turn.question,
+                "audio_base64": result["audio_base64"],
+                "content_type": result["content_type"],
+                "provider": result["provider"],
+                "reason": None,
+                "turn_id": turn.id,
+                "question_text": turn.question,
+                "turn_index": turn.turn_index,
+            }
+        except Exception as exc:  # noqa: BLE001 - provider errors are actionable config feedback.
+            errors.append(f"{model_name}: {str(exc)[:240]}")
+
+    reason = "\u670d\u52a1\u7aef TTS \u8bed\u97f3\u751f\u6210\u5931\u8d25\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u68c0\u67e5\u6a21\u578b\u5e7f\u573a\u7684 TTS \u914d\u7f6e\u3002"
+    if any(_is_invalid_tts_key_error(error) for error in errors):
+        reason = "\u8bed\u97f3\u5408\u6210\u6a21\u578b API Key \u65e0\u6548\uff0c\u8bf7\u5728\u6a21\u578b\u5e7f\u573a\u91cd\u65b0\u914d\u7f6e TTS \u6a21\u578b\u5bc6\u94a5\u3002"
+    elif errors:
+        reason = f"{reason} {'; '.join(errors[:3])}"
+
+    return {
+        "mode": "server_tts_error",
+        "text": turn.question,
+        "audio_base64": None,
+        "content_type": None,
+        "provider": None,
+        "reason": reason,
+        "turn_id": turn.id,
+        "question_text": turn.question,
+        "turn_index": turn.turn_index,
+    }
+    if not turn or turn.session_id != session.id:
         raise InterviewError(status_code=404, detail="问题不存在")
     return {
         "mode": "browser_tts",
@@ -2133,14 +2261,16 @@ def generate_report(
         return existing
     emit_interview_event(event_run_id, "runtime.status", {"phase": "score_summary", "label": "正在汇总维度评分"})
     turns = db.scalars(select(InterviewTurn).where(InterviewTurn.session_id == session.id).order_by(InterviewTurn.turn_index)).all()
-    scores = [_json_loads(turn.score_json, {}) for turn in turns if turn.score_json]
+    answered_turns = [turn for turn in turns if (turn.answer or "").strip()]
+    no_effective_answers = not answered_turns
+    scores = [_json_loads(turn.score_json, {}) for turn in answered_turns if turn.score_json]
     if scores:
         dim_scores = {
             key: round(sum(float(score.get(key, 3)) for score in scores) / len(scores) * 20, 1)
             for key in SCORE_KEYS
         }
     else:
-        dim_scores = {key: 60.0 for key in SCORE_KEYS}
+        dim_scores = {key: 0.0 for key in SCORE_KEYS}
     overall = _weighted_overall(dim_scores)
     fallback = {
         "overall_score": overall,
@@ -2232,6 +2362,9 @@ def generate_report(
     except Exception:
         model_overall = _weighted_overall(final_dim_scores)
     final_overall = round(max(0, min(100, model_overall)), 1)
+    if no_effective_answers:
+        final_dim_scores = {key: 0.0 for key in SCORE_KEYS}
+        final_overall = 0.0
     weighted_overall = _weighted_overall(final_dim_scores)
     if abs(final_overall - weighted_overall) > 8:
         final_overall = weighted_overall
@@ -2244,6 +2377,8 @@ def generate_report(
             "rubric": "CareerForge technical/behavioral interview rubric",
         }
     report_text = str(parsed.get("report_text") or fallback["report_text"])
+    if no_effective_answers:
+        report_text = "本次面试没有提交有效回答，所有评分维度按 0 分处理。请至少完成一轮回答后再生成有参考价值的报告。"
     if not llm_meta.get("used"):
         report_text += "\n\n本次模型评分服务暂时不可用，系统已按同一套评分 Rubric 做本地兜底；建议模型服务恢复后重新生成报告。"
     report = InterviewReport(

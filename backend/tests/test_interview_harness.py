@@ -1366,6 +1366,86 @@ class StartInterviewFlowTests(unittest.TestCase):
         self.assertNotIn("18050656775", joined)
         self.assertNotIn("求职意向", joined)
 
+
+    def test_resume_anchor_extraction_filters_personal_trait_lines(self):
+        """个人特质/品质描述行不能被当成项目锚点。"""
+        from app.interview.service import _extract_resume_anchors
+
+        resume_text = "\n".join([
+            "学习热情：对 AI 相关技术有较高热情",
+            "技术前瞻：持续追踪 AI 领域技术演进路径",
+            "沟通能力强，团队协作精神好",
+            "职业规划：成为技术专家",
+            "责任心强，自驱力好",
+            "个人特长：编程",
+            "Agent应用开发项目",  # 这个应该保留
+        ])
+
+        anchors = _extract_resume_anchors(resume_text)
+        names = [anchor.get("name", "") for anchor in anchors]
+        joined = " ".join(names)
+
+        # 特质描述应被过滤
+        self.assertNotIn("学习热情", joined)
+        self.assertNotIn("技术前瞻", joined)
+        self.assertNotIn("沟通能力", joined)
+        self.assertNotIn("职业规划", joined)
+        self.assertNotIn("责任心", joined)
+        self.assertNotIn("个人特长", joined)
+        # 真正的项目应保留
+        self.assertTrue(any("Agent" in name for name in names),
+                        f"Expected Agent project in anchors, got: {names}")
+
+    def test_resume_anchor_extraction_filters_date_only_lines(self):
+        """纯日期范围行（无项目名）不能作为锚点。"""
+        from app.interview.service import _extract_resume_anchors
+
+        resume_text = "\n".join([
+            "2023/09 — 2027/06",  # 纯日期，应跳过
+            "2023/09 — 2024/06  电商平台开发",  # 日期+项目，应保留
+            "Agent应用开发",
+        ])
+
+        anchors = _extract_resume_anchors(resume_text)
+        names = [anchor.get("name", "") for anchor in anchors]
+        joined = " ".join(names)
+
+        # 纯日期不应作为独立的锚点出现
+        pure_date_names = [n for n in names if n.strip() == "2023/09 — 2027/06"]
+        self.assertEqual(len(pure_date_names), 0,
+                         f"Pure date line should be filtered, got: {pure_date_names}")
+        # 含项目名的日期行应保留
+        self.assertTrue(any("电商平台" in name for name in names),
+                        f"Expected 电商平台 project in anchors, got: {names}")
+        self.assertTrue(any("Agent" in name for name in names))
+
+    def test_resume_anchor_extraction_mixed_noise_and_signal(self):
+        """混合噪声与信号的简历文本，只提取真正项目。"""
+        from app.interview.service import _extract_resume_anchors
+
+        resume_text = "\n".join([
+            "2023/09 — 2027/06",  # 噪声：纯日期
+            "Agent应用开发",  # 信号
+            "技术前瞻：持续追踪 AI 领域技术",  # 噪声：特质
+            "学习热情：对 AI 相关技术有较高热情",  # 噪声：特质
+            "模型实践：深度使用 GPT、Claude、Gemini 等主流大模型，构建垂类场景解决方案",  # 信号
+        ])
+
+        anchors = _extract_resume_anchors(resume_text)
+        names = [anchor.get("name", "") for anchor in anchors]
+        joined = " ".join(names)
+
+        # 噪声应被过滤
+        self.assertNotIn("技术前瞻", joined)
+        self.assertNotIn("学习热情", joined)
+        # 真正项目应保留
+        self.assertTrue(any("Agent" in name for name in names))
+        self.assertTrue(any("模型实践" in name or "GPT" in name for name in names))
+        # 锚点数应该比输入行数少（噪声被过滤了）
+        self.assertLessEqual(len(anchors), 3,
+                            f"Expected at most 3 anchors after noise filtering, got {len(anchors)}: {names}")
+
+
     def test_no_model_fallback_reason(self):
         """无模型时 fallback_reason 为 no_model_available。"""
         from unittest.mock import MagicMock, patch

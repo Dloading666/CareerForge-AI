@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from html import escape
 import httpx
 from io import BytesIO
@@ -43,6 +44,7 @@ from app.student.resume_schemas import (
 )
 
 router = APIRouter(prefix="/student/resumes", tags=["student-resume"])
+logger = logging.getLogger(__name__)
 
 MAX_RESUMES_PER_STUDENT = 6
 DEFAULT_TEMPLATE_ID = "classic"
@@ -676,6 +678,12 @@ async def import_resume_file(
             raise HTTPException(
                 status_code=502,
                 detail=f"LLM 解析失败: {str(exc)[:500]}",
+            )
+        except Exception as exc:
+            logger.error("resume import unexpected error: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="简历解析服务暂时不可用，请稍后重试。若持续出现，请联系管理员检查模型广场配置。",
             )
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名

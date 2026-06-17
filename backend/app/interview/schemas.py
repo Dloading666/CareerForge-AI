@@ -61,6 +61,9 @@ class InterviewStartRequest(BaseModel):
     request_id: Optional[str] = Field(
         default=None, max_length=80, description="前端生成的进度追踪 ID"
     )
+    reasoning_effort: Optional[str] = Field(
+        default=None, max_length=16, description="推理深度：low / medium / high"
+    )
     # 岗位画像
     company_name: Optional[str] = Field(
         default=None, max_length=128, description="公司名称"

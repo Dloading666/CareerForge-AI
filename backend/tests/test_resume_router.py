@@ -1,9 +1,11 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -272,6 +274,33 @@ class ResumeRouterTests(unittest.TestCase):
         self.assertEqual(details["educations"][0]["gpa"], "3.8/4.0")
         self.assertEqual(details["projects"][0]["link"], "https://project.example.com")
         self.assertEqual(details["projects"][0]["link_label"], "在线访问")
+
+    def test_import_file_surfaces_llm_provider_error(self):
+        request = httpx.Request("POST", "https://llm.example.test/chat/completions")
+        upstream_response = httpx.Response(
+            400,
+            request=request,
+            text='{"error":{"message":"model not found"}}',
+        )
+        provider_error = httpx.HTTPStatusError(
+            "400 Bad Request from chat/completions: model not found",
+            request=request,
+            response=upstream_response,
+        )
+
+        with (
+            patch("app.student.resume_import_service.extract_resume_file", return_value="x" * 300),
+            patch("app.student.resume_import_service.parse_resume_text_to_data", side_effect=provider_error),
+        ):
+            response = self.client.post(
+                "/api/v1/student/resumes/import/file",
+                headers=self._headers(self.token_a),
+                files={"file": ("resume.pdf", b"%PDF-1.4 text", "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("LLM", response.json()["detail"])
+        self.assertIn("model not found", response.json()["detail"])
 
 
 if __name__ == "__main__":

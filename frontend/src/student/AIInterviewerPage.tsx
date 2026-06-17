@@ -24,7 +24,7 @@ import resumeIcon from '../assets/interview-icons/cute-resume.png'
 import retryIcon from '../assets/interview-icons/cute-retry.png'
 import voiceIcon from '../assets/interview-icons/cute-voice.png'
 import { subscribeInterviewRun } from './interview/stream'
-import { extensionForAudioMimeType, pickSupportedAudioMimeType } from './interview/voice'
+import { extensionForAudioMimeType, getVoiceCaptureErrorMessage, hasAudioInputDevice, pickSupportedAudioMimeType } from './interview/voice'
 
 type KnowledgeStatus = {
   root?: string
@@ -40,6 +40,7 @@ type AgentModelOption = {
   display_name: string
   provider: string
   model_identifier: string
+  capability: string
 }
 
 type InterviewSession = {
@@ -414,6 +415,14 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
 
   // 语音面试状态
   const [interviewMode, setInterviewMode] = useState<'text' | 'voice'>('text')
+
+  // 语音模式仅显示多模态模型（multimodal / voice_multimodal）
+  const displayModelOptions = useMemo(() => {
+    if (interviewMode === 'voice') {
+      return modelOptions.filter(m => m.capability === 'multimodal' || m.capability === 'voice_multimodal')
+    }
+    return modelOptions
+  }, [modelOptions, interviewMode])
   const [recording, setRecording] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [progressStages, setProgressStages] = useState<ProgressStage[]>([])
@@ -462,6 +471,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   const silenceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const speechStartedRef = useRef(false)
   const silenceStartRef = useRef<number | null>(null)
+  const autoSubmitGuardRef = useRef(false)
 
   // P0-2: 加载在线简历列表
   const loadResumes = async () => {
@@ -868,11 +878,24 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
             audio.play().catch(() => { setVoiceSpeaking(false); resolve() })
           })
         }
+        setTtsMode('server_tts')
+        setVoiceSpeaking(false)
+        Message.warning(ttsData.reason || '面试官语音暂不可用，请联系管理员在模型广场配置 TTS 语音模型。')
+        return
         // browser_tts 模式：继续使用浏览器 SpeechSynthesis
-      } catch {
+      } catch (error) {
+        setTtsMode('server_tts')
+        setVoiceSpeaking(false)
+        Message.warning(error instanceof Error ? error.message : '面试官语音服务异常，请联系管理员检查 TTS 模型配置。')
+        return
         // 接口失败时降级到浏览器 TTS
       }
     }
+
+    setTtsMode('server_tts')
+    setVoiceSpeaking(false)
+    Message.warning('面试官语音暂不可用，请联系管理员在模型广场配置 TTS 语音模型。')
+    return
 
     // Fallback: 浏览器 SpeechSynthesis
     setTtsMode('browser_tts')
@@ -908,7 +931,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
   // ── 语音面试：录音控制（含静音检测）──
 
   const SPEECH_THRESHOLD = 0.035
-  const SILENCE_AFTER_SPEECH_MS = 1500
+  const SILENCE_AFTER_SPEECH_MS = 3000
   const NO_SPEECH_TIMEOUT_MS = 15000
   const MAX_RECORDING_MS = 120000
 
@@ -916,13 +939,38 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
     // P1: 防重入检查
     if (voicePhase === 'listening' || voicePhase === 'uploading' || voicePhase === 'thinking') return
     try {
+      if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        setVoicePhase('idle')
+        setInterviewMode('text')
+        Message.warning('当前浏览器不支持语音录制，已切换到文字回答。')
+        return
+      }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        if (devices.length > 0 && !hasAudioInputDevice(devices)) {
+          setVoicePhase('idle')
+          setInterviewMode('text')
+          Message.warning('没有检测到麦克风，已切换到文字回答。')
+          return
+        }
+      } catch {
+        // Device labels may be hidden until permission is granted; getUserMedia gives the final answer.
+      }
       setVoicePhase('listening')
       setSilenceDetected(false)
       setHasSpoken(false)
       speechStartedRef.current = false
       silenceStartRef.current = null
+      autoSubmitGuardRef.current = false
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (stream.getAudioTracks().length === 0) {
+        stream.getTracks().forEach((track) => track.stop())
+        setVoicePhase('idle')
+        setInterviewMode('text')
+        Message.warning('没有检测到可用的麦克风输入，已切换到文字回答。')
+        return
+      }
       const mimeType = pickSupportedAudioMimeType()
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
       recorderMimeTypeRef.current = recorder.mimeType || mimeType || 'audio/webm'
@@ -977,7 +1025,11 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
               // 静音超过阈值，自动提交
               setSilenceDetected(true)
               Message.info('检测到静音，自动提交回答。')
-              submitVoiceAnswer()
+              if (!autoSubmitGuardRef.current) {
+                autoSubmitGuardRef.current = true
+                if (silenceCheckRef.current) { clearInterval(silenceCheckRef.current); silenceCheckRef.current = null }
+                submitVoiceAnswer()
+              }
             }
           }
         }, 200)
@@ -999,9 +1051,10 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           Message.info('未检测到声音，请说话或点击"我说完了"手动提交。')
         }
       }, NO_SPEECH_TIMEOUT_MS)
-    } catch {
+    } catch (error) {
       setVoicePhase('error')
-      Message.error('无法访问麦克风，请检查浏览器权限设置。')
+      setInterviewMode('text')
+      Message.error(getVoiceCaptureErrorMessage(error))
     }
   }
 
@@ -1076,11 +1129,19 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
       formData.append('turn_id', String(pendingTurn.id))
       formData.append('request_id', crypto.randomUUID())
 
+      type VoiceTurnResult = {
+        current_turn: InterviewTurn
+        next_turn: InterviewTurn | null
+        is_finished: boolean
+        report_id: number | null
+      }
+      type VoiceSubmitResult = {
+        transcript: { text: string; language: string; confidence: number; audio_format?: string; audio_size_bytes?: number }
+        turn_result: VoiceTurnResult
+      }
+
       const fallbackREST = async () => {
-        const res = await apiRequest<{
-          turn_id: number
-          transcript: { text: string; language: string; confidence: number; audio_format?: string; audio_size_bytes?: number }
-        }>(`/api/v1/student/interviews/${session.id}/turns/voice/transcribe`, {
+        const res = await apiRequest<VoiceSubmitResult>(`/api/v1/student/interviews/${session.id}/turns/voice`, {
           method: 'POST',
           body: formData,
         })
@@ -1092,6 +1153,8 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         turn_id: number
         transcript: { text: string; language: string; confidence: number; audio_format?: string; audio_size_bytes?: number }
       } | null = null
+      let resultData: VoiceTurnResult | null = null
+      let runErrorMessage: string | null = null
 
       try {
         const runRes = await apiRequest<{ run_id: string }>(`/api/v1/student/interviews/${session.id}/turns/voice/run`, {
@@ -1119,25 +1182,42 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
                   if (d.target === 'followup') setStreamingSnapshot('followup', d.text)
                 } else if (event === 'interview.voice.transcribed') {
                   transcriptResult = data as typeof transcriptResult
+                  const transcriptText = transcriptResult?.transcript?.text?.trim()
+                  if (transcriptText) {
+                    setOptimisticAnswer({ turnId: pendingTurn.id, text: transcriptText })
+                    setVoiceDraft(null)
+                    setVoiceDraftText('')
+                  }
+                } else if (event === 'interview.turn.completed') {
+                  resultData = data as VoiceTurnResult
                   clearStreamingTarget('followup')
                 } else if (event === 'runtime.error') {
                   const d = data as { message: string }
+                  runErrorMessage = d.message
                   clearStreamingTarget('followup')
-                  Message.error(d.message)
                 }
               },
               onDone: () => { clearStreamingTarget('followup'); resolve() },
               onError: () => {
                 clearStreamingTarget('followup')
                 Message.warning('事件流中断，正在刷新面试记录。')
-                fallbackREST().then((res) => { transcriptResult = res }).finally(resolve)
+                fallbackREST().then((res) => {
+                  transcriptResult = { turn_id: pendingTurn.id, transcript: res.transcript }
+                  resultData = res.turn_result
+                }).finally(resolve)
               },
             },
             { maxRetries: 3, timeoutMs: 120000 }
           )
         })
       } catch {
-        transcriptResult = await fallbackREST()
+        const fallbackResult = await fallbackREST()
+        transcriptResult = { turn_id: pendingTurn.id, transcript: fallbackResult.transcript }
+        resultData = fallbackResult.turn_result
+      }
+
+      if (runErrorMessage) {
+        throw new Error(runErrorMessage)
       }
 
       if (!transcriptResult?.transcript?.text?.trim()) {
@@ -1145,39 +1225,18 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         return
       }
 
-      const draft: VoiceTranscriptDraft = {
-        turnId: transcriptResult.turn_id || pendingTurn.id,
-        text: transcriptResult.transcript.text.trim(),
-        language: transcriptResult.transcript.language,
-        confidence: transcriptResult.transcript.confidence,
-        audioFormat: transcriptResult.transcript.audio_format,
-        audioSizeBytes: transcriptResult.transcript.audio_size_bytes,
-      }
-      setVoiceDraft(draft)
-      setVoiceDraftText(draft.text)
-      setVoicePhase('idle')
-      Message.success('语音已转成文字，请确认后提交。')
-      return
-      /*
-
-      const turnResult = null as {
-        current_turn: InterviewTurn
-        next_turn: InterviewTurn | null
-        is_finished: boolean
-        report_id: number | null
-      } | null
-      const res = turnResult as {
-          current_turn: InterviewTurn
-          next_turn: InterviewTurn | null
-          is_finished: boolean
-          report_id: number | null
+      if (!resultData) {
+        throw new Error('语音已转成文字，但没有收到下一问结果，请刷新后重试。')
       }
 
-      // 更新 turns
+      const res = resultData
       setTurns((prev) => {
         const updated = prev.map((t) => (t.id === res.current_turn.id ? res.current_turn : t))
         return res.next_turn ? [...updated, res.next_turn] : updated
       })
+      setOptimisticAnswer(null)
+      setVoiceDraft(null)
+      setVoiceDraftText('')
 
       if (res.is_finished) {
         setSession((prev) => prev ? { ...prev, status: 'completed' } : prev)
@@ -1191,8 +1250,8 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
         setVoicePhase('idle')
       }
       await loadInterviewSessions()
-      */
     } catch (error) {
+      setOptimisticAnswer(null)
       setVoicePhase('error')
       Message.error(error instanceof Error ? error.message : '语音提交失败')
     } finally {
@@ -1479,7 +1538,19 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
           <button
             type="button"
             className={`interview-mode-card${interviewMode === 'voice' ? ' active' : ''}`}
-            onClick={() => setInterviewMode('voice')}
+            onClick={() => {
+              setInterviewMode('voice')
+              // 切换到语音模式时，自动选择第一个多模态模型
+              const multiModels = modelOptions.filter(m => m.capability === 'multimodal' || m.capability === 'voice_multimodal')
+              if (multiModels.length === 0) {
+                Message.warning('暂无可用的多模态语音模型，请联系管理员在模型广场添加并开放给学生。')
+              } else {
+                const currentIsMulti = selectedModelId !== undefined && multiModels.some(m => m.id === selectedModelId)
+                if (!currentIsMulti) {
+                  setSelectedModelId(multiModels[0].id)
+                }
+              }
+            }}
             disabled={session?.status === 'active' && interviewMode === 'text'}
             title={session?.status === 'active' && interviewMode === 'text' ? '面试进行中无法切换模式' : '语音面试需要浏览器麦克风权限'}
           >
@@ -1498,7 +1569,7 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
             disabled={session?.status === 'active'}
             style={{ width: '100%' }}
           >
-            {modelOptions.map((m) => (
+            {displayModelOptions.map((m) => (
               <Select.Option key={m.id} value={String(m.id)} title={`${m.display_name} · ${m.model_identifier}`}>{m.display_name}</Select.Option>
             ))}
           </Select>

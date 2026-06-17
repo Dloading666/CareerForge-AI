@@ -27,7 +27,7 @@ function lookupBaseUrl(provider: string, protocols: string): string {
   return BASE_URL_PRESETS[provider]?.[protocols] ?? ''
 }
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
-const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
+const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { voice_multimodal: { text: '语音多模态', color: 'magenta' }, multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
 
 export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
@@ -41,7 +41,7 @@ export function ModelPlaza() {
   const [latencyMap, setLatencyMap] = useState<Record<number, { ms: number | null; ok: boolean }>>({})
   const [batchTesting, setBatchTesting] = useState(false)
   const [notify, setNotify] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null)
-  const [testResult, setTestResult] = useState<{ provider: string; modelName: string; success: boolean; latencyMs: number | null; httpStatus: number | null; requestUrl: string; responseBody: string; errorMessage: string | null; errorSummary: string | null } | null>(null)
+  const [testResult, setTestResult] = useState<{ provider: string; modelName: string; capability: string; success: boolean; latencyMs: number | null; httpStatus: number | null; requestUrl: string; responseBody: string; errorMessage: string | null; errorSummary: string | null } | null>(null)
   const [searchText, setSearchText] = useState('')
   const [filterCapability, setFilterCapability] = useState<string>('all')
   const [filterProvider, setFilterProvider] = useState<string>('all')
@@ -168,11 +168,11 @@ export function ModelPlaza() {
     try {
       const r = await apiRequest<{ success: boolean; latency_ms: number | null; http_status: number | null; response_body: string | null; request_url: string | null; error_message: string | null; error_summary: string | null }>(`/api/v1/admin/models/${id}/test`, { method: 'POST' })
       setLatencyMap(prev => ({ ...prev, [id]: { ms: r.latency_ms, ok: r.success } }))
-      setTestResult({ provider, modelName, success: r.success, latencyMs: r.latency_ms, httpStatus: r.http_status, requestUrl: r.request_url ?? '', responseBody: r.response_body ?? '', errorMessage: r.error_message, errorSummary: r.error_summary ?? null })
+      setTestResult({ provider, modelName, capability: model?.capability ?? '', success: r.success, latencyMs: r.latency_ms, httpStatus: r.http_status, requestUrl: r.request_url ?? '', responseBody: r.response_body ?? '', errorMessage: r.error_message, errorSummary: r.error_summary ?? null })
     }
     catch (e) {
       setLatencyMap(prev => ({ ...prev, [id]: { ms: null, ok: false } }))
-      setTestResult({ provider, modelName, success: false, latencyMs: null, httpStatus: null, requestUrl: '', responseBody: '', errorMessage: e instanceof Error ? e.message : '请求失败', errorSummary: null })
+      setTestResult({ provider, modelName, capability: model?.capability ?? '', success: false, latencyMs: null, httpStatus: null, requestUrl: '', responseBody: '', errorMessage: e instanceof Error ? e.message : '请求失败', errorSummary: null })
     }
     finally { setTestingIds(prev => { const n = new Set(prev); n.delete(id); return n }) }
   }
@@ -200,6 +200,7 @@ export function ModelPlaza() {
           placeholder="能力类型"
         >
           <Select.Option value="all">全部能力</Select.Option>
+          <Select.Option value="voice_multimodal">语音多模态</Select.Option>
           <Select.Option value="text">纯文本</Select.Option>
           <Select.Option value="multimodal">多模态</Select.Option>
           <Select.Option value="tts">TTS 语音</Select.Option>
@@ -272,7 +273,7 @@ export function ModelPlaza() {
           <Form.Item label="展示名称" required><Input value={form.display_name} onChange={v => setForm(p => ({...p, display_name: v}))} placeholder="如 DeepSeek 对话-生产" /></Form.Item>
           <Form.Item label="供应商" required><Select value={form.provider} onChange={handleProviderChange} placeholder="选择供应商" allowCreate>{['OpenAI','DeepSeek','Anthropic','通义千问','智谱','月之暗面','Azure','Ollama'].map(v=><Select.Option key={v} value={v}>{v}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
-          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
+          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="voice_multimodal">语音多模态</Select.Option><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
           <Form.Item label="协议"><Select value={form.protocols} onChange={handleProtocolsChange}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
           <Form.Item label="Base URL" required extra={(form.base_url === '' || form.base_url === lastAutoFilledUrl) ? "根据供应商 + 协议自动填充，可手动修改" : "已手动修改，改变供应商/协议不再覆盖"}><Input value={form.base_url} onChange={handleBaseUrlChange} placeholder="https://api.deepseek.com/v1" /></Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
@@ -326,7 +327,10 @@ export function ModelPlaza() {
                   {testResult.success ? "测试成功" : "测试失败"}
                 </div>
                 <div style={{ fontSize: 13, color: testResult.success ? "#389e0d" : "#cf1322", opacity: 0.85 }}>
-                  已向 <strong>[{testResult.provider}]</strong> 用模型 <strong>[{testResult.modelName}]</strong> 发送 <code>hi</code>，HTTP <strong>{testResult.httpStatus ?? "--"}</strong>
+                  {testResult.capability === 'tts'
+                    ? <>已向 <strong>[{testResult.provider}]</strong> 用 TTS 模型 <strong>[{testResult.modelName}]</strong> 发送语音合成测试（assistant: 你好，连接测试成功。），HTTP <strong>{testResult.httpStatus ?? "--"}</strong></>
+                    : <>已向 <strong>[{testResult.provider}]</strong> 用模型 <strong>[{testResult.modelName}]</strong> 发送 <code>Reply OK.</code>，HTTP <strong>{testResult.httpStatus ?? "--"}</strong></>
+                  }
                   {testResult.latencyMs !== null ? `，耗时 ${testResult.latencyMs}ms` : ``}
                 </div>
               </div>

@@ -23,6 +23,21 @@ _PROJECT_LINE_KEYWORDS = (
     "构建", "设计", "实现", "优化", "架构", "重构", "部署", "上线",
 )
 
+# 个人特质/品质类描述词——不是具体项目经历，不应作为面试锚点
+_TRAIT_PATTERNS = [
+    r"^(学习|沟通|协作|表达|组织|领导|抗压|执行|创新|解决问题|时间管理|自我驱动|逻辑思维|批判性)(能力|热情|精神|兴趣|态度)",
+    r"^(技术前瞻|技术视野|技术热情|职业规划|职业目标|兴趣爱好|个人特长|自我评价|自我介绍|个人总结|综合素质|性格特点)",
+    r"^(团队|责任心|自驱|上进|进取|好学|踏实|认真|细致|严谨|诚信|正直)",
+]
+
+
+def _is_personal_trait_line(text: str) -> bool:
+    """判断一行文本是否为个人特质/品质描述，而非具体项目经历。"""
+    stripped = text.strip(" -•\t")
+    return any(re.match(p, stripped) for p in _TRAIT_PATTERNS)
+
+
+
 
 def _is_section_header(text: str) -> bool:
     """判断一行文本是否只是简历章节标题，不含具体内容。"""
@@ -91,7 +106,7 @@ def extract_resume_anchors(resume_snapshot: str) -> list[dict[str, Any]]:
 
     for line in text.splitlines():
         item = line.strip(" -•\t")
-        if not item or is_contact_or_intent_line(item) or _is_section_header(item):
+        if not item or is_contact_or_intent_line(item) or _is_section_header(item) or _is_personal_trait_line(item):
             continue
         # 两条路径捕获：A) 包含项目关键词  B) 含日期范围（项目名行）
         is_project_line = any(key in item for key in _PROJECT_LINE_KEYWORDS)
@@ -101,7 +116,17 @@ def extract_resume_anchors(resume_snapshot: str) -> list[dict[str, Any]]:
             name = item[:60]
             # 日期型行去掉日期部分作为项目名
             if has_date and not is_project_line:
-                name = re.sub(r"\s*[\|｜]\s*\d{4}[./-]\d{1,2}\s*[-—~至]\s*.*$", "", item)[:60].strip()
+                name = item[:60]
+                # 剥离 "YYYY/MM — YYYY/MM" 格式的完整日期范围
+                name = re.sub(r"^\d{4}[./-]\d{1,2}\s*[-—~至]\s*\d{4}[./-]\d{1,2}", "", name).strip()
+                # 剥离 "YYYY/MM — " 格式的起始日期
+                name = re.sub(r"^\d{4}[./-]\d{1,2}\s*[-—~至]\s*", "", name).strip()
+                # 剥离后置日期分隔（如 "| 2023/09 — 2024/06"）
+                name = re.sub(r"\s*[\|｜]\s*\d{4}[./-]\d{1,2}\s*[-—~至]\s*.*$", "", name)[:60].strip()
+                name = name.strip(" |｜")
+                # 剥离日期后若无实质内容则跳过
+                if len(name) < 3:
+                    continue
             anchors.append({"type": "text", "name": name, "evidence": item[:150], "keywords": keywords[:5]})
         if len(anchors) >= 8:
             break

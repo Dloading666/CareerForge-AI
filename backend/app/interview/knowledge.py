@@ -177,17 +177,34 @@ class ChromaKnowledgeIndex:
             path=str(self._chroma_dir),
             settings=chromadb.Settings(anonymized_telemetry=False),
         )
-        self._collection = self._client.get_or_create_collection(
-            name=_CHROMA_COLLECTION,
-            metadata={"hnsw:space": "cosine"},
-        )
         self._model_name = "BAAI/bge-small-zh-v1.5"
         self._embedder = SentenceTransformer(self._model_name)
+        expected_dim = self._embedder.get_sentence_embedding_dimension()
         logger.info(
             "ChromaKnowledgeIndex ready — model=%s dims=%d",
-            self._model_name,
-            self._embedder.get_sentence_embedding_dimension(),
+            self._model_name, expected_dim,
         )
+
+        # 自动修复维度不匹配：旧数据用其他模型建的，删掉重建
+        try:
+            existing = self._client.get_collection(name=_CHROMA_COLLECTION)
+            if existing and existing.metadata:
+                stored_dim = existing.metadata.get("dimension")
+                if stored_dim is not None and int(stored_dim) != expected_dim:
+                    logger.warning(
+                        "ChromaDB 维度不匹配（期望 %d，现有 %d），自动删除旧集合重建",
+                        expected_dim, int(stored_dim),
+                    )
+                    self._client.delete_collection(name=_CHROMA_COLLECTION)
+            self._collection = self._client.get_or_create_collection(
+                name=_CHROMA_COLLECTION,
+                metadata={"hnsw:space": "cosine", "dimension": expected_dim},
+            )
+        except Exception:
+            self._collection = self._client.get_or_create_collection(
+                name=_CHROMA_COLLECTION,
+                metadata={"hnsw:space": "cosine", "dimension": expected_dim},
+            )
 
         if self._collection.count() == 0:
             logger.info("ChromaDB collection empty, building initial index from %s", self.root)
@@ -229,8 +246,9 @@ class ChromaKnowledgeIndex:
             return []
 
         query_text = f"{target_role} {query}".strip()
+        query_embedding = self._embedder.encode([query_text], normalize_embeddings=True, show_progress_bar=False)[0]
         results = self._collection.query(
-            query_texts=[query_text],
+            query_embeddings=[query_embedding.tolist()],
             n_results=min(limit * 3, self._collection.count()),
         )
 

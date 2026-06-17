@@ -148,7 +148,8 @@ def _openai_completion(
         raise RuntimeError(f"LLM call failed ({resp.status_code}): {resp.text[:512]}")
     data = resp.json()
     choice = data.get("choices", [{}])[0]
-    reply = choice.get("message", {}).get("content", "")
+    msg = choice.get("message", {})
+    reply = msg.get("content", "") or msg.get("reasoning_content", "")
     usage = data.get("usage")
     return {
         "reply": reply,
@@ -242,6 +243,7 @@ def voice_chat_completion(
         content_parts.append({"type": "text", "text": text_prompt})
 
     # 音频部分（OpenAI 兼容格式）
+    # 音频部分 — input_audio 格式（MIMO 实测可用）
     content_parts.append({
         "type": "input_audio",
         "input_audio": {
@@ -259,10 +261,18 @@ def voice_chat_completion(
             },
         })
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": content_parts},
-    ]
+    # 如果模型标识含 tts，去掉 system 角色（TTS 模型不允许 system role）
+    model_id_lower = model_id.lower()
+    if "tts" in model_id_lower:
+        combined = [{"type": "text", "text": system_prompt}]
+        if isinstance(content_parts, list):
+            combined.extend(content_parts)
+        messages = [{"role": "user", "content": combined}]
+    else:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content_parts},
+        ]
 
     body = {
         "model": model_id,
@@ -283,6 +293,73 @@ def voice_chat_completion(
     usage = data.get("usage")
     return {
         "reply": reply,
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+        if usage
+        else None,
+    }
+
+
+def speech_synthesis_completion(
+    model_config,
+    *,
+    text: str,
+    style_prompt: str | None = None,
+    style_tag: str | None = None,
+    voice: str = "茉莉",
+    audio_format: str = "mp3",
+) -> dict[str, Any]:
+    """Call an OpenAI-compatible TTS chat endpoint such as MiMo V2.5 TTS."""
+    api_base = (model_config.base_url or "https://api.xiaomimimo.com/v1").rstrip("/")
+    api_key = decrypt_api_key(model_config.api_key_cipher) if model_config.api_key_cipher else ""
+    model_id = _normalize_model_id(model_config.model_identifier or "mimo-v2.5-tts", api_base)
+
+    # 构建带风格标签的 assistant 文本
+    assistant_text = text
+    if style_tag:
+        assistant_text = f"<style>{style_tag}</style>{text}"
+
+    messages: list[dict[str, str]] = []
+    if style_prompt:
+        messages.append({"role": "user", "content": style_prompt})
+    messages.append({"role": "assistant", "content": assistant_text})
+
+    body = {
+        "model": model_id,
+        "messages": messages,
+        "audio": {
+            "format": audio_format,
+            "voice": voice,
+        },
+        "stream": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=httpx.Timeout(getattr(model_config, "timeout_sec", None) or 120.0)) as client:
+        resp = client.post(f"{api_base}/chat/completions", json=body, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(f"TTS call failed ({resp.status_code}): {resp.text[:512]}")
+
+    data = resp.json()
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    audio = message.get("audio") or {}
+    audio_data = audio.get("data")
+    if not audio_data:
+        raise RuntimeError("TTS call returned no audio data")
+    usage = data.get("usage")
+    return {
+        "audio_base64": audio_data,
+        "content_type": "audio/wav" if audio_format == "wav" else f"audio/{audio_format}",
+        "provider": getattr(model_config, "provider", None) or "tts",
+        "model": model_id,
+        "voice": voice,
         "usage": {
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
@@ -320,7 +397,7 @@ def stream_chat_completion(
     api_base = (model_config.base_url or "https://api.deepseek.com").rstrip("/")
     api_key = decrypt_api_key(model_config.api_key_cipher) if model_config.api_key_cipher else ""
     model_id = _normalize_model_id(model_config.model_identifier or "deepseek-chat", api_base)
-    body = {
+    body: dict[str, Any] = {
         "model": model_id,
         "messages": messages,
         "temperature": temperature,

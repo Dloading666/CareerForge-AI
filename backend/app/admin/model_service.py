@@ -120,16 +120,38 @@ async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse
                     },
                 )
             else:
-                resp = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key or ''}", "Content-Type": "application/json"},
-                    json={
-                        "model": model.model_identifier,
-                        "messages": [{"role": "user", "content": "Reply OK."}],
-                        "max_tokens": 16,
-                        "stream": False,
-                    },
-                )
+                # 根据能力类型 + 模型标识判断测试格式
+                capability = (model.capability or "").lower()
+                model_id_lower = (model.model_identifier or "").lower()
+                is_tts = capability == "tts" or "tts" in model_id_lower
+                
+                if is_tts:
+                    # TTS 语音合成：必须有 assistant 角色 + audio 参数
+                    resp = await client.post(
+                        f"{base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key or ''}", "Content-Type": "application/json"},
+                        json={
+                            "model": model.model_identifier,
+                            "messages": [
+                                {"role": "user", "content": "Hello"},
+                                {"role": "assistant", "content": "你好，连接测试成功。"},
+                            ],
+                            "audio": {"format": "wav", "voice": "mimo_default"},
+                            "stream": False,
+                        },
+                    )
+                else:
+                    # chat / text / multimodal：纯文本测试
+                    resp = await client.post(
+                        f"{base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key or ''}", "Content-Type": "application/json"},
+                        json={
+                            "model": model.model_identifier,
+                            "messages": [{"role": "user", "content": "Reply OK."}],
+                            "max_tokens": 16,
+                            "stream": False,
+                        },
+                    )
         latency_ms = int((time.perf_counter() - start) * 1000)
         success = 200 <= resp.status_code < 300
         if not success:

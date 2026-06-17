@@ -38,6 +38,7 @@ from app.interview.service import (
     submit_turn,
     transcribe_voice_audio,
     transcribe_voice_audio_sync,
+    _attach_voice_meta_to_turn_result,
     voice_submit_turn,
     voice_submit_turn_sync,
     extract_uploaded_resume,
@@ -251,7 +252,16 @@ def _run_voice_submit_background(
                     "audio_size_bytes": transcript.get("audio_size_bytes"),
                 },
             })
-            mark_interview_run_done(run_id)
+            turn_result = submit_turn(
+                db,
+                identity,
+                session_id,
+                transcript["text"],
+                request_id=request_id,
+                turn_id=turn_id,
+                event_run_id=run_id,
+            )
+            _attach_voice_meta_to_turn_result(db, turn_result, transcript)
         except Exception as exc:
             logger.exception("run_voice_submit_background failed")
             emit_interview_event(run_id, "runtime.error", {"message": str(exc)})
