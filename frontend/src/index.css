@@ -10004,6 +10004,20 @@ textarea {
   opacity: 0.4;
   cursor: not-allowed;
 }
+.rich-text-toolbar-btn--wide {
+  width: auto;
+  height: 28px;
+  padding: 0 10px;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: #165DFF;
+  font-weight: 500;
+}
+.rich-text-toolbar-btn--wide:hover:not(:disabled) {
+  background: #e6f0ff;
+  color: #0E42D2;
+}
 .rich-text-ai-btn {
   display: inline-flex;
   align-items: center;
@@ -10727,4 +10741,27 @@ textarea {
   }
   .ir-hero { padding: 22px 18px; }
   .ir-dim-summary { justify-content: center; }
+}
+
+/* New resume template modal — head layout: description left (nowrap), actions right */
+.new-resume-template-modal .new-resume-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.new-resume-template-modal .new-resume-modal-desc {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.new-resume-template-modal .new-resume-modal-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
 }

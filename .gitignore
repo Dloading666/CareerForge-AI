@@ -16,3 +16,10 @@ docker-compose.override.yml
 .DS_Store
 .claude/
 .idea/
+
+# Chroma vector DB persistence (generated at runtime, must not be committed)
+backend/data/chroma/
+backend/data/avatars/
+backend/data/banners/
+backend/data/feedbacks/
+backend/data/agent_uploads/

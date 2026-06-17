@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from html import escape
 import httpx
 from io import BytesIO
@@ -44,7 +43,6 @@ from app.student.resume_schemas import (
 )
 
 router = APIRouter(prefix="/student/resumes", tags=["student-resume"])
-logger = logging.getLogger(__name__)
 
 MAX_RESUMES_PER_STUDENT = 6
 DEFAULT_TEMPLATE_ID = "classic"
@@ -659,32 +657,65 @@ async def import_resume_file(
             raise HTTPException(status_code=400, detail="JSON 文件应为对象格式")
         parsed_data = _normalize_import_json(raw)
     else:
-        # PDF/DOCX 分支：抽取文本 → LLM 结构化
+        # PDF/DOCX 分支：先抽文字，抽不到再走多模态 OCR 兜底
         text = extract_resume_file(content, original_name, "")
         if len(text) < _SCANNER_THRESHOLD:
-            raise HTTPException(
-                status_code=400,
-                detail="PDF 似乎是扫描件或图片型 PDF，无法提取文字。请上传文字版 PDF，或下载 JSON 模板填写后导入。",
-            )
-        try:
-            parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)[:300])
-        except httpx.HTTPStatusError as exc:
-            # Upstream LLM provider rejected the request (4xx/5xx).
-            # Surface the actual provider message so the user can see whether
-            # the configured model / API key / base URL is wrong.
-            logger.warning("resume import upstream LLM error: %s", exc)
-            raise HTTPException(
-                status_code=502,
-                detail=f"LLM 解析失败: {str(exc)[:500]}",
-            )
-        except Exception as exc:
-            logger.error("resume import unexpected error: %s", exc, exc_info=True)
-            raise HTTPException(
-                status_code=502,
-                detail="简历解析服务暂时不可用，请稍后重试。若持续出现，请联系管理员检查模型广场配置。",
-            )
+            if ext == ".pdf":
+                # 扫描件 / 图片型 PDF：渲染前几页，让多模态模型识别
+                import tempfile as _ocr_tempfile
+                with _ocr_tempfile.NamedTemporaryFile(delete=False, suffix=ext) as _ocr_tmp:
+                    _ocr_tmp.write(content)
+                    _ocr_tmp_path = Path(_ocr_tmp.name)
+                try:
+                    page_images = render_pdf_pages_to_png(_ocr_tmp_path, max_pages=3)
+                finally:
+                    try:
+                        _ocr_tmp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                if not page_images:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="该 PDF 无法渲染页面，可能是已损坏的文件。请重新上传，或者下载 JSON 模板填写后导入。",
+                    )
+                try:
+                    parsed_data = await run_in_threadpool(
+                        parse_resume_images_to_data, db, identity, page_images,
+                    )
+                except NoMultimodalModelError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"该 PDF 为扫描件或图片型文件，需要多模态模型去识别，但管理员尚未在「模型广场」配置对学生开放的多模态模型：{exc}",
+                    )
+                except ValueError as exc:
+                    # OCR 模型幻觉或无法读取简历内容时抛 ValueError（如 _looks_like_hallucinated_resume 检测失败后）
+                    raise HTTPException(status_code=422, detail=str(exc)[:400])
+                except httpx.HTTPStatusError as exc:
+                    logger.warning("resume OCR upstream LLM error: %s", exc)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"多模态 LLM 解析失败: {str(exc)[:500]}",
+                    )
+            else:
+                # DOCX 抽不到文字（极少见），给出清晰提示
+                raise HTTPException(
+                    status_code=400,
+                    detail="无法从该文件中提取文字内容，请确认文件未加密且包含文字。",
+                )
+        else:
+            try:
+                parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)[:300])
+            except httpx.HTTPStatusError as exc:
+                # Upstream LLM provider rejected the request (4xx/5xx).
+                # Surface the actual provider message so the user can see whether
+                # the configured model / API key / base URL is wrong.
+                logger.warning("resume import upstream LLM error: %s", exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"LLM 解析失败: {str(exc)[:500]}",
+                )
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名
     resolved_title = (

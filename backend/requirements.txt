@@ -18,10 +18,10 @@ openpyxl==3.1.5
 Pillow==11.2.1
 reportlab==4.2.2
 rl-renderPM==4.0.3
-# å…ˆè£… CPU ç‰?PyTorchï¼Œé¿å…è‡ªåŠ¨æ‹‰å?CUDA åº?
+# å…ˆè£… CPU ï¿½?PyTorchï¼Œé¿å…è‡ªåŠ¨æ‹‰ï¿½?CUDA ï¿½?
 torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
 sentence-transformers>=3.0.0
 chromadb>=0.5.0
 rq==2.1.0
 cryptography>=43.0.0
-imageio-ffmpeg>=0.5.0  # ÓïÒôÃæÊÔÒôÆµ×ª»»£¨~31MB£¬Ê×´Î°²×°½ÏÂý£©
+imageio-ffmpeg>=0.5.0  # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æµ×ªï¿½ï¿½ï¿½ï¿½~31MBï¿½ï¿½ï¿½×´Î°ï¿½×°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
