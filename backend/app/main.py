@@ -56,23 +56,40 @@ BANNER_DIR.mkdir(parents=True, exist_ok=True)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
-    # Ensure user_feedback table exists
+    # Ensure user_feedback table exists (dev-only SQLite fallback)
     from sqlalchemy import text as _text
     with engine.connect() as _conn:
-        _conn.execute(_text(
-            "CREATE TABLE IF NOT EXISTS user_feedback ("
-            "  id INT AUTO_INCREMENT PRIMARY KEY,"
-            "  student_id INT NOT NULL,"
-            "  student_name VARCHAR(100),"
-            "  student_email VARCHAR(200),"
-            "  description TEXT NOT NULL,"
-            "  category VARCHAR(50) DEFAULT 'bug',"
-            "  screenshot_path VARCHAR(500),"
-            "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-            "  status VARCHAR(20) DEFAULT 'open'"
-            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        ))
+        if engine.dialect.name.startswith('mysql'):
+            _conn.execute(_text(
+                "CREATE TABLE IF NOT EXISTS user_feedback ("
+                "  id INT AUTO_INCREMENT PRIMARY KEY,"
+                "  student_id INT NOT NULL,"
+                "  student_name VARCHAR(100),"
+                "  student_email VARCHAR(200),"
+                "  description TEXT NOT NULL,"
+                "  category VARCHAR(50) DEFAULT 'bug',"
+                "  screenshot_path VARCHAR(500),"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  status VARCHAR(20) DEFAULT 'open'"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            ))
+        else:
+            # SQLite fallback (dev only)
+            _conn.execute(_text(
+                "CREATE TABLE IF NOT EXISTS user_feedback ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  student_id INTEGER NOT NULL,"
+                "  student_name VARCHAR(100),"
+                "  student_email VARCHAR(200),"
+                "  description TEXT NOT NULL,"
+                "  category VARCHAR(50) DEFAULT 'bug',"
+                "  screenshot_path VARCHAR(500),"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  status VARCHAR(20) DEFAULT 'open'"
+                ")"
+            ))
         _conn.commit()
+
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)

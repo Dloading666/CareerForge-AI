@@ -1,6 +1,7 @@
 import { Button, Checkbox, Dropdown, Modal, Popconfirm } from '@arco-design/web-react'
 import {
   IconBook,
+  IconDashboard,
   IconCamera,
   IconBug,
   IconCalendar,
@@ -31,11 +32,12 @@ import { ProfilePage } from './ProfilePage'
 import { AIInterviewerPage } from './AIInterviewerPage'
 import { InterviewReportPage } from './InterviewReportPage'
 import { ResumeCenterPage } from '../resume/ResumeCenterPage'
+import { AnalysisPage } from './AnalysisPage'
 import { ResumeEditorPage } from '../resume/ResumeEditorPage'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type NavKey = 'resume-agent' | 'interviewer' | 'resume' | 'profile'
+type NavKey = 'resume-agent' | 'interviewer' | 'resume' | 'analysis' | 'profile'
 
 // ── Session history panel ──────────────────────────────────────────────────────
 
@@ -121,7 +123,7 @@ export function StudentHomePage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('railCollapsed') === 'true')
   const [profileModalVisible, setProfileModalVisible] = useState(false)
-  const [profileTab, setProfileTab] = useState('profile')
+  const [profileTab, setProfileTab] = useState('account')
   const [notice, setNotice] = useState<string | null>(null)
 
   // Resizable module panel (简历助手对话历史栏)
@@ -189,6 +191,7 @@ export function StudentHomePage() {
 
   const activeNav = useMemo<NavKey>(() => {
     if (location.pathname.startsWith('/student/resumes')) return 'resume'
+    if (location.pathname.startsWith('/student/analysis')) return 'analysis'
     if (location.pathname.startsWith('/student/interviewer')) return 'interviewer'
     return 'resume-agent'
   }, [location.pathname])
@@ -197,6 +200,7 @@ export function StudentHomePage() {
     { key: 'resume-agent', icon: <IconRobot />, label: '简历助手' },
     { key: 'interviewer', icon: <IconBook />, label: '面试官' },
     { key: 'resume', icon: <IconFile />, label: '简历制作' },
+    { key: 'analysis', icon: <IconDashboard />, label: '能力分析' },
   ]
 
   const topbarMeta = useMemo(() => {
@@ -209,6 +213,9 @@ export function StudentHomePage() {
     if (activeNav === 'interviewer') {
       return { title: 'AI面试官', subtitle: '一对一模拟面试训练，针对性提升面试表现' }
     }
+    if (activeNav === 'analysis') {
+      return { title: '能力分析', subtitle: '基于多场面试的智能画像，发现你的强项与短板' }
+    }
 return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化表达与岗位匹配' }
   }, [activeNav, location.pathname])
 
@@ -216,6 +223,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
     if (key === 'resume-agent') navigate('/student')
     else if (key === 'interviewer') navigate('/student/interviewer')
     else if (key === 'resume') navigate('/student/resumes')
+    else if (key === 'analysis') navigate('/student/analysis')
     else { setProfileModalVisible(true) }
   }
 
@@ -489,6 +497,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
             element={<AIInterviewerPage />}
           />
 
+          <Route path="analysis" element={<main className="page-content"><AnalysisPage /></main>} />
           <Route path="resumes" element={<main className="page-content"><ResumeCenterPage /></main>} />
           <Route path="resumes/new" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
           <Route path="resumes/:resumeId" element={<main className="page-content resume-editor-route"><ResumeEditorPage /></main>} />
@@ -556,9 +565,9 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
           <div className="profile-modal-nav">
             <div className="profile-modal-nav-header">设置</div>
             {[
+              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号管理', color: '#e6fffa' },
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
-              { key: 'account', icon: <IconCamera style={{ fontSize: 18, color: '#0fc6c2' }} />, label: '账号设置', color: '#e6fffa' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
               { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },

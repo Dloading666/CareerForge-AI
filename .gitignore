@@ -1,4 +1,4 @@
-frontend/node_modules/
+﻿frontend/node_modules/
 frontend/dist/
 .venv/
 tmp/local/
@@ -16,3 +16,11 @@ docker-compose.override.yml
 .DS_Store
 .claude/
 .idea/
+
+# 本地开发/部署日志与调试残留
+.dev_*.log
+.dev_*.err.log
+.fe_build.*
+deploy-*.log
+.inspect.py
+.login.json

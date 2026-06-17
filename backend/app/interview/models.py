@@ -94,3 +94,39 @@ class InterviewReport(Base):
     rewrite_examples_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     next_session_preset_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class InterviewReportAnalysis(Base):
+    """面试报告智能分析结果（个人画像维度，跨多场面试聚合）
+
+    - 每个学生在最新一次「重新生成」或自动触发后覆盖
+    - radar_json: 8 维能力雷达（key=维度名, value=0-100）
+    - knowledge_json: 知识点掌握分布（list[{name, mastery, asked_count, avg_score}]）
+    - summary_json: 顶部统计（评价分率/通过次数/提问次数/掌握技能数）
+    """
+
+    __tablename__ = "interview_report_analysis"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ready")
+    # ready=可用, generating=后台生成中, failed=失败
+    report_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trigger_type: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    # auto=面试结束自动, manual=用户主动
+    radar_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    knowledge_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 薄弱项文本提示（直接给前端展示）
+    weaknesses_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 大模型调用元信息（model / usage / fallback_used）
+    llm_meta_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

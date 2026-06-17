@@ -1,5 +1,5 @@
 import { Button, Empty, Input, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
-import { IconCopy, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
+import { IconCopy, IconDashboard, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
@@ -216,6 +216,9 @@ export function ResumeCenterPage() {
           </Button>
           <Button icon={<IconUpload />} onClick={() => setImportModalVisible(true)}>
             导入简历
+          </Button>
+          <Button icon={<IconDashboard />} onClick={() => navigate('/student/analysis')}>
+            能力分析
           </Button>
           <Button
             type="primary"
