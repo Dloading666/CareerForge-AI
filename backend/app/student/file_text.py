@@ -95,3 +95,44 @@ def extract_file_text(path: Path, content_type: str, ext: str, *, max_chars: int
         logger.exception("文件文本抽取失败: %s", path)
         return ""
     return ""
+
+
+def render_pdf_pages_to_png(
+    path: Path,
+    *,
+    max_pages: int = 3,
+    scale: float = 2.5,
+) -> list[bytes]:
+    """把 PDF 前 N 页渲染成 PNG 字节流，用于多模态 OCR 兜底。
+
+    用 pypdfium2（PDFium 封装，跨平台、无系统依赖）。
+    失败或无页时返回空列表。"""
+    try:
+        import pypdfium2 as pdfium
+    except Exception as exc:
+        logger.warning("pypdfium2 not available, skip render: %s", exc)
+        return []
+
+    try:
+        document = pdfium.PdfDocument(str(path))
+    except Exception as exc:
+        logger.warning("pdfium open failed: %s", exc)
+        return []
+
+    total = len(document)
+    if total == 0:
+        return []
+    page_count = min(total, max_pages)
+    out: list[bytes] = []
+    for index in range(page_count):
+        try:
+            page = document[index]
+            pil_image = page.render(scale=scale).to_pil()
+            from io import BytesIO
+            buf = BytesIO()
+            pil_image.save(buf, format="PNG", optimize=False)
+            out.append(buf.getvalue())
+        except Exception as exc:
+            logger.warning("pdfium render page %d failed: %s", index, exc)
+            continue
+    return out
