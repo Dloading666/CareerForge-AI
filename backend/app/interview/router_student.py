@@ -527,3 +527,68 @@ def delete_report_endpoint(
     identity, _ = current
     delete_report(db, identity, session_id)
     return ok({"deleted": True})
+
+
+# 鈹€鈹€ Interview Report Analysis 面试报告智能分析 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+
+@router.get("/analysis/latest")
+def get_latest_analysis(
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """获取当前学生的最新分析结果（含雷达 + 知识分布 + 顶部统计）"""
+    from app.interview.analysis_service import get_latest_analysis_payload
+    identity, _ = current
+    return ok(get_latest_analysis_payload(db, identity))
+
+
+@router.get("/analysis/summary")
+def get_analysis_summary(
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """顶部 4 张统计卡：评价分率/通过次数/提问次数/掌握技能数"""
+    from app.interview.analysis_service import get_summary_stats
+    identity, _ = current
+    return ok(get_summary_stats(db, identity))
+
+
+@router.post("/analysis/regenerate")
+def regenerate_analysis(
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """手动重新生成分析（同步执行，约 5-15s）"""
+    from app.interview.analysis_service import analyze_user_reports
+    identity, _ = current
+    payload = analyze_user_reports(db, identity, trigger_type="manual")
+    return ok(payload)
+
+
+def _run_auto_analysis_background(identity_tuple):
+    """后台执行分析（不阻塞前端 SSE 收尾路径）"""
+    from app.infra.db import SessionLocal
+    from app.auth.service import AuthIdentity
+    from app.interview.analysis_service import trigger_auto_analysis
+
+    db = SessionLocal()
+    try:
+        identity = AuthIdentity(
+            user_id=identity_tuple[0],
+            tenant_id=identity_tuple[1],
+            role=identity_tuple[2],
+        )
+        trigger_auto_analysis(db, identity)
+    except Exception:
+        logger.exception("run_auto_analysis_background failed")
+    finally:
+        db.close()
+
+
+def schedule_auto_analysis(background_tasks, identity):
+    """在报告生成完成后由调用方触发：把分析任务塞进 FastAPI BackgroundTasks"""
+    background_tasks.add_task(
+        _run_auto_analysis_background,
+        (identity.user_id, identity.tenant_id, identity.role),
+    )

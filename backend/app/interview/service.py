@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1517,6 +1518,8 @@ def submit_turn(
             current.followup_reason = closing_question
         report = generate_report(db, identity, session.id, commit=False)
         report_id = report.id
+        # 报告生成完成后自动触发一次能力画像分析（24h 节流）
+        _schedule_post_report_analysis(identity)
     else:
         # ── 计算下一阶段（回答质量感知，使用连续空泛）──
         stage_plan = _json_loads(session.stage_plan_json, [])
@@ -2356,3 +2359,26 @@ def export_interview_report(db: Session, identity: AuthIdentity, session_id: int
         "turns": [serialize_turn(t) for t in turns],
         "report": serialize_report(report) if report else None,
     }
+
+
+
+def _schedule_post_report_analysis(identity):
+    """报告生成后异步触发能力画像分析（24h 节流）.
+
+    使用 daemon 线程，不阻塞 submit_turn 的 SSE 收尾路径。
+    失败时仅记录日志，不影响主流程。
+    """
+    def _runner():
+        try:
+            from app.infra.db import SessionLocal
+            from app.interview.analysis_service import trigger_auto_analysis
+            db = SessionLocal()
+            try:
+                trigger_auto_analysis(db, identity)
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("_schedule_post_report_analysis failed")
+
+    thread = threading.Thread(target=_runner, name="post-report-analysis", daemon=True)
+    thread.start()

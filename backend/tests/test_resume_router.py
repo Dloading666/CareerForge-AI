@@ -6,6 +6,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import io
+import httpx
+from unittest import mock
 
 from app.auth.models import StudentUser
 from app.core.security import create_access_token
@@ -272,7 +275,6 @@ class ResumeRouterTests(unittest.TestCase):
         self.assertEqual(details["educations"][0]["gpa"], "3.8/4.0")
         self.assertEqual(details["projects"][0]["link"], "https://project.example.com")
         self.assertEqual(details["projects"][0]["link_label"], "在线访问")
-
 
     def test_scanned_pdf_unrenderable_returns_clear_error(self):
         """扫描件 PDF 无法渲染时给出清晰提示，提示用户重新上传或下载 JSON 模板。"""

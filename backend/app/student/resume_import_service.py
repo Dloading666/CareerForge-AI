@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import httpx
 from pathlib import Path
 from typing import Any, Optional
 
@@ -243,20 +244,44 @@ def _call_llm_for_parse(
                 if block.get("type") == "text":
                     return _extract_json_from_text(block.get("text", ""))
         else:
+            # Some reasoning/thinking models (e.g. deepseek with thinking enabled)
+            # reject `tool_choice=function` outright. Try the function-calling form first
+            # to keep the structured-output guarantee for normal models; on 400 that
+            # complains about tool_choice, fall back to a plain prompt and let the
+            # downstream _extract_json_from_text fallback handle the response.
+            request_body = {
+                "model": model_identifier,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "tools": tools,
+                "tool_choice": {"type": "function", "function": {"name": "save_resume_data"}},
+                "max_tokens": 4000,
+            }
             resp = client.post(
                 f"{base_url}/chat/completions",
                 headers=headers,
-                json={
+                json=request_body,
+            )
+            if resp.status_code == 400 and (b"tool_choice" in resp.content or b"thinking" in resp.content):
+                logger.warning(
+                    "upstream rejected tool_choice; retrying without forced tool_choice (model=%s)",
+                    model_identifier,
+                )
+                fallback_body = {
                     "model": model_identifier,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "tools": tools,
-                    "tool_choice": {"type": "function", "function": {"name": "save_resume_data"}},
                     "max_tokens": 4000,
-                },
-            )
+                }
+                resp = client.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=fallback_body,
+                )
             _raise_for_status_with_body(resp, "chat/completions", model_identifier)
             data = resp.json()
             choices = data.get("choices", [])
