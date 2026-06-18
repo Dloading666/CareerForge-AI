@@ -1041,6 +1041,7 @@ export function AgentChatView({
   const { session } = useAuth()
   const navigate = useNavigate()
   const studentName = (session?.profile.name as string) || '同学'
+  const studentNickname = (session?.profile.nickname as string) || studentName
 
   const [agentSession, setAgentSession] = useState<AgentChatSession | null>(null)
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -1674,7 +1675,7 @@ export function AgentChatView({
         <div className="agent-home-badge">
           <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
         </div>
-        <h3>你好，{studentName}</h3>
+        <h3>你好，{studentNickname}</h3>
         <p>我可以协助你制作简历、优化表达、梳理岗位方向。</p>
         <div className="agent-home-cards">
           <button
