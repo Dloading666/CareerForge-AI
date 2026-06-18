@@ -67,6 +67,8 @@ export type ImportResumeFileResult = {
   resume_id: number
   title: string
   sections_summary: Record<string, number | boolean>
+  /** 导入时从原简历识别出的头像 URL；未识别到则为 undefined。 */
+  photo_url?: string
 }
 
 export type ImportProgressEvent = {
@@ -290,6 +292,24 @@ export async function downloadResumePdf(
 
 export async function duplicateResume(resumeId: number) {
   return apiRequest<ResumeData>(`/api/v1/student/resumes/${resumeId}/duplicate`, { method: 'POST' })
+}
+
+export type UploadAvatarResult = { avatar_url: string }
+
+/**
+ * 上传 / 替换某个简历的头像。返回的 URL 需要前端再调用 updateResume
+ * 写入 resume.basic.photo 才会持久化。
+ */
+export async function uploadResumeAvatar(
+  resumeId: number,
+  file: File,
+): Promise<UploadAvatarResult> {
+  const form = new FormData()
+  form.append('file', file)
+  return apiRequest<UploadAvatarResult>(
+    `/api/v1/student/resumes/${resumeId}/avatar`,
+    { method: 'POST', body: form },
+  )
 }
 
 export type AiAssistSection = 'experience' | 'project' | 'education' | 'skill' | 'selfEvaluation' | 'summary'

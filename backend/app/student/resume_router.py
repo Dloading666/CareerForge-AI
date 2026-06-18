@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from reportlab.lib import colors
@@ -24,6 +24,17 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import StudentUser
 from app.auth.service import require_role
+from app.student.avatar_extractor import (
+    extract_avatar_from_docx,
+    extract_avatar_from_pdf,
+    extract_avatar_from_scanned,
+    find_avatar_region,
+)
+from app.student.avatar_storage import (
+    ALLOWED_EXTENSIONS,
+    MAX_AVATAR_SIZE,
+    save_uploaded_avatar,
+)
 from app.core.response import ok
 from app.infra.db import get_db
 from app.student.resume_models import StudentResume
@@ -653,6 +664,7 @@ async def import_resume_file(
         raise HTTPException(status_code=413, detail="文件不能超过 10MB")
 
     parsed_data: dict[str, Any] = {}
+    photo_url: Optional[str] = None
 
     if ext == ".json":
         # JSON 分支：直接解析校验
@@ -685,6 +697,17 @@ async def import_resume_file(
                         status_code=400,
                         detail="该 PDF 无法渲染页面，可能是已损坏的文件。请重新上传，或者下载 JSON 模板填写后导入。",
                     )
+                # 头像提取：page_images[0] 已经是首页 PNG 字节，先在它上面扫描候选区；
+                # 失败时再让 extract_avatar_from_pdf 重新渲染（与有文字层分支走同一套逻辑）。
+                try:
+                    photo_url = await run_in_threadpool(find_avatar_region, page_images[0])
+                except Exception as exc:
+                    logger.info("avatar find in page png failed: %s", exc)
+                if not photo_url:
+                    try:
+                        photo_url = await run_in_threadpool(extract_avatar_from_pdf, content)
+                    except Exception as exc:
+                        logger.info("avatar extract from pdf failed: %s", exc)
                 try:
                     parsed_data = await run_in_threadpool(
                         parse_resume_images_to_data, db, identity, page_images,
@@ -724,6 +747,15 @@ async def import_resume_file(
                     detail=f"LLM 解析失败: {str(exc)[:500]}",
                 )
 
+            # 头像提取：pdf/docx 嵌入图
+            try:
+                if ext == ".pdf":
+                    photo_url = await run_in_threadpool(extract_avatar_from_pdf, content)
+                elif ext == ".docx":
+                    photo_url = await run_in_threadpool(extract_avatar_from_docx, content)
+            except Exception as exc:
+                logger.info("avatar extract from file failed: %s", exc)
+
     # 标题：传入 > 解析出的姓名+岗位 > 文件名
     resolved_title = (
         _normalize_title(title)
@@ -733,7 +765,7 @@ async def import_resume_file(
     template_id = DEFAULT_TEMPLATE_ID
 
     # 转为完整编辑器 data_json
-    document = _build_import_document(parsed_data, resolved_title, template_id, student)
+    document = _build_import_document(parsed_data, resolved_title, template_id, student, photo_url=photo_url)
 
     row = StudentResume(
         tenant_id=identity.tenant_id,
@@ -749,7 +781,30 @@ async def import_resume_file(
 
     # 返回简历摘要
     sections = _compute_sections_summary(parsed_data)
-    return ok({"resume_id": row.id, "title": resolved_title, "sections_summary": sections}, msg="imported")
+    payload = {"resume_id": row.id, "title": resolved_title, "sections_summary": sections}
+    if photo_url:
+        payload["photo_url"] = photo_url
+    return ok(payload, msg="imported")
+
+
+@router.post("/{resume_id}/avatar", status_code=201)
+async def upload_resume_avatar(
+    resume_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """上传/替换某个简历的头像。返回 URL，前端调用 updateResume 把 URL 写入 data_json.basic.photo。"""
+    identity, _ = current
+    _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)  # 404 自动抛
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="仅支持 jpg / jpeg / png / gif / webp")
+    content_bytes = await file.read()
+    if len(content_bytes) > MAX_AVATAR_SIZE:
+        raise HTTPException(status_code=413, detail="头像文件不能超过 2MB")
+    avatar_url = save_uploaded_avatar(content_bytes, file.filename or "avatar.png")
+    return ok({"avatar_url": avatar_url}, msg="uploaded")
 
 
 def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
@@ -819,6 +874,8 @@ def _build_import_document(
     title: str,
     template_id: str,
     student: Any,
+    *,
+    photo_url: Optional[str] = None,
 ) -> dict[str, Any]:
     """将 LLM 解析的结构化数据转为完整编辑器 data_json。"""
     import uuid
@@ -874,7 +931,7 @@ def _build_import_document(
             "phone": basic.get("phone") or student.phone or "",
             "location": basic.get("location") or "",
             "birthDate": basic.get("birth_date") or "",
-            "photo": student.resume_avatar_url or "",
+            "photo": photo_url or student.resume_avatar_url or "",
             "icons": dict(DEFAULT_BASIC_ICONS),
             "photoConfig": dict(DEFAULT_PHOTO_CONFIG),
             "fieldOrder": [dict(item) for item in DEFAULT_BASIC_FIELD_ORDER],
