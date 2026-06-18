@@ -16,6 +16,8 @@
 
 - [PRD.md](./PRD.md) — 产品需求
 - [DESIGN.md](./DESIGN.md) — 系统设计文档（架构、数据库、关键流程）
+- [DATABASE.md](./DATABASE.md) — 数据库设计说明书（表清单、关键约定、迁移历史）
+- [API.md](./API.md) — API 接口文档（按业务域分组的端点速查表）
 - [CHANGELOG.md](./CHANGELOG.md) — 变更日志
 - [design-qa.md](./design-qa.md) — 视觉对比 QA
 
@@ -36,7 +38,7 @@
 
 ## 待补文档
 
-- 数据库设计说明书（待补）—— 待 `backend/app/*/models.py` 整理
+（暂无）
 
 ## 关于 `docs/` 目录
 
