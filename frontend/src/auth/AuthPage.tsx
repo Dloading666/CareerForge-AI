@@ -92,25 +92,25 @@ export function AuthPage() {
         const data = await ssoLogin(token)
         login(data)
         setFeedback({ type: 'success', content: '中台登录成功，正在进入学生端' })
-        const next = location.pathname
-        window.history.replaceState({}, '', next || '/auth')
+        navigate('/student', { replace: true })
       } catch (error) {
         const message = error instanceof ApiError ? error.message : '中台 token 无效'
         setFeedback({
           type: 'error',
           content: `中台 token 无效：${message}。请重新登录中台后重试，或用邮箱登录`,
         })
-        const next = location.pathname
-        window.history.replaceState({}, '', next || '/auth')
+        navigate('/auth', { replace: true })
       } finally {
         setSsoSubmitting(false)
       }
     })()
-  }, [location.pathname, location.search, login, bootstrapping])
+  }, [location.pathname, location.search, login, bootstrapping, navigate])
 
   // URL 上有 token 时不要用旧 session 跳走，等 SSO 处理完
+  // feedback 是 error 时也不跳（让 SSO 失败提示留在登录页）
   const urlHasToken = !!new URLSearchParams(location.search).get('token')?.trim()
-  if (session && !urlHasToken) {
+  const hasErrorFeedback = feedback?.type === 'error'
+  if (session && !urlHasToken && !hasErrorFeedback) {
     return <Navigate to={session.role === 'admin' ? '/admin' : '/student'} replace />
   }
 
@@ -306,7 +306,7 @@ export function AuthPage() {
       const data = await ssoLogin(token)
       login(data)
       notify.success('中台登录成功，正在进入学生端')
-      navigate('/auth', { replace: true })
+      navigate('/student', { replace: true })
     } catch (error) {
       const message = error instanceof ApiError ? error.message : '中台登录失败'
       notify.error(`中台 token 无效：${message}。请重新登录中台后重试，或用邮箱登录`)
