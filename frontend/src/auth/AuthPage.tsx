@@ -33,7 +33,7 @@ type AdminAuthResponse = {
 }
 
 export function AuthPage() {
-  const { session, login } = useAuth()
+  const { session, login, bootstrapping } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [role, setRole] = useState<Role>('student')
@@ -76,12 +76,14 @@ export function AuthPage() {
   }, [countdown])
 
   // 中台跳回 ?token=xxx：自动登录一次，成功后清掉 URL 上的 token 防泄漏
+  // 注意：URL 上有 token 时 SSO 优先于 localStorage 会话（避免 A 用户的会话挡住 B 用户从
+  // 中台跳过来登录）。等待 AuthProvider bootstrap 完成后再做，避免与本地会话并发竞态。
   useEffect(() => {
     if (ssoAutoTriedRef.current) return
-    if (session) return
     const params = new URLSearchParams(location.search)
     const token = params.get('token')?.trim()
     if (!token) return
+    if (bootstrapping) return
     ssoAutoTriedRef.current = true
 
     void (async () => {
@@ -104,9 +106,11 @@ export function AuthPage() {
         setSsoSubmitting(false)
       }
     })()
-  }, [location.pathname, location.search, login, session])
+  }, [location.pathname, location.search, login, bootstrapping])
 
-  if (session) {
+  // URL 上有 token 时不要用旧 session 跳走，等 SSO 处理完
+  const urlHasToken = !!new URLSearchParams(location.search).get('token')?.trim()
+  if (session && !urlHasToken) {
     return <Navigate to={session.role === 'admin' ? '/admin' : '/student'} replace />
   }
 
