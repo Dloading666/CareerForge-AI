@@ -132,25 +132,28 @@ class SSOLoginTests(unittest.TestCase):
             self.assertEqual(users[0].name, "老用户")
             self.assertEqual(users[0].auth_source, "sso")
 
-    # ---------- 3. 邮箱匹配关联 ----------
-    def test_existing_user_associated_by_email(self):
+    # ---------- 3. email 相同但 username 不匹配 → 不关联，新建账号 ----------
+    def test_email_match_but_username_differs_creates_new_account(self):
         with self.SessionLocal() as db:
             db.add(
                 StudentUser(
                     tenant_id=0,
-                    account="existing@example.com",
+                    account="zhangsan@example.com",
                     email="zhangsan@example.com",
                     password_hash="$2b$12$dummy",
-                    name="已注册用户",
-                    phone="11111111111",
-                    avatar_url="https://local/avatar.png",
+                    name="邮箱注册用户",
                     auth_source="email",
                     is_deleted=False,
                 )
             )
             db.commit()
 
-        with patch.object(sso_module, "fetch_zhongtai_user", return_value=_build_result()):
+        # 中台返回的 username 跟本地已有记录不同
+        with patch.object(
+            sso_module,
+            "fetch_zhongtai_user",
+            return_value=_build_result(username="otheruser"),
+        ):
             resp = self.client.post(
                 "/api/v1/auth/sso/login",
                 json={"token": "fake-token"},
@@ -158,15 +161,20 @@ class SSOLoginTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         with self.SessionLocal() as db:
-            users = db.query(StudentUser).filter_by(email="zhangsan@example.com").all()
-            self.assertEqual(len(users), 1, "应关联而非新建")
-            u = users[0]
-            self.assertEqual(u.external_username, "zhangsan")
-            self.assertEqual(u.external_source, "qingzhu")
-            self.assertEqual(u.auth_source, "email", "关联后 auth_source 保持原值")
-            self.assertEqual(u.phone, "11111111111", "本地已有值不覆盖")
-            self.assertEqual(u.avatar_url, "https://local/avatar.png", "本地已有值不覆盖")
-            self.assertEqual(u.name, "已注册用户", "本地已有 name 不覆盖")
+            # 原账号不动
+            original = (
+                db.query(StudentUser)
+                .filter_by(email="zhangsan@example.com")
+                .one()
+            )
+            self.assertIsNone(original.external_username)
+            self.assertEqual(original.auth_source, "email")
+            # 新建一条 external_username="otheruser"
+            new_user = (
+                db.query(StudentUser).filter_by(external_username="otheruser").one()
+            )
+            self.assertEqual(new_user.auth_source, "sso")
+            self.assertNotEqual(new_user.id, original.id)
 
     # ---------- 4. 重复登录沿用同一条记录 ----------
     def test_repeat_login_uses_same_record(self):
@@ -201,7 +209,11 @@ class SSOLoginTests(unittest.TestCase):
 
     # ---------- 6. 中台 success=false ----------
     def test_zhongtai_success_false_returns_401(self):
-        with patch.object(sso_module, "fetch_zhongtai_user", side_effect=sso_module.InvalidSSOTokenError("token 已失效")):
+        with patch.object(
+            sso_module,
+            "fetch_zhongtai_user",
+            side_effect=sso_module.InvalidSSOTokenError("token 已失效"),
+        ):
             resp = self.client.post(
                 "/api/v1/auth/sso/login",
                 json={"token": "bad"},
@@ -210,7 +222,11 @@ class SSOLoginTests(unittest.TestCase):
 
     # ---------- 7. 中台不可达 ----------
     def test_zhongtai_unavailable_returns_503(self):
-        with patch.object(sso_module, "fetch_zhongtai_user", side_effect=sso_module.SSOUnavailableError("timeout")):
+        with patch.object(
+            sso_module,
+            "fetch_zhongtai_user",
+            side_effect=sso_module.SSOUnavailableError("timeout"),
+        ):
             resp = self.client.post(
                 "/api/v1/auth/sso/login",
                 json={"token": "any"},
@@ -230,17 +246,17 @@ class SSOLoginTests(unittest.TestCase):
             )
         self.assertEqual(resp.status_code, 401)
 
-    # ---------- 9. 同一 external_username 被关联后，邮箱密码 hash 保留 ----------
+    # ---------- 9. 关联后本地邮箱密码 hash 保留（username 命中） ----------
     def test_association_preserves_existing_password_hash(self):
-        # 直接用 hash 字符串（不调用 hash_password 避免触发 passlib 环境 bug）
         with self.SessionLocal() as db:
             db.add(
                 StudentUser(
                     tenant_id=0,
                     account="linked@example.com",
-                    email="zhangsan@example.com",
+                    email="linked@example.com",
                     password_hash="$2b$12$fixed",
                     name="已注册用户",
+                    external_username="zhangsan",  # 已有 SSO 关联键
                     auth_source="email",
                     is_deleted=False,
                 )
@@ -284,9 +300,10 @@ class SSOLoginTests(unittest.TestCase):
                 StudentUser(
                     tenant_id=0,
                     account="linked@example.com",
-                    email="zhangsan@example.com",
+                    email="linked@example.com",
                     password_hash="any-hash",
                     name="已注册用户",
+                    external_username="zhangsan",
                     auth_source="email",
                     is_deleted=False,
                 )
@@ -298,16 +315,54 @@ class SSOLoginTests(unittest.TestCase):
         self.assertEqual(sso_resp.status_code, 200)
 
         # 关联后 auth_source 仍为 email，password_hash 仍在 → 邮箱密码登录路径可用
-        # （实际 verify_password 在当前 venv 下不可用，这里只验证状态不被改写）
         with patch.object(service_module, "verify_password", return_value=True), patch(
             "app.auth.service.get_redis"
         ):
             email_resp = self.client.post(
                 "/api/v1/auth/student/login",
-                json={"email": "zhangsan@example.com", "password": "Abcd1234"},
+                json={"email": "linked@example.com", "password": "Abcd1234"},
             )
         self.assertEqual(email_resp.status_code, 200, email_resp.text)
         self.assertEqual(email_resp.json()["data"]["role"], "student")
+
+
+class FetchZhongtaiUserTests(unittest.TestCase):
+    """验证 fetch_zhongtai_user 走的是 URL query 串，不是 JSON body。"""
+
+    def test_token_passed_as_query_param(self):
+        captured = {}
+
+        class _FakeResp:
+            status_code = 200
+
+            def json(self):
+                return _ok_envelope(_build_result())
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, params=None, json=None, **kwargs):
+                captured["url"] = url
+                captured["params"] = params
+                captured["json"] = json
+                return _FakeResp()
+
+        with patch.object(sso_module.httpx, "AsyncClient", _FakeClient):
+            import asyncio
+            result = asyncio.run(sso_module.fetch_zhongtai_user("my-token"))
+
+        self.assertIn("params", captured, "中台 call 必须传 params（query 串）")
+        self.assertIsNone(captured["json"], "不应再传 JSON body")
+        self.assertEqual(captured["params"], {"token": "my-token"})
+        self.assertIn("/sys/checkToken", captured["url"])
+        self.assertEqual(result["username"], "zhangsan")
 
 
 if __name__ == "__main__":
