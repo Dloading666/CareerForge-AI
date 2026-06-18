@@ -2,10 +2,9 @@
 
 流程：
 1. 前端把中台登录后的 token 发到 `/api/v1/auth/sso/login`
-2. 本服务用 token 调中台 `POST /sys/checkToken` 验证并拿到用户档案
-3. 按 `result.username` 查本地学生；找不到则按 `result.email` 关联
-4. 都没有则新建（`auth_source='sso'`，无密码）
-5. 沿用现有 `issue_tokens` 签发 access/refresh
+2. 本服务用 token 调中台 `POST /sys/checkToken?token=xxx`（query 串）验证并拿到用户档案
+3. 按 `result.username` 查本地学生；找不到则新建（`auth_source='sso'`，无密码）
+4. 沿用现有 `issue_tokens` 签发 access/refresh，由前端跳到 /student
 
 字段回填策略：仅原值为空时填。中台 `result.password` 永远不存、不返回。
 """
@@ -41,13 +40,16 @@ class SSOUnavailableError(Exception):
 
 
 async def fetch_zhongtai_user(token: str) -> dict[str, Any]:
-    """调中台 checkToken，返回 `result` 字典。"""
+    """调中台 checkToken，返回 `result` 字典。
+
+    中台要求 token 通过 URL query 串传递（POST /sys/checkToken?token=xxx）。
+    """
     settings: Settings = get_settings()
     base = settings.sso_base_url.rstrip("/")
     url = f"{base}{_SSO_PATH}"
     try:
         async with httpx.AsyncClient(timeout=settings.sso_timeout_seconds) as client:
-            resp = await client.post(url, json={"token": token})
+            resp = await client.post(url, params={"token": token})
     except (httpx.TimeoutException, httpx.RequestError) as exc:
         raise SSOUnavailableError(str(exc)) from exc
 
@@ -133,25 +135,31 @@ async def sso_login(
         )
     )
 
-    association_path = "external_username"
-
-    if student is None and normalized_email:
-        student = db.scalar(
-            select(StudentUser)
-            .where(
-                StudentUser.email == normalized_email,
-                StudentUser.is_deleted.is_(False),
-            )
-            .order_by(StudentUser.id.desc())
-        )
-        if student is not None:
-            association_path = "email"
-
     if student is None:
-        # 新建：纯 SSO 用户，无密码
-        account = normalized_email or f"sso:{username}"
-        # 邮箱缺失时用占位避免 unique 冲突（后续可去个人中心补）
-        placeholder_email = normalized_email or f"{username}@sso.local"
+        # 新建：纯 SSO 用户，无密码。email/account 都可能与已有记录冲突，统一回退占位
+        email_taken = False
+        account_taken = False
+        if normalized_email:
+            email_taken = bool(
+                db.scalar(
+                    select(StudentUser.id).where(
+                        StudentUser.email == normalized_email,
+                        StudentUser.is_deleted.is_(False),
+                    )
+                )
+            )
+            account_taken = bool(
+                db.scalar(
+                    select(StudentUser.id).where(
+                        StudentUser.account == normalized_email,
+                        StudentUser.is_deleted.is_(False),
+                    )
+                )
+            )
+        placeholder_email = f"{username}@sso.local"
+        if normalized_email and not email_taken:
+            placeholder_email = normalized_email
+        account = f"sso:{username}" if account_taken or not normalized_email else normalized_email
         student = StudentUser(
             tenant_id=0,
             account=account,
@@ -183,20 +191,13 @@ async def sso_login(
             student.name = realname
         if realname and not student.nickname:
             student.nickname = realname
-        if normalized_email and not student.email and student.email == f"{username}@sso.local":
-            student.email = normalized_email
-            student.email_verified_at = utcnow()
-        elif normalized_email and not student.email:
-            # 本地原本无 email（中台用户占位的情况），允许回填
-            student.email = normalized_email
-            student.email_verified_at = utcnow()
         if phone and not student.phone:
             student.phone = phone
         if avatar and not student.avatar_url:
             student.avatar_url = avatar
         db.commit()
         db.refresh(student)
-        reason = f"sso_login:{association_path}"
+        reason = "sso_login:external_username"
 
     student.last_login_at = utcnow()
     db.commit()
