@@ -523,17 +523,26 @@ def _check_role_escalation(args: dict[str, Any], evidence_sources: list[Any]) ->
             if not isinstance(proj, dict):
                 continue
             proj_name = str(proj.get("name") or "").strip()
+            role_field = str(proj.get("role") or "").strip()
             desc = str(proj.get("description") or proj.get("details") or "")
             max_level = 0
             for m in _ROLE_VERB_RE.finditer(desc):
                 verb = m.group(1)
                 level = _ROLE_ESCALATION_LADDER.get(verb, 0)
                 max_level = max(max_level, level)
+            # 如果用户在 profile 中填了 role 字段：
+            #   - 词是阶梯中的词：直接采用其等级
+            #   - 自由文本（如"开发者"、"实习生"）：视为"用户已明确意图"的信号，
+            #     信任它并采用最高等级（不限制 AI 的措辞），用户可在编辑器再调整
+            if role_field:
+                if role_field in _ROLE_ESCALATION_LADDER:
+                    max_level = max(max_level, _ROLE_ESCALATION_LADDER[role_field])
+                else:
+                    max_level = max(max_level, _ROLE_ESCALATION_LADDER["独立完成"])
             if max_level == 0:
                 max_level = _ROLE_ESCALATION_LADDER["参与"]
             if proj_name:
                 evidence_roles[("proj", proj_name)] = max_level
-
     # 2. 从生成内容中提取角色词并与证据比对
     for section, section_type in [("experience", "exp"), ("projects", "proj")]:
         items = args.get(section) or []
@@ -3093,6 +3102,14 @@ async def run_agent_loop(
             if kind == "delta":
                 streamed_any = True
                 turn_delta_parts.append(value)
+                if not first_delta_emitted:
+                    first_delta_emitted = True
+                    yield "runtime.status", {
+                        "message_id": assistant_id,
+                        "phase": "writing",
+                        "label": "正在撰写回复…",
+                        "iteration": iteration + 1,
+                    }
                 yield "message.delta", {"message_id": assistant_id, "delta": value}
             elif kind == "error":
                 turn_error = True
@@ -3144,16 +3161,8 @@ async def run_agent_loop(
                 logger.info("agent_loop iteration=%d: tool-call round, %d delta chars streamed as thinking",
                             iteration, sum(len(p) for p in turn_delta_parts))
         else:
-            # 最终回复：delta 已实时 yield，标记状态
-            if turn_delta_parts and not first_delta_emitted:
-                first_delta_emitted = True
-                yield "runtime.status", {
-                    "message_id": assistant_id,
-                    "phase": "writing",
-                    "label": "正在撰写回复…",
-                    "iteration": iteration + 1,
-                }
-
+            # "writing" 状态已在首个 delta 之前 yield 过，这里不再重复
+            pass
         if not turn_tool_calls:
             yield "runtime.completed", runtime_payload()
             return  # 最终回答已流式输出完毕

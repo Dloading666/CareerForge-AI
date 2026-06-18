@@ -1041,6 +1041,7 @@ export function AgentChatView({
   const { session } = useAuth()
   const navigate = useNavigate()
   const studentName = (session?.profile.name as string) || '同学'
+  const studentNickname = (session?.profile.nickname as string) || studentName
 
   const [agentSession, setAgentSession] = useState<AgentChatSession | null>(null)
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -1065,16 +1066,20 @@ export function AgentChatView({
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
-  // G2: 新手引导 — 档案完整度
-  const [completeness, setCompleteness] = useState<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean } | null>(null)
-  const [onboardingDismissed, setOnboardingDismissed] = useState(() => localStorage.getItem('onboarding_dismissed') === '1')
+  // 新用户提示：个人档案未填写完整（教育/经历/技能等任一板块缺失）时，弹窗建议先去完善；
+  // 注意：注册时系统会给默认姓名「同学」，所以不能只看姓名，要看整体完整度。填完整后自动不再弹。
+  const [profilePromptVisible, setProfilePromptVisible] = useState(false)
+  const profilePromptHandledRef = useRef(false)  // 本次加载只判定一次，避免重复弹
 
   useEffect(() => {
-    if (agentType !== 'resume' || messages.length > 0 || onboardingDismissed) return
-    apiRequest<{ score: number; missing: string[]; items: Record<string, boolean>; has_resume: boolean }>('/api/v1/student/profile/completeness')
-      .then(setCompleteness)
+    if (agentType !== 'resume' || messages.length > 0 || profilePromptHandledRef.current) return
+    apiRequest<{ items: Record<string, boolean>; missing: string[] }>('/api/v1/student/profile/completeness')
+      .then((c) => {
+        profilePromptHandledRef.current = true
+        if ((c.missing?.length ?? 0) > 0) setProfilePromptVisible(true)
+      })
       .catch(() => {})
-  }, [agentType, messages.length, onboardingDismissed])
+  }, [agentType, messages.length])
 
 
   const sessionCache = useRef<Map<number, SavedSessionState>>(new Map())  // 并行对话：缓存各 session 的 UI 状态
@@ -1664,69 +1669,13 @@ export function AgentChatView({
 
   // ── Render ──
 
-  const allOnboardingDone = completeness && completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills && completeness.has_resume && activeResumeId
-
   const emptyState = agentType === 'resume' ? (
     <section className="agent-empty-state agent-home-workbench">
       <div className="agent-home-grid">
-        {/* G2: 新手引导卡 */}
-        {completeness && !allOnboardingDone && !onboardingDismissed && (
-          <div style={{
-            background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12,
-            padding: '16px 20px', marginBottom: 16, fontSize: 13, lineHeight: 1.8,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>新手引导</span>
-              <button
-                type="button"
-                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C', fontSize: 12 }}
-                onClick={() => { localStorage.setItem('onboarding_dismissed', '1'); setOnboardingDismissed(true) }}
-              >不再显示</button>
-            </div>
-            {/* Step 1: 完善档案 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-                {completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills ? '✓' : '1'}
-              </span>
-              <span style={{ flex: 1 }}>完善个人档案</span>
-              {!(completeness.items.basic && completeness.items.education && completeness.items.experience_or_project && completeness.items.skills) && (
-                <button
-                  type="button"
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
-                  onClick={() => onOpenProfile?.()}
-                >去完善</button>
-              )}
-            </div>
-            {/* Step 2: 准备简历 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ width: 20, height: 20, borderRadius: 10, background: completeness.has_resume ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-                {completeness.has_resume ? '✓' : '2'}
-              </span>
-              <span style={{ flex: 1 }}>准备一份简历</span>
-              {!completeness.has_resume && (
-                <button
-                  type="button"
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#165dff', fontSize: 12 }}
-                  onClick={() => navigate('/student/resumes?import=1')}
-                >去导入</button>
-              )}
-            </div>
-            {/* Step 3: 选择工作简历 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 20, height: 20, borderRadius: 10, background: activeResumeId ? '#E8FFE8' : '#FFF7E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-                {activeResumeId ? '✓' : '3'}
-              </span>
-              <span style={{ flex: 1 }}>选择工作简历，开始对话</span>
-              {!activeResumeId && completeness.has_resume && (
-                <span style={{ color: '#86909C', fontSize: 12 }}>点击输入框上方的「📄 选择简历」</span>
-              )}
-            </div>
-          </div>
-        )}
         <div className="agent-home-badge">
           <img className="brand-logo" alt="CareerForge" src="/baidi.png" />
         </div>
-        <h3>你好，{studentName}</h3>
+        <h3>你好，{studentNickname}</h3>
         <p>我可以协助你制作简历、优化表达、梳理岗位方向。</p>
         <div className="agent-home-cards">
           <button
@@ -1991,6 +1940,22 @@ export function AgentChatView({
       </div>
 
       {lightboxImage && <ImageLightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />}
+
+      {/* 新用户提示：建议先去个人档案填好个人信息 */}
+      <Modal
+        visible={profilePromptVisible}
+        title="欢迎使用 👋"
+        onCancel={() => setProfilePromptVisible(false)}
+        okText="去完善个人档案"
+        cancelText="暂不"
+        onOk={() => { setProfilePromptVisible(false); onOpenProfile?.() }}
+        maskClosable
+        style={{ width: 420 }}
+      >
+        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.8, color: '#4E5969' }}>
+          建议你先到「个人档案」把个人信息填写完整，这样 AI 助手才能更好地为你订制和优化简历。
+        </p>
+      </Modal>
     </main>
   )
 }

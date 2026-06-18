@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         default=r"D:\Ai Agent\Knowledge Base",
         alias="INTERVIEW_KNOWLEDGE_BASE_DIR",
     )
+
+    sso_base_url: str = Field(default="http://10.255.57.13:9090", alias="SSO_BASE_URL")
+    sso_timeout_seconds: float = Field(default=5.0, alias="SSO_TIMEOUT_SECONDS")
+    sso_source: str = Field(default="qingzhu", alias="SSO_SOURCE")
     chroma_persist_dir: str = Field(
         default="./data/chroma",
         alias="CHROMA_PERSIST_DIR",

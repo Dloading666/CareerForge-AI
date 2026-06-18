@@ -1,5 +1,5 @@
-import { Button, Empty, Input, Message, Modal, Popconfirm, Spin, Switch, Tag } from '@arco-design/web-react'
-import { IconCopy, IconDashboard, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
+import { Button, Empty, Input, Message, Modal, Popconfirm, Progress, Spin, Switch, Tag } from '@arco-design/web-react'
+import { IconCopy, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
@@ -28,6 +28,10 @@ export function ResumeCenterPage() {
     () => new URLSearchParams(window.location.search).get('import') === '1',
   )
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState(0)
+  const [importStage, setImportStage] = useState<'idle' | 'uploading' | 'parsing' | 'saving' | 'done'>('idle')
+  const importTimerRef = useRef<number | null>(null)
+  const importDoneRef = useRef(false)
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
 
   const mode = searchParams.get('mode')
@@ -187,20 +191,81 @@ export function ResumeCenterPage() {
     }
   }
 
+  const stopImportTimer = () => {
+    if (importTimerRef.current !== null) {
+      window.clearInterval(importTimerRef.current)
+      importTimerRef.current = null
+    }
+  }
+
+  const resetImportProgress = () => {
+    stopImportTimer()
+    importDoneRef.current = false
+    setImportProgress(0)
+    setImportStage('idle')
+  }
+
   const handleImport = async (file: File) => {
     if (resumes.length >= MAX_RESUMES) {
       Message.warning(`简历数量已达上限（${MAX_RESUMES} 份），请先删除一份简历`)
       return
     }
     setImporting(true)
+    setImportStage('uploading')
+    setImportProgress(1)
+    importDoneRef.current = false
     try {
-      const res = await importResumeFile(file)
-      Message.success(`已导入「${res.title}」，请核对内容后保存`)
-      setImportModalVisible(false)
+      // Stage 1: upload (0-30%) via XHR onprogress
+      const res = await importResumeFile(file, undefined, (evt) => {
+        if (importDoneRef.current) return
+        if (evt.total > 0) {
+          setImportStage('uploading')
+          setImportProgress(Math.max(1, Math.round(evt.percent * 0.3)))
+        }
+      })
+      // Stage 2: parsing (30-90%) — backend is sync, animate progress
+      setImportStage('parsing')
+      setImportProgress(30)
+      stopImportTimer()
+      importTimerRef.current = window.setInterval(() => {
+        setImportProgress((prev) => {
+          if (prev >= 88) {
+            stopImportTimer()
+            return prev
+          }
+          const step = prev < 50 ? 4 : prev < 75 ? 2 : 1
+          return Math.min(88, prev + step)
+        })
+      }, 220)
+      // importResumeFile already returned; stop simulating parsing
+      stopImportTimer()
+      // Stage 3: saving (90-100%)
+      setImportStage('saving')
+      setImportProgress(92)
+      importDoneRef.current = true
+      importTimerRef.current = window.setInterval(() => {
+        setImportProgress((prev) => {
+          if (prev >= 100) {
+            stopImportTimer()
+            return 100
+          }
+          return Math.min(100, prev + 2)
+        })
+      }, 60)
       await refresh()
-      navigate(`/student/resumes/${res.resume_id}?imported=1`)
+      window.setTimeout(() => {
+        setImportProgress(100)
+        setImportStage('done')
+        Message.success(`已导入「${res.title}」，请核对内容后保存`)
+        setImportModalVisible(false)
+        navigate(`/student/resumes/${res.resume_id}?imported=1`)
+      }, 350)
     } catch (error) {
+      stopImportTimer()
+      importDoneRef.current = true
       Message.error(error instanceof ApiError ? error.message : '导入失败，请检查文件格式')
+      setImportStage('idle')
+      setImportProgress(0)
     } finally {
       setImporting(false)
     }
@@ -214,11 +279,8 @@ export function ResumeCenterPage() {
           <Button icon={<IconRefresh />} onClick={() => void refresh()} loading={loading}>
             刷新
           </Button>
-          <Button icon={<IconUpload />} onClick={() => setImportModalVisible(true)}>
+          <Button icon={<IconUpload />} onClick={() => { resetImportProgress(); setImportModalVisible(true) }}>
             导入简历
-          </Button>
-          <Button icon={<IconDashboard />} onClick={() => navigate('/student/analysis')}>
-            能力分析
           </Button>
           <Button
             type="primary"
@@ -241,7 +303,11 @@ export function ResumeCenterPage() {
       <Modal
         title="导入简历"
         visible={importModalVisible}
-        onCancel={() => setImportModalVisible(false)}
+        onCancel={() => {
+          if (importing) return
+          setImportModalVisible(false)
+          resetImportProgress()
+        }}
         footer={null}
         style={{ width: 480 }}
       >
@@ -259,6 +325,30 @@ export function ResumeCenterPage() {
               选择文件（PDF / DOCX / JSON）
             </Button>
           </div>
+
+          {importStage !== 'idle' ? (
+            <div style={{ marginBottom: 16, padding: '12px 14px', background: '#f7f8fa', borderRadius: 6, border: '1px solid #e5e6eb' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, fontSize: 13, color: '#4b5563' }}>
+                <span>
+                  {importStage === 'uploading' ? '正在上传文件…' :
+                   importStage === 'parsing' ? 'AI 正在解析简历内容…' :
+                   importStage === 'saving' ? '正在保存到云端…' :
+                   importStage === 'done' ? '导入完成' : ''}
+                </span>
+                <span style={{ fontVariantNumeric: 'tabular-nums', color: '#165DFF', fontWeight: 500 }}>{importProgress}%</span>
+              </div>
+              <Progress
+                percent={importProgress}
+                showText={false}
+                size="small"
+                status={importStage === 'done' ? 'success' : 'normal'}
+                color={importStage === 'parsing' ? '#7c3aed' : '#165DFF'}
+              />
+              {importStage === 'parsing' ? (
+                <div style={{ marginTop: 6, fontSize: 12, color: '#86909C' }}>PDF / DOCX 解析通常需要 10-30 秒，请稍候</div>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ fontSize: 12, color: '#86909C', lineHeight: 1.8 }}>
             <p style={{ margin: 0 }}>• <b>PDF / DOCX</b>：自动识别简历内容并结构化，约需 10-30 秒</p>
             <p style={{ margin: 0 }}>• <b>JSON</b>：直接导入，无需等待</p>

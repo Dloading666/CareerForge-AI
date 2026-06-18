@@ -70,6 +70,10 @@ class LogoutRequest(BaseModel):
     refresh: str
 
 
+class SSOLoginRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=2048)
+
+
 class StudentChangeEmailRequest(BaseModel):
     new_email: EmailStr
     code: str = Field(min_length=4, max_length=8)
