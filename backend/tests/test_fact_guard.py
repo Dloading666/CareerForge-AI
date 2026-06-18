@@ -144,7 +144,7 @@ DIRTY_PROFILE = {
     "projects": [
         {
             "name": "合同审查助手",
-            "role": "独立开发",
+            "role": "参与",  # 配合 test_role_escalation_independent_blocked（"参与" -> "独立完成" 应被拦截）
             "start_date": "2026。01",
             "end_date": "2026.04",
             "description": "- 基于 Python 和 FastAPI 搭建",
@@ -170,7 +170,7 @@ def test_dirty_profile_dates_normalized_output_passes():
              "details": "- 开发多Agent流程，接入 MCP 工具，完成 RAG 优化"}
         ],
         "projects": [
-            {"name": "合同审查助手", "role": "独立开发",
+            {"name": "合同审查助手", "role": "参与",
              "date": "2026.01 - 2026.04",
              "details": "- 基于 Python 和 FastAPI 搭建"}
         ],
