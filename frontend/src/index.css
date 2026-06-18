@@ -15,7 +15,7 @@
 }
 
 :root {
-  /* 系统 UI 字体栈：macOS=SF Pro/苹方，Windows=Segoe UI/微软雅黑，原生渲染、零加载 */
+  /* ç³»ç» UI å­ä½æ ï¼macOS=SF Pro/è¹æ¹ï¼Windows=Segoe UI/å¾®è½¯éé»ï¼åçæ¸²æãé¶å è½½ */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC',
     'Helvetica Neue', Arial, sans-serif;
@@ -80,7 +80,7 @@ textarea {
   min-height: 100vh;
 }
 
-/* ── Shared form controls ───────────────────────────────────────────
+/* ââ Shared form controls âââââââââââââââââââââââââââââââââââââââââââ
    All workspace forms use one stable rounded-rectangle geometry.
    Decoration lives on the outer Arco control so prefixed inputs never
    render a second inset focus ring. */
@@ -500,7 +500,7 @@ textarea {
   font-size: 18px;
 }
 
-/* ── Sidebar history (Doubao-style accumulated list) ───────────────── */
+/* ââ Sidebar history (Doubao-style accumulated list) âââââââââââââââââ */
 .side-nav-history {
   flex: 1;
   min-height: 0;
@@ -656,7 +656,7 @@ textarea {
 
 
 
-/* ── 并行对话：侧边栏运行中状态 ──────────────────── */
+/* ââ å¹¶è¡å¯¹è¯ï¼ä¾§è¾¹æ è¿è¡ä¸­ç¶æ ââââââââââââââââââââ */
 .side-nav-history-item--running {
   border-left: 3px solid var(--brand-blue, #165dff);
   padding-left: 7px;
@@ -819,7 +819,7 @@ textarea {
   padding: 28px;
 }
 
-/* ── 学生端每个模块独立纵向滚�?+ 可见滚动�?──────────────────────── */
+/* ââ å­¦çç«¯æ¯ä¸ªæ¨¡åç¬ç«çºµåæ»ï¿½?+ å¯è§æ»å¨ï¿½?ââââââââââââââââââââââââ */
 .student-shell .page-content,
 .student-shell .profile-scroll {
   flex: 1;
@@ -1510,7 +1510,7 @@ textarea {
   place-items: center;
 }
 
-/* ── Workbench 三栏布局 ────────────────────────────────────────────── */
+/* ââ Workbench ä¸æ å¸å± ââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .wb-root {
   height: 100%;
@@ -2299,7 +2299,7 @@ textarea {
   line-height: 1.9;
 }
 
-/* ── Markdown rendering ───────────────────────────────────────────── */
+/* ââ Markdown rendering âââââââââââââââââââââââââââââââââââââââââââââ */
 
 .assistant-answer h1,
 .assistant-answer h2,
@@ -2402,7 +2402,7 @@ textarea {
   margin: 1em 0;
 }
 
-/* ── Streaming cursor ─────────────────────────────────────────────── */
+/* ââ Streaming cursor âââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .stream-cursor {
   display: inline-block;
@@ -2420,7 +2420,7 @@ textarea {
   50% { opacity: 0; }
 }
 
-/* ── Thinking dots ────────────────────────────────────────────────── */
+/* ââ Thinking dots ââââââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .assistant-thinking {
   display: flex;
@@ -2537,7 +2537,7 @@ textarea {
   }
 }
 
-/* ── History panel ────────────────────────────────────────────────── */
+/* ââ History panel ââââââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .history-panel {
   max-width: 680px;
@@ -2628,7 +2628,7 @@ textarea {
   font-size: 14px;
 }
 
-/* ── Composer ──────────────────────────────────────────────────────── */
+/* ââ Composer ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .agent-composer {
   position: relative;
@@ -2757,7 +2757,7 @@ textarea {
   background: #f0e8e8;
 }
 
-/* 今日日程提醒横幅 */
+/* ä»æ¥æ¥ç¨æéæ¨ªå¹ */
 .agent-reminder-banner {
   display: flex;
   align-items: center;
@@ -2787,7 +2787,7 @@ textarea {
   background: rgba(173, 104, 0, 0.12);
 }
 
-/* Markdown 代码块：语言标签 + 一键复制 */
+/* Markdown ä»£ç åï¼è¯­è¨æ ç­¾ + ä¸é®å¤å¶ */
 .md-code-block {
   margin: 10px 0;
   border-radius: 10px;
@@ -2843,7 +2843,7 @@ textarea {
   padding: 0;
 }
 
-/* 输入框里待发送的图片缩略图 */
+/* è¾å¥æ¡éå¾åéçå¾çç¼©ç¥å¾ */
 .composer-image-preview {
   position: relative;
   width: 56px;
@@ -3167,7 +3167,7 @@ textarea {
 
 
 
-/* ── User message with images ── */
+/* ââ User message with images ââ */
 .user-message-content {
   display: flex;
   flex-direction: column;
@@ -3206,7 +3206,7 @@ textarea {
   transition: opacity 0.15s;
 }
 
-/* ── Image lightbox ── */
+/* ââ Image lightbox ââ */
 .image-lightbox-overlay {
   position: fixed;
   inset: 0;
@@ -3286,7 +3286,7 @@ textarea {
 }
 
 
-/* ── Agent Plaza ─────────────────────────────────────────────────────────── */
+/* ââ Agent Plaza âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .agent-plaza {
   max-width: 1120px;
@@ -5574,7 +5574,7 @@ textarea {
   }
 }
 
-/* ── 公告横幅 ─────────────────────────── */
+/* ââ å¬åæ¨ªå¹ âââââââââââââââââââââââââââ */
 
 .announcement-banner-list {
   display: flex;
@@ -5660,7 +5660,7 @@ textarea {
   border: 1px solid #FECACA;
 }
 
-/* ── Scroll to bottom button ── */
+/* ââ Scroll to bottom button ââ */
 .scroll-to-bottom-btn {
   position: absolute;
   left: 50%;
@@ -5696,7 +5696,7 @@ textarea {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* ── Message copy button ── */
+/* ââ Message copy button ââ */
 .msg-copy-btn {
   position: absolute;
   top: 4px;
@@ -5723,7 +5723,7 @@ textarea {
   background: #f2f3f5;
 }
 
-/* ── Dismissible error notice ── */
+/* ââ Dismissible error notice ââ */
 .agent-error-line {
   display: flex;
   align-items: center;
@@ -5744,7 +5744,7 @@ textarea {
   opacity: 1;
 }
 
-/* ── PreviewPanel toolbar & canvas drag mode ── */
+/* ââ PreviewPanel toolbar & canvas drag mode ââ */
 .preview-panel-toolbar {
   display: flex;
   align-items: center;
@@ -5800,7 +5800,7 @@ textarea {
   cursor: grabbing;
 }
 
-/* ── New-resume template picker modal ── */
+/* ââ New-resume template picker modal ââ */
 .new-resume-template-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -5859,7 +5859,7 @@ textarea {
   line-height: 1.45;
 }
 
-/* ── Runtime statusline (breathing logo + elapsed + tokens + phase) ── */
+/* ââ Runtime statusline (breathing logo + elapsed + tokens + phase) ââ */
 
 .runtime-statusline {
   display: flex;
@@ -5922,7 +5922,7 @@ textarea {
   line-height: 1;
 }
 
-/* 思考：上下浮动 */
+/* æèï¼ä¸ä¸æµ®å¨ */
 .phase-think {
   animation: phase-float 2s ease-in-out infinite;
 }
@@ -5931,7 +5931,7 @@ textarea {
   50% { transform: translateY(-3px); }
 }
 
-/* 浏览/查看：左右扫描 */
+/* æµè§/æ¥çï¼å·¦å³æ«æ */
 .phase-browse {
   animation: phase-scan 2.4s ease-in-out infinite;
 }
@@ -5941,7 +5941,7 @@ textarea {
   75% { transform: translateX(-2px); }
 }
 
-/* 搜索：旋转 */
+/* æç´¢ï¼æè½¬ */
 .phase-search {
   animation: phase-spin 3s linear infinite;
 }
@@ -5950,7 +5950,7 @@ textarea {
   100% { transform: rotate(360deg); }
 }
 
-/* 写作/编辑：脉冲缩放 */
+/* åä½/ç¼è¾ï¼èå²ç¼©æ¾ */
 .phase-write {
   animation: phase-pulse 1.6s ease-in-out infinite;
 }
@@ -5959,7 +5959,7 @@ textarea {
   50% { transform: scale(1.2); opacity: 1; }
 }
 
-/* 处理/分析：旋转脉冲 */
+/* å¤ç/åæï¼æè½¬èå² */
 .phase-process {
   animation: phase-gear 2s linear infinite;
 }
@@ -5969,7 +5969,7 @@ textarea {
   100% { transform: rotate(360deg) scale(1); }
 }
 
-/* 分析附件：呼吸 */
+/* åæéä»¶ï¼å¼å¸ */
 .phase-analyze {
   animation: phase-breathe 2s ease-in-out infinite;
 }
@@ -6009,7 +6009,7 @@ textarea {
   }
 }
 
-/* ── Tool activity trace（像普通消息一样嵌在对话流里）────────────── */
+/* ââ Tool activity traceï¼åæ®éæ¶æ¯ä¸æ ·åµå¨å¯¹è¯æµéï¼ââââââââââââââ */
 
 .timeline-container {
   display: flex;
@@ -6202,7 +6202,7 @@ textarea {
   font-size: 22px;
 }
 
-/* ── Interview advanced settings (collapsible) ──────────── */
+/* ââ Interview advanced settings (collapsible) ââââââââââââ */
 .interview-advanced-settings {
   margin: 16px 0;
   border: 1px solid #e5e8ef;
@@ -6230,7 +6230,7 @@ textarea {
 }
 
 .interview-advanced-settings > summary::after {
-  content: '›';
+  content: 'âº';
   margin-left: auto;
   font-size: 16px;
   color: #86909c;
@@ -6261,7 +6261,7 @@ textarea {
   padding: 14px;
 }
 
-/* ── Interview section headers ─────────────────────────────── */
+/* ââ Interview section headers âââââââââââââââââââââââââââââââ */
 .interview-section-header {
   display: flex;
   align-items: center;
@@ -6337,7 +6337,7 @@ textarea {
   overflow: hidden;
 }
 
-/* ── 报告全屏模式 ── */
+/* ââ æ¥åå¨å±æ¨¡å¼ ââ */
 .interview-room--report-expanded .interview-dialogue,
 .interview-room--report-expanded .interview-answer-box,
 .interview-room--report-expanded .interview-loading {
@@ -6709,7 +6709,7 @@ textarea {
   border-color: #f53f3f !important;
 }
 
-/* ── 语音面试 ─────────────────────────────────────── */
+/* ââ è¯­é³é¢è¯ âââââââââââââââââââââââââââââââââââââââ */
 
 .interview-voice-box {
   padding: 12px 0;
@@ -6826,7 +6826,7 @@ textarea {
   50% { transform: scaleY(2.5); opacity: 1; }
 }
 
-/* ── 流式进度阶段 ─────────────────────────────────── */
+/* ââ æµå¼è¿åº¦é¶æ®µ âââââââââââââââââââââââââââââââââââ */
 
 .interview-progress-stages {
   display: flex;
@@ -6977,7 +6977,7 @@ textarea {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── 语音草稿确认 ─────────────────────────────────── */
+/* ââ è¯­é³èç¨¿ç¡®è®¤ âââââââââââââââââââââââââââââââââââ */
 
 .interview-voice-draft {
   margin: 0 18px 18px;
@@ -7876,7 +7876,7 @@ textarea {
   justify-content: center;
 }
 
-/* P1-3: Question meta (考察意图、考察点、题库来源) */
+/* P1-3: Question meta (èå¯æå¾ãèå¯ç¹ãé¢åºæ¥æº) */
 .interview-question-meta {
   display: flex;
   align-items: center;
@@ -7951,7 +7951,7 @@ textarea {
   color: #722ed1;
 }
 
-/* ── InterviewReportDrawer ────────────────────────────────────────────── */
+/* ââ InterviewReportDrawer ââââââââââââââââââââââââââââââââââââââââââââââ */
 
 .interview-report-drawer .arco-drawer-body {
   padding: 0;
@@ -8574,7 +8574,7 @@ textarea {
   }
 }
 
-/* ── NativeSelect custom dropdown ──────────────────────────────── */
+/* ââ NativeSelect custom dropdown ââââââââââââââââââââââââââââââââ */
 .native-select-trigger {
   display: flex;
   align-items: center;
@@ -8700,7 +8700,7 @@ textarea {
   white-space: nowrap;
 }
 
-/* ── End NativeSelect ─────────────────────────────────────────── */
+/* ââ End NativeSelect âââââââââââââââââââââââââââââââââââââââââââ */
 
 /* Defensive: ensure Arco Select/Dropdown popups render above all containers */
 .arco-select-popup,
@@ -8719,7 +8719,7 @@ textarea {
   z-index: 2000 !important;
 }
 
-/* ── Global Rail (student sidebar) ────────────────────────────────── */
+/* ââ Global Rail (student sidebar) ââââââââââââââââââââââââââââââââââ */
 .global-rail {
   width: 220px;
   flex-shrink: 0;
@@ -8893,7 +8893,7 @@ textarea {
   line-height: 1.3;
 }
 
-/* ── Module Panel (conversation history sidebar) ──────────────────── */
+/* ââ Module Panel (conversation history sidebar) ââââââââââââââââââââ */
 .module-panel {
   width: 248px;
   flex-shrink: 0;
@@ -8937,7 +8937,7 @@ textarea {
   border-radius: 3px;
 }
 
-/* ── Global Rail collapsed state ──────────────────────────────────── */
+/* ââ Global Rail collapsed state ââââââââââââââââââââââââââââââââââââ */
 .global-rail--collapsed {
   width: 64px;
   padding: 16px 12px;
@@ -8971,7 +8971,7 @@ textarea {
   padding: 8px;
 }
 
-/* ── User card menu (dropdown popup) ──────────────────────────────── */
+/* ââ User card menu (dropdown popup) ââââââââââââââââââââââââââââââââ */
 .user-card-menu {
   width: 240px;
   background: #fff;
@@ -9064,7 +9064,7 @@ textarea {
   border-radius: 0 !important;
 }
 
-/* ── Profile settings modal ───────────────────────────────────────── */
+/* ââ Profile settings modal âââââââââââââââââââââââââââââââââââââââââ */
 .profile-modal.arco-modal {
   width: min(960px, calc(100vw - 48px)) !important;
   height: min(680px, calc(100vh - 120px));
@@ -9949,7 +9949,7 @@ textarea {
   display: none;
 }
 
-/* ── Select 点击区域修复 + 文字居中 ────────────────────────── */
+/* ââ Select ç¹å»åºåä¿®å¤ + æå­å±ä¸­ ââââââââââââââââââââââââââ */
 .interview-page .interview-field .arco-select-view {
   min-height: 40px;
   display: flex;
@@ -9963,20 +9963,20 @@ textarea {
   align-items: center;
 }
 
-/* 防止 label → div 后选择框被遮挡 */
+/* é²æ­¢ label â div åéæ©æ¡è¢«é®æ¡ */
 .interview-page .interview-field {
   position: relative;
   z-index: auto;
 }
 
-/* ── 必填标记 ── */
+/* ââ å¿å¡«æ è®° ââ */
 .interview-field-required {
   color: #f53f3f;
   font-style: normal;
   margin-left: 2px;
 }
 
-/* ── 用户回答气泡（飞书风格）── */
+/* ââ ç¨æ·åç­æ°æ³¡ï¼é£ä¹¦é£æ ¼ï¼ââ */
 .interview-message.candidate {
   background: #e8f3ff;
   color: #1f2329;
@@ -9986,12 +9986,12 @@ textarea {
   border-radius: 8px;
 }
 
-/* ── 底部操作区两行布局 ── */
-/* (样式已在 .interview-answer-box 区域定义) */
+/* ââ åºé¨æä½åºä¸¤è¡å¸å± ââ */
+/* (æ ·å¼å·²å¨ .interview-answer-box åºåå®ä¹) */
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   AI 面试官 — 面试报告（独立页面版）· Light Premium
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+   AI é¢è¯å® â é¢è¯æ¥åï¼ç¬ç«é¡µé¢çï¼Â· Light Premium
+   âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */
 
 :root {
   --ir-bg: #FFFFFF;
@@ -10547,7 +10547,7 @@ textarea {
   .ir-dim-summary { justify-content: center; }
 }
 
-/* New resume template modal — head layout: description left (nowrap), actions right */
+/* New resume template modal â head layout: description left (nowrap), actions right */
 .new-resume-template-modal .new-resume-modal-head {
   display: flex;
   align-items: center;
@@ -10568,4 +10568,643 @@ textarea {
   display: flex;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+
+/* ── 恢复样式（64670e0 加的）── */
+
+/* ── Profile · Account management (modern) ────────────────────────── */
+.profile-account-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 32px 40px 40px;
+  max-width: 680px;
+}
+
+.profile-account-header {
+  padding-bottom: 4px;
+}
+.profile-account-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--text-main);
+  line-height: 30px;
+}
+.profile-account-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+  line-height: 20px;
+}
+
+/* Identity card */
+.profile-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 22px 24px;
+  background: #ffffff;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.profile-account-identity:hover {
+  border-color: rgba(22, 93, 255, 0.22);
+  box-shadow: 0 2px 14px rgba(15, 23, 42, 0.04);
+}
+.profile-account-identity-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.profile-account-identity-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.profile-account-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 26px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-account-identity-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-subtle);
+  line-height: 20px;
+}
+.profile-account-identity-actions {
+  margin-top: 4px;
+}
+.profile-account-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #d6dae0;
+  flex-shrink: 0;
+}
+
+/* Avatar (shared, with size variant) */
+.profile-account-avatar {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(135deg, #165dff 0%, #0fc6c2 100%);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+}
+.profile-account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-account-avatar-fallback {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.profile-account-avatar--lg {
+  width: 72px;
+  height: 72px;
+  font-size: 28px;
+  box-shadow: 0 4px 14px rgba(22, 93, 255, 0.18);
+}
+.profile-account-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.55);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.profile-account-avatar:hover .profile-account-avatar-overlay {
+  opacity: 1;
+}
+.profile-account-avatar-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.55);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+/* Chips */
+.profile-account-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.profile-account-chip--role {
+  color: #165dff;
+  background: rgba(22, 93, 255, 0.08);
+}
+.profile-account-chip--ok {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+}
+.profile-account-chip--warn {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.10);
+}
+
+/* Settings list (nickname + email) */
+.profile-account-settings {
+  background: #ffffff;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.profile-account-row {
+  display: grid;
+  grid-template-columns: 112px 1fr auto;
+  gap: 20px;
+  align-items: center;
+  padding: 18px 22px;
+}
+.profile-account-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-subtle);
+  line-height: 20px;
+}
+.profile-account-row-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-account-row-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 18px;
+}
+.profile-account-row-action {
+  flex-shrink: 0;
+}
+.profile-account-email-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-main);
+  line-height: 22px;
+  min-width: 0;
+}
+.profile-account-email-value > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.profile-account-divider {
+  height: 1px;
+  margin: 0 22px;
+  background: var(--surface-border);
+}
+
+/* Read-only info list */
+.profile-account-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 4px 0;
+}
+.profile-account-info-label {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-subtle);
+  letter-spacing: 0.4px;
+  line-height: 18px;
+}
+.profile-account-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 18px;
+  background: #ffffff;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+}
+.profile-account-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  font-size: 13px;
+  line-height: 20px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.04);
+}
+.profile-account-info-row:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+.profile-account-info-row:first-child {
+  padding-top: 4px;
+}
+.profile-account-info-key {
+  color: var(--text-subtle);
+}
+.profile-account-info-val {
+  color: var(--text-main);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-all;
+  min-width: 0;
+}
+
+/* Modal content: keep the account tab scrollbar quiet and not bleed over rounded corners. */
+.profile-modal-content .profile-account-tab {
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 640px) {
+  .profile-account-tab {
+    padding: 24px 18px 32px;
+    gap: 14px;
+  }
+  .profile-account-identity {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 18px;
+  }
+  .profile-account-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 16px 18px;
+  }
+  .profile-account-row-action {
+    justify-self: stretch;
+  }
+  .profile-account-row-action .arco-btn {
+    width: 100%;
+  }
+  .profile-account-divider {
+    margin: 0 18px;
+  }
+}
+
+
+/* ── Analysis page ──────────────────────────────────────────────────────── */
+
+.analysis-page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 28px 48px;
+  color: #E5E7EB;
+}
+
+.analysis-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 320px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 15px;
+}
+
+.analysis-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.analysis-page-title {
+  margin: 0 0 4px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #7C4DFF 0%, #2962FF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.analysis-page-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.analysis-page-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.analysis-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(30, 35, 60, 0.85) 0%, rgba(20, 24, 45, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  transition: all 0.25s ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.stat-card-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.stat-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-card-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 4px;
+}
+
+.stat-card-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.stat-card-value-num {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat-card-value-unit {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.stat-card-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.analysis-card {
+  background: linear-gradient(135deg, rgba(30, 35, 60, 0.7) 0%, rgba(20, 24, 45, 0.9) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 20px 22px;
+  transition: border-color 0.25s ease;
+}
+
+.analysis-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.analysis-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.analysis-card-head h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.analysis-card-head p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.analysis-card-body {
+  width: 100%;
+}
+
+.analysis-card-body--centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 380px;
+}
+
+.analysis-card--radar {
+  min-height: 480px;
+}
+
+.radar-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.radar-empty,
+.kn-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
+.kn-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kn-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.kn-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kn-row-name {
+  font-size: 13px;
+  color: #E5E7EB;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kn-row-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.kn-row-bar {
+  position: relative;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.kn-row-bar-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.kn-row-value {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  z-index: 1;
+}
+
+.analysis-card--weakness {
+  background: linear-gradient(135deg, rgba(60, 30, 35, 0.55) 0%, rgba(40, 20, 25, 0.75) 100%);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+.weakness-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+
+.weakness-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.analysis-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 80px 20px;
+  background: linear-gradient(135deg, rgba(30, 35, 60, 0.5) 0%, rgba(20, 24, 45, 0.7) 100%);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+}
+
+.analysis-empty-text {
+  text-align: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.8;
+}
+
+.analysis-empty-text p {
+  margin: 4px 0;
+}
+
+.analysis-error {
+  margin-top: 16px;
+  text-align: center;
+}
+
+@media (max-width: 960px) {
+  .analysis-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .analysis-grid {
+    grid-template-columns: 1fr;
+  }
+  .weakness-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .analysis-page {
+    padding: 16px;
+  }
+  .analysis-page-header {
+    flex-direction: column;
+  }
+  .kn-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
