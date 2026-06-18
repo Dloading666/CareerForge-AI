@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from html import escape
+import logging
+
 import httpx
 from io import BytesIO
 from pathlib import Path
@@ -41,6 +43,7 @@ from app.student.resume_schemas import (
     ResumeSummaryResponse,
     ResumeUpdateRequest,
 )
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/student/resumes", tags=["student-resume"])
 
@@ -676,6 +679,28 @@ async def import_resume_file(
             raise HTTPException(
                 status_code=502,
                 detail=f"LLM 解析失败: {str(exc)[:500]}",
+            )
+        except httpx.HTTPError as exc:
+            # Network-level failures: connect refused, DNS failure, timeout,
+            # protocol error, etc. These are not model-config issues but
+            # connectivity / latency issues; surface as 502 with a clean hint
+            # instead of leaking a raw 500 to the user.
+            logger.warning("resume import LLM transport error: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "LLM 解析服务端无法联通或超时，请稍后重试"
+                    f"（类型：{type(exc).__name__}）"
+                ),
+            )
+        except Exception as exc:
+            # Last-resort safety net: never leak a raw 500 plain-text response
+            # from this endpoint. The client (apiRequest) expects the standard
+            # {code, msg, data} envelope and a non-JSON body breaks the flow.
+            logger.exception("resume import unexpected error")
+            raise HTTPException(
+                status_code=500,
+                detail=f"简历导入失败：{type(exc).__name__}",
             )
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名

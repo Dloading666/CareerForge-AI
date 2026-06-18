@@ -279,6 +279,9 @@ def read_root():
 # ── Interview module exception handler ───────────────────────────────────────
 from fastapi.responses import JSONResponse as _JSONResponse
 from app.interview.exceptions import InterviewError as _InterviewError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @app.exception_handler(_InterviewError)
@@ -286,6 +289,27 @@ async def interview_error_handler(request, exc: _InterviewError):  # noqa: ANN00
     return _JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.status_code, "msg": exc.detail, "data": None},
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):  # noqa: ANN001
+    """Catch-all safety net.
+
+    Without this, any unhandled exception in a route is rendered by FastAPI as
+    a plain-text "Internal Server Error" body. The frontend (apiRequest) parses
+    every non-stream response as the standard {code, msg, data} envelope, so a
+    non-JSON body breaks the flow and shows up as "Non-JSON API response" in the
+    console. This handler guarantees a structured envelope even on unexpected 500s.
+    """
+    # Log full traceback server-side; only expose a safe summary to the client.
+    logger.exception("unhandled exception in %s %s", request.method, request.url.path)
+    return _JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "msg": f"服务器内部错误：{type(exc).__name__}",
+            "data": None,
+        },
     )
 
 
