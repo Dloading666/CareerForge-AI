@@ -2,7 +2,7 @@
 
 > 最后更新：2026-06-16（基于当前代码库重新整理）
 >
-> 产品需求见 `docs/PRD.md`，给 AI 协作者的速查见 `CLAUDE.md` / `AGENTS.md`。
+> 产品需求见 `doc/PRD.md`，给 AI 协作者的速查见 `CLAUDE.md` / `AGENTS.md`。
 
 ---
 
