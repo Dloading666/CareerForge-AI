@@ -10,6 +10,7 @@ from app.auth.schemas import (
     AdminLoginRequest,
     LogoutRequest,
     RefreshRequest,
+    SSOLoginRequest,
     StudentEmailCodeSendRequest,
     StudentLoginRequest,
     StudentRegisterRequest,
@@ -25,6 +26,7 @@ from app.auth.service import (
     reset_student_password,
     send_student_email_code,
 )
+from app.auth.sso import sso_login
 from app.core.response import ok
 from app.infra.db import get_db
 
@@ -85,6 +87,22 @@ def admin_login(
     user_agent: Optional[str] = Header(default=None),
 ):
     data = login_admin(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    return ok(data)
+
+
+@router.post("/sso/login")
+async def sso_token_login(
+    payload: SSOLoginRequest,
+    db: Session = Depends(get_db),
+    x_forwarded_for: Optional[str] = Header(default=None),
+    user_agent: Optional[str] = Header(default=None),
+):
+    data = await sso_login(
+        db,
+        token=payload.token,
+        ip=x_forwarded_for,
+        user_agent=user_agent,
+    )
     return ok(data)
 
 

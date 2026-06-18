@@ -2,16 +2,17 @@ import {
   Alert,
   Button,
   Card,
+  Divider,
   Input,
   Space,
   Tabs,
   Typography,
 } from '@arco-design/web-react'
 import { IconEmail, IconLock, IconSafe, IconUser } from '@arco-design/web-react/icon'
-import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
-import { apiRequest, ApiError } from '../shared/api'
+import { apiRequest, ApiError, ssoLogin } from '../shared/api'
 import { useAuth } from '../shared/auth'
 
 type StudentMode = 'login' | 'register' | 'reset'
@@ -33,6 +34,8 @@ type AdminAuthResponse = {
 
 export function AuthPage() {
   const { session, login } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [role, setRole] = useState<Role>('student')
   const [studentMode, setStudentMode] = useState<StudentMode>('login')
   const [studentEmail, setStudentEmail] = useState('')
@@ -48,10 +51,13 @@ export function AuthPage() {
   const [captchaId, setCaptchaId] = useState('')
   const [captchaImage, setCaptchaImage] = useState('')
   const [studentCaptcha, setStudentCaptcha] = useState('')
+  const [ssoToken, setSsoToken] = useState('')
+  const [ssoSubmitting, setSsoSubmitting] = useState(false)
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'warning' | 'info'
     content: string
   } | null>(null)
+  const ssoAutoTriedRef = useRef(false)
 
   // Arco 的命令式 Message 在 React 19 下不渲染，这里用受控的内联 Alert 反馈替代。
   const notify = {
@@ -68,6 +74,37 @@ export function AuthPage() {
     const timer = window.setTimeout(() => setCountdown((current) => current - 1), 1000)
     return () => window.clearTimeout(timer)
   }, [countdown])
+
+  // 中台跳回 ?token=xxx：自动登录一次，成功后清掉 URL 上的 token 防泄漏
+  useEffect(() => {
+    if (ssoAutoTriedRef.current) return
+    if (session) return
+    const params = new URLSearchParams(location.search)
+    const token = params.get('token')?.trim()
+    if (!token) return
+    ssoAutoTriedRef.current = true
+
+    void (async () => {
+      setSsoSubmitting(true)
+      try {
+        const data = await ssoLogin(token)
+        login(data)
+        setFeedback({ type: 'success', content: '中台登录成功，正在进入学生端' })
+        const next = location.pathname
+        window.history.replaceState({}, '', next || '/auth')
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : '中台 token 无效'
+        setFeedback({
+          type: 'error',
+          content: `中台 token 无效：${message}。请重新登录中台后重试，或用邮箱登录`,
+        })
+        const next = location.pathname
+        window.history.replaceState({}, '', next || '/auth')
+      } finally {
+        setSsoSubmitting(false)
+      }
+    })()
+  }, [location.pathname, location.search, login, session])
 
   if (session) {
     return <Navigate to={session.role === 'admin' ? '/admin' : '/student'} replace />
@@ -251,6 +288,26 @@ export function AuthPage() {
       notify.error(message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleSSOSubmit() {
+    const token = ssoToken.trim()
+    if (!token) {
+      notify.warning('请粘贴中台 token')
+      return
+    }
+    setSsoSubmitting(true)
+    try {
+      const data = await ssoLogin(token)
+      login(data)
+      notify.success('中台登录成功，正在进入学生端')
+      navigate('/auth', { replace: true })
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : '中台登录失败'
+      notify.error(`中台 token 无效：${message}。请重新登录中台后重试，或用邮箱登录`)
+    } finally {
+      setSsoSubmitting(false)
     }
   }
 
@@ -516,6 +573,30 @@ export function AuthPage() {
               </Space>
             </Tabs.TabPane>
           </Tabs>
+
+          <Divider style={{ margin: '20px 0 16px' }}>其他登录方式</Divider>
+
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              已在中台登录？粘贴中台 token 直接进入学生端。
+            </Typography.Text>
+            <Input
+              size="large"
+              placeholder="粘贴中台 token"
+              value={ssoToken}
+              onChange={setSsoToken}
+              onPressEnter={handleSSOSubmit}
+            />
+            <Button
+              type="secondary"
+              size="large"
+              long
+              loading={ssoSubmitting}
+              onClick={handleSSOSubmit}
+            >
+              用中台账号登录
+            </Button>
+          </Space>
 
         </Card>
       </section>

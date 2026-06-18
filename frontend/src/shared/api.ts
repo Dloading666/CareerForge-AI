@@ -97,6 +97,20 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   return requestWithRetry<T>(path, init, false)
 }
 
+export type SSOLoginResponse = {
+  access: string
+  refresh: string
+  role: 'student'
+  profile: Record<string, string | null | undefined>
+}
+
+export async function ssoLogin(token: string): Promise<SSOLoginResponse> {
+  return apiRequest<SSOLoginResponse>('/api/v1/auth/sso/login', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
 async function requestWithRetry<T>(path: string, init: RequestInit | undefined, retried: boolean): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has("Content-Type") && init?.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json")
@@ -111,7 +125,8 @@ async function requestWithRetry<T>(path: string, init: RequestInit | undefined, 
     !retried &&
     path !== "/api/v1/auth/refresh" &&
     path !== "/api/v1/auth/login" &&
-    path !== "/api/v1/auth/logout"
+    path !== "/api/v1/auth/logout" &&
+    path !== "/api/v1/auth/sso/login"
   ) {
     const access = await tryRefreshAccessToken()
     if (access) {

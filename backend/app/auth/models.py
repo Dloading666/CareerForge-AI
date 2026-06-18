@@ -65,6 +65,10 @@ class StudentUser(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    external_username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
+    external_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    auth_source: Mapped[str] = mapped_column(String(16), default="email", nullable=False, server_default="email")
 
 
 class AdminRefreshToken(Base):
