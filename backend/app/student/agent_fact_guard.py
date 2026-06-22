@@ -352,3 +352,429 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
         "display_summary": f"事实校验未通过（{n} 处）",
         "fact_validation": {"passed": False, "violations": violations[:20]},
     }
+
+
+# ── Evidence quality assessment ─────────────────────────────────────────────
+
+_JD_HINT_CJK = frozenset({
+    "岗位职责", "任职要求", "职位描述", "学历要求", "工作经验",
+    "技能要求", "岗位要求", "工作职责", "任职资格", "岗位说明",
+})
+
+
+def _assess_evidence_quality(evidence_sources: list[Any]) -> dict[str, Any]:
+    """评估证据池中各条目的充实度。返回质量报告。"""
+    total_items = 0
+    weak_items = 0
+    has_quantified = False
+
+    for source in evidence_sources:
+        if not isinstance(source, dict):
+            continue
+        for section in ("work_experiences", "experience", "projects"):
+            items = source.get(section) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                total_items += 1
+                desc = str(item.get("description") or item.get("details") or "")
+                if _re.search(r"\d+", desc):
+                    has_quantified = True
+                else:
+                    weak_items += 1
+
+    weak_ratio = weak_items / max(total_items, 1)
+    if total_items == 0:
+        quality = "insufficient"
+    elif weak_ratio > _WEAK_ITEM_RATIO_THRESHOLD:
+        quality = "insufficient"
+    elif weak_ratio > 0.3:
+        quality = "acceptable"
+    else:
+        quality = "good"
+
+    suggestions: list[str] = []
+    if total_items == 0:
+        suggestions.append("当前无经历/项目条目，素材不足。请向学生追问其工作经历、实习经历或项目经历后再生成简历。")
+    elif weak_ratio > _WEAK_ITEM_RATIO_THRESHOLD:
+        suggestions.append(
+            "当前经历/项目描述中缺少量化数据。请向学生追问：\n"
+            "- 该项目服务多少用户？上线后有什么可量化的效果？\n"
+            "- 团队几个人？你的角色是什么？\n"
+            "- 有没有具体的数字可以补充？"
+        )
+    if not has_quantified and total_items > 0:
+        suggestions.append("没有任何经历包含数字指标。建议引导学生补充量化成果。")
+
+    return {
+        "quality": quality,
+        "total_items": total_items,
+        "weak_items": weak_items,
+        "weak_ratio": round(weak_ratio, 2),
+        "has_quantified": has_quantified,
+        "suggestions": suggestions,
+    }
+
+
+# ── Quality gate ────────────────────────────────────────────────────────────
+
+def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = False) -> dict[str, Any]:
+    """确定性质量检查（纯代码，不依赖 LLM）。"""
+    issues: list[dict[str, str]] = []
+
+    if require_sections:
+        has_education = bool(args.get("education") and isinstance(args["education"], list) and len(args["education"]) > 0)
+        has_experience = bool(args.get("experience") and isinstance(args["experience"], list) and len(args["experience"]) > 0)
+        has_projects = bool(args.get("projects") and isinstance(args["projects"], list) and len(args["projects"]) > 0)
+        if not has_education and not has_experience and not has_projects:
+            issues.append({"severity": "error", "section": "resume", "issue": "教育经历、工作经历和项目经历全部为空，至少需要填写一项内容板块"})
+
+    for section in ("experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                continue
+            details = str(item.get("details") or item.get("description") or "")
+            bullets = [ln.strip() for ln in details.splitlines() if ln.strip() and ln.strip().startswith(("-", "•", "*"))]
+            if not bullets:
+                bullets = [ln.strip() for ln in details.splitlines() if ln.strip()]
+
+            strong_verb_count = 0
+            has_number_count = 0
+            for bullet in bullets:
+                if any(bullet.lstrip("-•* ").startswith(v) for v in _STRONG_VERBS):
+                    strong_verb_count += 1
+                if _re.search(r"\d+", bullet):
+                    has_number_count += 1
+                if len(bullet) > 80:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"bullet 过长（{len(bullet)} 字，建议 ≤ 80）"})
+
+            if bullets:
+                verb_ratio = strong_verb_count / len(bullets)
+                if verb_ratio < 0.7:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"强动词开头率 {verb_ratio:.0%}（建议 ≥ 70%）"})
+                num_ratio = has_number_count / len(bullets)
+                if num_ratio < 0.3:
+                    issues.append({"severity": "warning", "section": f"{section}[{idx}]", "issue": f"含数字条目占比 {num_ratio:.0%}（建议 ≥ 30%）"})
+
+    self_eval = str(args.get("self_evaluation") or "")
+    if self_eval:
+        eval_normalized = _normalize_evidence(self_eval)
+        for phrase in _EMPTY_PHRASES:
+            if phrase in eval_normalized:
+                issues.append({"severity": "error", "section": "self_evaluation", "issue": f"含空话「{phrase}」，请用具体能力或成果替代"})
+        eval_sentences = [s.strip() for s in self_eval.replace("。", "\n").replace("；", "\n").splitlines() if s.strip()]
+        if len(eval_sentences) > 5:
+            issues.append({"severity": "warning", "section": "self_evaluation", "issue": f"自我评价 {len(eval_sentences)} 句（建议 2-4 句）"})
+
+    all_dates: list[str] = []
+    for section in ("education", "experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("date", "start_date", "end_date", "startDate", "endDate"):
+                val = item.get(key)
+                if val:
+                    all_dates.append(str(val))
+    if all_dates:
+        separators: set[str] = set()
+        for d in all_dates:
+            for m in _re.finditer(r"\d{4}([.\-/。．])\d{1,2}(?!\d)", d):
+                separators.add(m.group(1))
+        if len(separators) > 1:
+            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM-DD 或全角句号），请统一为 YYYY-MM-DD"})
+
+    errors = [i for i in issues if i["severity"] == "error"]
+    warnings = [i for i in issues if i["severity"] == "warning"]
+
+    return {
+        "passed": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "total_issues": len(issues),
+    }
+
+
+# ── Role escalation check ───────────────────────────────────────────────────
+
+def _check_role_escalation(args: dict[str, Any], evidence_sources: list[Any]) -> list[str]:
+    """程度词阶梯检测：防止「参与」→「主导」的角色升级造假。"""
+    violations: list[str] = []
+    evidence_roles: dict[tuple[str, str], int] = {}
+
+    for source in evidence_sources:
+        if not isinstance(source, dict):
+            continue
+        for exp in (source.get("work_experiences") or source.get("experience") or []):
+            if not isinstance(exp, dict):
+                continue
+            company = str(exp.get("company") or "").strip()
+            desc = str(exp.get("description") or exp.get("details") or "")
+            max_level = 0
+            for m in _ROLE_VERB_RE.finditer(desc):
+                verb = m.group(1)
+                level = _ROLE_ESCALATION_LADDER.get(verb, 0)
+                max_level = max(max_level, level)
+            if max_level == 0:
+                max_level = _ROLE_ESCALATION_LADDER["参与"]
+            if company:
+                evidence_roles[("exp", company)] = max_level
+
+        for proj in (source.get("projects") or []):
+            if not isinstance(proj, dict):
+                continue
+            proj_name = str(proj.get("name") or "").strip()
+            role_field = str(proj.get("role") or "").strip()
+            desc = str(proj.get("description") or proj.get("details") or "")
+            max_level = 0
+            for m in _ROLE_VERB_RE.finditer(desc):
+                verb = m.group(1)
+                level = _ROLE_ESCALATION_LADDER.get(verb, 0)
+                max_level = max(max_level, level)
+            if role_field:
+                if role_field in _ROLE_ESCALATION_LADDER:
+                    max_level = max(max_level, _ROLE_ESCALATION_LADDER[role_field])
+                else:
+                    max_level = max(max_level, _ROLE_ESCALATION_LADDER["独立完成"])
+            if max_level == 0:
+                max_level = _ROLE_ESCALATION_LADDER["参与"]
+            if proj_name:
+                evidence_roles[("proj", proj_name)] = max_level
+
+    for section, section_type in [("experience", "exp"), ("projects", "proj")]:
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if section_type == "exp":
+                name = str(item.get("company") or "").strip()
+            else:
+                name = str(item.get("name") or item.get("project") or "").strip()
+
+            details = str(item.get("details") or item.get("description") or "")
+
+            generated_level = 0
+            matched_verb = ""
+            for m in _ROLE_VERB_RE.finditer(details):
+                verb = m.group(1)
+                level = _ROLE_ESCALATION_LADDER.get(verb, 0)
+                if level > generated_level:
+                    generated_level = level
+                    matched_verb = verb
+
+            if not matched_verb or not name:
+                continue
+
+            evidence_key = (section_type, name)
+            evidence_level = evidence_roles.get(evidence_key)
+
+            if evidence_level is None:
+                continue
+
+            if generated_level > evidence_level:
+                evidence_verb = next(
+                    (v for v, l in _ROLE_ESCALATION_LADDER.items() if l == evidence_level),
+                    "参与"
+                )
+                violations.append(
+                    f"角色升级：「{name}」的档案角色是「{evidence_verb}」，不得写成「{matched_verb}」"
+                )
+
+    return violations
+
+
+# ── Item attribution check ──────────────────────────────────────────────────
+
+def _check_item_attribution(args: dict[str, Any], evidence_sources: list[Any]) -> list[str]:
+    """条目归属校验：防止把项目 A 的数字安到项目 B 头上。"""
+    violations: list[str] = []
+    item_evidence: dict[tuple[str, str], dict[str, set[str]]] = {}
+
+    for source in evidence_sources:
+        if not isinstance(source, dict):
+            continue
+
+        for exp in (source.get("work_experiences") or source.get("experience") or []):
+            if not isinstance(exp, dict):
+                continue
+            company = str(exp.get("company") or "").strip()
+            if not company:
+                continue
+            desc = str(exp.get("description") or exp.get("details") or "")
+            key = ("exp", company)
+            if key not in item_evidence:
+                item_evidence[key] = {"numbers": set(), "nouns": set()}
+            for m in _re.finditer(r"\d[\d.,]*\s*[%万亿千百十人个次台条项年月天KkMmBb]", desc):
+                item_evidence[key]["numbers"].add(m.group().strip())
+            for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{2,}", desc):
+                item_evidence[key]["nouns"].add(m.group().lower())
+
+        for proj in (source.get("projects") or []):
+            if not isinstance(proj, dict):
+                continue
+            proj_name = str(proj.get("name") or "").strip()
+            if not proj_name:
+                continue
+            desc = str(proj.get("description") or proj.get("details") or "")
+            key = ("proj", proj_name)
+            if key not in item_evidence:
+                item_evidence[key] = {"numbers": set(), "nouns": set()}
+            for m in _re.finditer(r"\d[\d.,]*\s*[%万亿千百十人个次台条项年月天KkMmBb]", desc):
+                item_evidence[key]["numbers"].add(m.group().strip())
+            for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{2,}", desc):
+                item_evidence[key]["nouns"].add(m.group().lower())
+
+    for section, section_type in [("experience", "exp"), ("projects", "proj")]:
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if section_type == "exp":
+                name = str(item.get("company") or "").strip()
+            else:
+                name = str(item.get("name") or item.get("project") or "").strip()
+            if not name:
+                continue
+
+            details = str(item.get("details") or item.get("description") or "")
+            key = (section_type, name)
+            local_evidence = item_evidence.get(key)
+
+            if not local_evidence:
+                continue
+
+            for m in _re.finditer(r"\d[\d.,]*\s*[%万亿千百十人个次台条项年月天KkMmBb]", details):
+                num = m.group().strip()
+                if num not in local_evidence["numbers"]:
+                    violations.append(f"条目归属：数字「{num}」不属于「{name}」的证据，可能是张冠李戴")
+
+            _GENERIC_TECH = {"python", "java", "javascript", "typescript", "react", "vue", "node", "sql", "html", "css", "git", "docker", "linux", "api", "http", "rest", "json"}
+            global_nouns: set[str] = set()
+            for ev in item_evidence.values():
+                global_nouns |= ev["nouns"]
+            for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{3,}", details):
+                word = m.group().lower()
+                if word in _GENERIC_TECH:
+                    continue
+                if word not in local_evidence["nouns"] and word not in global_nouns:
+                    violations.append(f"条目归属：技术词「{m.group()}」不属于「{name}」的证据，可能是张冠李戴")
+
+    return violations[:20]
+
+
+# ── Gap violations check ────────────────────────────────────────────────────
+
+def _check_gap_violations(args: dict[str, Any], gap_keywords: list[str]) -> list[str]:
+    """检查生成内容是否包含 JD GAP 关键词。"""
+    if not gap_keywords:
+        return []
+
+    violations: list[str] = []
+    resume_text_parts: list[str] = []
+    for section in ("skills", "self_evaluation"):
+        val = args.get(section)
+        if val:
+            resume_text_parts.append(str(val))
+
+    for section in ("education", "experience", "projects"):
+        items = args.get(section) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("details", "description"):
+                val = item.get(key)
+                if val:
+                    resume_text_parts.append(str(val))
+
+    resume_text = " ".join(resume_text_parts).lower()
+
+    for keyword in gap_keywords:
+        kw_lower = keyword.lower()
+        if kw_lower in resume_text:
+            violations.append(f"GAP 项「{keyword}」不应出现在简历中（档案中没有相关依据）")
+
+    return violations[:10]
+
+
+# ── JD coverage check ───────────────────────────────────────────────────────
+
+def _extract_keywords_from_text(text: str) -> set[str]:
+    """从文本中提取关键词集合：英文技术词（≥3字符）+ 中文词（≥2字）。"""
+    keywords: set[str] = set()
+    for m in _re.finditer(r"[A-Za-z][A-Za-z0-9_.+#]{2,}", text):
+        word = m.group()
+        keywords.add(word.lower())
+    for m in _re.finditer(r"[一-鿿]{2,6}", text):
+        keywords.add(m.group())
+    return keywords
+
+
+def _check_jd_coverage(args: dict[str, Any], jd_text: str) -> dict[str, Any]:
+    """确定性 JD 关键词覆盖率检查（纯代码，不依赖 LLM）。"""
+    jd_keywords = _extract_keywords_from_text(jd_text)
+    jd_keywords -= _JD_HINT_CJK
+    jd_keywords = {k for k in jd_keywords if len(k) >= 3 or (len(k) >= 2 and _re.search(r"[A-Za-z]", k))}
+    if len(jd_keywords) > 30:
+        en_words = {k for k in jd_keywords if _re.search(r"[A-Za-z]", k)}
+        cn_words = {k for k in jd_keywords if not _re.search(r"[A-Za-z]", k)}
+        cn_sorted = sorted(cn_words, key=len, reverse=True)
+        jd_keywords = en_words | set(cn_sorted[: max(0, 30 - len(en_words))])
+
+    if not jd_keywords:
+        return {"passed": True, "coverage_ratio": 1.0, "matched": [], "missing": [], "note": "JD 中未提取到有效关键词"}
+
+    resume_text_parts: list[str] = []
+    resume_text_parts.append(str(args.get("skills") or ""))
+    resume_text_parts.append(str(args.get("self_evaluation") or ""))
+    for section in ("experience", "projects", "education"):
+        items = args.get(section) or []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    for key in ("details", "description", "position", "company", "school", "name"):
+                        val = item.get(key)
+                        if val:
+                            resume_text_parts.append(str(val))
+
+    resume_text = " ".join(resume_text_parts)
+    resume_keywords = _extract_keywords_from_text(resume_text)
+
+    matched = jd_keywords & resume_keywords
+    missing = jd_keywords - resume_keywords
+    coverage_ratio = len(matched) / len(jd_keywords) if jd_keywords else 1.0
+
+    result: dict[str, Any] = {
+        "passed": coverage_ratio >= 0.15,
+        "coverage_ratio": round(coverage_ratio, 3),
+        "matched": sorted(matched)[:15],
+        "missing": sorted(missing)[:15],
+        "total_jd_keywords": len(jd_keywords),
+        "total_matched": len(matched),
+    }
+
+    if coverage_ratio < 0.15:
+        result["severity"] = "error"
+        result["note"] = f"JD 关键词覆盖率 {coverage_ratio:.0%} 过低，简历未能覆盖岗位核心要求。"
+    elif coverage_ratio < 0.3:
+        result["severity"] = "warning"
+        result["note"] = f"JD 关键词覆盖率 {coverage_ratio:.0%} 偏低，建议补充更多岗位相关关键词。"
+    else:
+        result["severity"] = "ok"
+
+    return result
+
+
+# Note: _normalize_evidence is defined in agent_runtime.py (uses _rich_text_to_lines)
