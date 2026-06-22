@@ -1,9 +1,22 @@
-import { Button, DatePicker, Form, Input, Message, Modal, Popconfirm, Select, TimePicker, Typography } from '@arco-design/web-react'
+import { Button, DatePicker, Form, Input, Message, Modal, Popconfirm, TimePicker, Typography } from '@arco-design/web-react'
 import { IconLeft, IconRight, IconArrowLeft } from '@arco-design/web-react/icon'
 import { useEffect, useState } from 'react'
 import { apiRequest } from '../shared/api'
 
 type Event = { id: number; title: string; description: string | null; event_date: string; event_time: string | null; color: string; created_at: string }
+
+function ColorPicker({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
+  return (
+    <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+      {COLORS.map(c => (
+        <div key={c.value} onClick={() => onChange?.(c.value)} style={{cursor:'pointer',padding:'6px 12px',borderRadius:6,border: value===c.value ? `2px solid ${c.value}` : '2px solid transparent',background: c.value+'15',display:'flex',alignItems:'center',gap:6,transition:'border 0.15s'}}>
+          <span style={{width:14,height:14,borderRadius:4,background:c.value,display:'inline-block'}}/>
+          <span style={{fontSize:13,color:'#1d2129'}}>{c.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 const WEEKDAYS = ['一','二','三','四','五','六','日']
 const COLORS = [{label:'蓝色',value:'#165dff'},{label:'绿色',value:'#00b42a'},{label:'橙色',value:'#ff7d00'},{label:'红色',value:'#f53f3f'},{label:'紫色',value:'#722ed1'}]
@@ -40,7 +53,7 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
     ? events.filter(e => e.event_date === filterDate)
     : events.filter(e => e.event_date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`))
 
-  const openCreate = (d: number) => { setSelectedDate(new Date(year, month, d)); setEditingEvent(null); form.resetFields(); form.setFieldsValue({ event_date: dateStr(d) }); setModalVisible(true) }
+  const openCreate = (d: number) => { setSelectedDate(new Date(year, month, d)); setEditingEvent(null); form.resetFields(); form.setFieldsValue({ event_date: dateStr(d), color: COLORS[0].value }); setModalVisible(true) }
   const openEdit = (evt: Event) => { setEditingEvent(evt); form.setFieldsValue({title:evt.title,description:evt.description??'',color:evt.color,event_date:evt.event_date,event_time:evt.event_time??''}); setModalVisible(true) }
 
   const handleSave = async () => {
@@ -73,7 +86,7 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
 
   return (
     <div style={{ width: '100%', padding: '0 28px 40px', overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 0 16px' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 48px 16px 0' }}>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           {onBack && <Button type="text" icon={<IconArrowLeft/>} onClick={onBack} style={{padding:0}}/>}
           <Typography.Title heading={5} style={{margin:0}}>日程管理</Typography.Title>
@@ -136,8 +149,8 @@ export function CalendarPage({ onBack }: { onBack?: () => void }) {
         <Form form={form} layout="vertical" style={{marginTop:16}}>
           <Form.Item label="标题" field="title" rules={[{required:true,message:'请输入标题'}]}><Input placeholder="如：面试、课程、会议"/></Form.Item>
           <Form.Item label="描述" field="description"><Input.TextArea placeholder="备注信息（可选）" autoSize={{minRows:2,maxRows:4}}/></Form.Item>
-          <Form.Item label="颜色标记" field="color">
-            <Select placeholder="选择颜色">{COLORS.map(c => <Select.Option key={c.value} value={c.value}><span style={{display:'flex',alignItems:'center',gap:8}}><span style={{width:12,height:12,borderRadius:3,background:c.value,display:'inline-block'}}/>{c.label}</span></Select.Option>)}</Select>
+          <Form.Item label="颜色标记" field="color" rules={[{required:true,message:'请选择颜色'}]}>
+            <ColorPicker />
           </Form.Item>
           <Form.Item label="日期" field="event_date" rules={[{required:true,message:'请选择日期'}]}>
             <DatePicker format="YYYY-MM-DD" placeholder="选择日期" />

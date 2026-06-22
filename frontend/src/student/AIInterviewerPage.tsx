@@ -1491,20 +1491,28 @@ export function AIInterviewerPage({ onInterviewActiveChange }: { onInterviewActi
 
         <div className="interview-field">
           <span>大模型</span>
-          <Select
-            value={selectedModelId ? String(selectedModelId) : undefined}
-            onChange={(val) => setSelectedModelId(Number(val) || undefined)}
-            placeholder="选择面试官大脑"
-            disabled={session?.status === 'active'}
-            style={{ width: '100%' }}
-          >
-            {modelOptions.map((m) => (
-              <Select.Option key={m.id} value={String(m.id)} title={`${m.display_name} · ${m.model_identifier}`}>{m.display_name}</Select.Option>
-            ))}
-          </Select>
+          {modelOptions.length === 0 ? (
+            <div className="interview-model-empty-select">
+              暂无可用模型
+            </div>
+          ) : (
+            <Select
+              value={selectedModelId ? String(selectedModelId) : undefined}
+              onChange={(val) => setSelectedModelId(Number(val) || undefined)}
+              placeholder="选择模型"
+              disabled={session?.status === 'active'}
+              style={{ width: '100%' }}
+            >
+              {modelOptions.map((m) => (
+                <Select.Option key={m.id} value={String(m.id)} title={`${m.display_name} · ${m.model_identifier}`}>{m.display_name}</Select.Option>
+              ))}
+            </Select>
+          )}
           {modelError && <small className="interview-warning-text">{modelError}</small>}
           {modelOptions.length === 0 && !modelError && (
-            <small className="interview-warning-text">暂无对学生开放的模型，请管理员在模型广场开启「对学生开放」并配置 API Key。</small>
+            <div className="interview-model-empty-hint">
+              暂无对学生开放的模型，请管理员在模型广场开启「对学生开放」并配置 API Key。
+            </div>
           )}
         </div>
 

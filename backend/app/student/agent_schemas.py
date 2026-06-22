@@ -29,6 +29,7 @@ class AgentModelOptionResponse(BaseModel):
     default_temp: float | None
     max_output: int | None
     timeout_sec: int | None
+    supported_efforts: list[str] = ["low", "medium", "high"]
     model_config = {"from_attributes": True}
 
 

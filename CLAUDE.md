@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-智培职联（CareerForge-AI）—— 面向高校学生的 AI 就业辅助平台。学生端内置两个对话智能体：**AI简历助手**（制作/优化简历）和 **AI面试官**（模拟面试训练），均采用 Agentic Loop（Model + Harness）架构，对话历史存储在同一张表里通过 `agent_type` 字段区分。管理端负责配置模型、Skill、MCP 与系统设置。后端 FastAPI + SQLAlchemy，前端 React 19 + Arco Design，Docker Compose 一键部署。
+CareerForge-AI —— 面向高校学生的 AI 就业辅助平台。学生端内置两个对话智能体：**AI简历助手**（制作/优化简历）和 **AI面试官**（模拟面试训练），均采用 Agentic Loop（Model + Harness）架构，对话历史存储在同一张表里通过 `agent_type` 字段区分。管理端负责配置模型、Skill、MCP 与系统设置。后端 FastAPI + SQLAlchemy，前端 React 19 + Arco Design，Docker Compose 一键部署。
 
 ## 理解需求的方式（铁律）
 
@@ -94,7 +94,17 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
    - `agent_type == "interviewer"` → 返回 `INTERVIEWER_SYSTEM_PROMPT`（面试官人格，禁止操作简历）。
    - 其他 → 返回简历助手 prompt（反幻觉铁律 + 简历制作/优化两条流程 + 联网指引）。
 
-5. **session 区分**：`StudentAgentSession.agent_type VARCHAR(32) DEFAULT 'resume'`，迁移 `20260610_0016`。`POST /student/master/sessions` 从 `AgentSessionCreate.agent_type` 读取并写入。
+5. **思考程度系统**（`reasoning_effort`）：默认「自动」模式，由 `auto_classify_effort()` 根据消息内容自动判断（问候→low、简历操作→medium、JD分析→high、全面重写→xhigh）。前端可手动选六档：auto/low/medium/high/xhigh/max。各模型实际生效方式：
+   - OpenAI 推理系列：原生 `reasoning_effort` API 参数
+   - Anthropic Claude：`thinking.budgetTokens`（4K~31K），temperature 强制 1.0
+   - Google Gemini：`thinkingConfig.thinkingBudget`（4K~32K），temperature 强制 1.0
+   - DeepSeek：推理始终开启，不发额外参数
+   - 其他模型：仅 system prompt 文字引导
+   - 配置：`get_model_effort_config()` → `supported_efforts` / `effort_api_params` / `reasoning_temp`
+   - 温度：`get_model_default_temperature()` 按模型 ID 设置（Qwen=0.55, Gemini=1.0, GLM=1.0 等）
+   - 模型列表 API 返回 `supported_efforts` 字段，前端据此动态过滤可选档位
+
+6. **session 区分**：`StudentAgentSession.agent_type VARCHAR(32) DEFAULT 'resume'`，迁移 `20260610_0016`。`POST /student/master/sessions` 从 `AgentSessionCreate.agent_type` 读取并写入。
 
 SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.completed`。
 

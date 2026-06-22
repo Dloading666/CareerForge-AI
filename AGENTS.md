@@ -16,7 +16,7 @@
 
 ## 项目是什么
 
-智培职联（CareerForge-AI）：面向高校学生的 AI 就业辅助平台。
+CareerForge-AI：面向高校学生的 AI 就业辅助平台。
 
 - **学生端**两个对话智能体：**AI简历助手**（自研 Agentic Loop，能直接读写简历中心的在线简历）和 **AI面试官**（独立的结构化面试 API，不走 Agentic Loop）。
 - **管理端**：模型广场、Skill、MCP、主智能体路由配置。
@@ -88,6 +88,14 @@ docker compose up -d --build          # MySQL(3307) · Redis(6380) · backend(80
 
 自研 Agentic Loop（Model + Harness）：模型用 OpenAI function-calling 自主调工具，Harness 执行/校验/审计并回灌，直到最终答复或触顶 `max_iterations`（默认 8）。
 
+- **思考程度系统**（`reasoning_effort`）：前端可选「自动/低/中/高/超高/极限」六档。默认「自动」模式由 `auto_classify_effort()` 根据消息内容、JD、附件自动判断难度。各模型的实际控制方式不同：
+  - **OpenAI o1/o3/o4/gpt-5**：原生 `reasoning_effort` API 参数
+  - **Anthropic Claude**：`thinking.type: "enabled"` + `budgetTokens`（4K/10K/16K/31K）
+  - **Google Gemini**：`thinkingConfig` + `thinkingBudget`（4K/10K/16K/24-32K）
+  - **DeepSeek**：不发送参数（推理始终开启），仅靠 system prompt 引导
+  - **其他模型**：仅 system prompt 文字引导，无 API 级控制
+  - 配置函数：`get_model_effort_config()` 返回 `supported_efforts` / `effort_api_params` / `reasoning_temp`
+  - 温度：推理模式下 Claude/Gemini 强制 1.0；其他模型按 `_MODEL_TEMP_MAP` 设置默认值（Qwen=0.55, GLM=1.0 等）
 - **工具池按 `session.agent_type` 路由**：`"resume"`（完整池：读档案/读简历/生成/优化/更新/导出 PDF/联网/记忆工具）；`"interviewer"` 聊天池已基本弃用（面试官走独立的 `/student/interviews` API）。
 - **工作区模型**（类比 Codex：简历=代码库）：`session.active_resume_id` 绑定当前工作简历；`read_resume` 返回两层（全部简历的 id/标题/时间列表 + 工作简历全文）；`update_resume_data` 做章节级局部合并，缺省 resume_id 时落到工作简历；`base_updated_at` 做写前版本检查防覆盖用户手改。
 - **写前快照**：AI 修改简历前自动存 `student_resume_revision`（每份保留 20 条），`POST /student/resumes/{id}/revert` 撤销。

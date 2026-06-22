@@ -30,7 +30,7 @@ class SMTPMailProvider(BaseMailProvider):
             "reset": "重置密码",
         }.get(scene, scene)
         message = EmailMessage()
-        message["Subject"] = f"智培职联 {scene_label}验证码"
+        message["Subject"] = f"CareerForge {scene_label}验证码"
         message["From"] = self.settings.smtp_from_email
         message["To"] = email
         message.set_content(

@@ -1,31 +1,15 @@
 import {
-  Alert, Button, Card, Drawer, Form, Input, InputNumber,
+  Alert, Button, Card, Drawer, Form, Input,
   Modal, Popconfirm, Select, Space, Switch, Tag,
 } from '@arco-design/web-react'
 import { IconEdit, IconDelete, IconPlayArrow, IconPlus, IconThunderbolt, IconSearch } from '@arco-design/web-react/icon'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '../shared/api'
 
 interface ModelItem { id: number; display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key_cipher: string | null; model_identifier: string; context_length: number | null; default_temp: number | null; max_output: number | null; timeout_sec: number | null; open_to_student: boolean; status: string }
 interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
 const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: '', base_url: '', api_key: '', model_identifier: '', open_to_student: false }
 
-// → Base URL 预置映射：选择「供应商 + 协议」后自动填充。所有项可在 UI 手动覆盖。
-const BASE_URL_PRESETS: Record<string, Record<string, string>> = {
-  OpenAI:     { openai: 'https://api.openai.com/v1' },
-  DeepSeek:   { openai: 'https://api.deepseek.com/v1' },
-  Anthropic:  { anthropic: 'https://api.anthropic.com/v1' },
-  '通义千问':   { openai: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  '智谱':        { openai: 'https://open.bigmodel.cn/api/paas/v4' },
-  '月之暗面':    { openai: 'https://api.moonshot.cn/v1' },
-  Azure:      { azure: 'https://YOUR_RESOURCE.openai.azure.com' },
-  Ollama:     { openai: 'http://localhost:11434/v1' },
-  '小米':       { openai: 'https://token-plan-cn.xiaomimimo.com/v1' },
-}
-
-function lookupBaseUrl(provider: string, protocols: string): string {
-  return BASE_URL_PRESETS[provider]?.[protocols] ?? ''
-}
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
 const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
 
@@ -33,8 +17,6 @@ export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null)
-  const [lastAutoFilledUrl, setLastAutoFilledUrl] = useState<string>('')
-  const userTouchedBaseUrlRef = useRef<boolean>(false)
   const [form, setForm] = useState<ModelFormData>({ ...EMPTY_MODEL })
   const [submitting, setSubmitting] = useState(false)
   const [testingIds, setTestingIds] = useState<Set<number>>(new Set())
@@ -107,51 +89,37 @@ export function ModelPlaza() {
     setDrawerOpen(true)
   }
 
-  const handleProviderChange = (v: string) => {
-    setForm(p => {
-      // 协议未选时，用该供应商的第一个预设 URL 先填充；协议选了则优先用准确映射。
-      let suggested = ''
-      if (p.protocols) {
-        suggested = lookupBaseUrl(v, p.protocols)
-      } else {
-        const preset = BASE_URL_PRESETS[v]
-        if (preset) {
-          suggested = Object.values(preset)[0] || ''
-        }
-      }
-      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrl)
-      if (shouldAutoFill) {
-        setLastAutoFilledUrl(suggested)
-        return { ...p, provider: v, base_url: suggested }
-      }
-      return { ...p, provider: v }
-    })
-  }
-
-  const handleProtocolsChange = (v: string) => {
-    setForm(p => {
-      const suggested = lookupBaseUrl(p.provider, v)
-      const shouldAutoFill = suggested && !userTouchedBaseUrlRef.current && (p.base_url === '' || p.base_url === lastAutoFilledUrl)
-      if (shouldAutoFill) {
-        setLastAutoFilledUrl(suggested)
-        return { ...p, protocols: v, base_url: suggested }
-      }
-      return { ...p, protocols: v }
-    })
-  }
-
-  const handleBaseUrlChange = (v: string) => {
-    userTouchedBaseUrlRef.current = true
-    setForm(p => ({ ...p, base_url: v }))
-  }
-
   const handleSubmit = async () => {
+    if (!form.model_identifier.trim()) { showNotify('error', '请填写模型名称'); return }
+    if (!form.base_url.trim()) { showNotify('error', '请填写 Base URL'); return }
     setSubmitting(true)
     try {
-      const p: Record<string, unknown> = { ...form }
-      if (!p.api_key) delete p.api_key
-      if (editingModel) { await apiRequest(`/api/v1/admin/models/${editingModel.id}`, { method: 'PUT', body: JSON.stringify(p) }); showNotify('success', '模型已更新') }
-      else { await apiRequest('/api/v1/admin/models', { method: 'POST', body: JSON.stringify(p) }); showNotify('success', '模型已创建') }
+      if (editingModel) {
+        const p: Record<string, unknown> = {
+          model_identifier: form.model_identifier.trim(),
+          display_name: form.model_identifier.trim(),
+          base_url: form.base_url.trim(),
+          capability: form.capability,
+        }
+        if (form.api_key) p.api_key = form.api_key
+        await apiRequest(`/api/v1/admin/models/${editingModel.id}`, { method: 'PUT', body: JSON.stringify(p) })
+        showNotify('success', '模型已更新')
+      } else {
+        // 新建模式
+        const p: Record<string, unknown> = {
+          display_name: form.model_identifier.trim(),
+          provider: '',
+          deploy_type: 'cloud',
+          capability: 'text',
+          protocols: 'openai',
+          base_url: form.base_url.trim(),
+          model_identifier: form.model_identifier.trim(),
+          open_to_student: false,
+        }
+        if (form.api_key) p.api_key = form.api_key
+        await apiRequest('/api/v1/admin/models', { method: 'POST', body: JSON.stringify(p) })
+        showNotify('success', '模型已创建')
+      }
       setDrawerOpen(false); fetchModels()
     } catch (e) { showNotify('error', e instanceof ApiError ? e.message : '操作失败') }
     finally { setSubmitting(false) }
@@ -269,16 +237,16 @@ export function ModelPlaza() {
       <Drawer title={editingModel ? '编辑模型' : '添加模型'} visible={drawerOpen} width={520} onCancel={() => setDrawerOpen(false)}
         footer={<Space><Button onClick={() => setDrawerOpen(false)}>取消</Button><Button type="primary" loading={submitting} onClick={handleSubmit}>{editingModel ? '保存' : '创建'}</Button></Space>}>
         <Form layout="vertical" style={{ paddingRight: 8 }}>
-          <Form.Item label="展示名称" required><Input value={form.display_name} onChange={v => setForm(p => ({...p, display_name: v}))} placeholder="如 DeepSeek 对话-生产" /></Form.Item>
-          <Form.Item label="供应商" required><Select value={form.provider} onChange={handleProviderChange} placeholder="选择供应商" allowCreate>{['OpenAI','DeepSeek','Anthropic','通义千问','智谱','月之暗面','Azure','Ollama'].map(v=><Select.Option key={v} value={v}>{v}</Select.Option>)}</Select></Form.Item>
-          <Form.Item label="部署位置"><Select value={form.deploy_type} onChange={v => setForm(p => ({...p, deploy_type: v}))}><Select.Option value="cloud">云端</Select.Option><Select.Option value="local">本地</Select.Option><Select.Option value="third_party">第三方</Select.Option></Select></Form.Item>
-          <Form.Item label="能力类型"><Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}><Select.Option value="multimodal">多模态</Select.Option><Select.Option value="text">纯文本</Select.Option><Select.Option value="tts">TTS 语音</Select.Option></Select></Form.Item>
-          <Form.Item label="协议"><Select value={form.protocols} onChange={handleProtocolsChange}>{['openai','anthropic','azure'].map(x=><Select.Option key={x} value={x}>{x}</Select.Option>)}</Select></Form.Item>
-          <Form.Item label="Base URL" required extra={(form.base_url === '' || form.base_url === lastAutoFilledUrl) ? "根据供应商 + 协议自动填充，可手动修改" : "已手动修改，改变供应商/协议不再覆盖"}><Input value={form.base_url} onChange={handleBaseUrlChange} placeholder="https://api.deepseek.com/v1" /></Form.Item>
-          <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : '可选'}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
           <Form.Item label="模型名称" required><Input value={form.model_identifier} onChange={v => setForm(p => ({...p, model_identifier: v}))} placeholder="deepseek-chat" /></Form.Item>
-          <Form.Item label="超时(秒)"><InputNumber value={form.timeout_sec} onChange={v => setForm(p => ({...p, timeout_sec: v}))} placeholder="30" style={{ width: '100%' }} /></Form.Item>
-          <Form.Item label="对学生开放"><Switch checked={form.open_to_student} onChange={v => setForm(p => ({...p, open_to_student: v}))} /></Form.Item>
+          <Form.Item label="Base URL" required><Input value={form.base_url} onChange={v => setForm(p => ({...p, base_url: v}))} placeholder="https://api.deepseek.com/v1" /></Form.Item>
+          <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : undefined}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
+          <Form.Item label="能力类型">
+            <Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}>
+              <Select.Option value="text">纯文本</Select.Option>
+              <Select.Option value="multimodal">多模态</Select.Option>
+              <Select.Option value="tts">TTS 语音</Select.Option>
+            </Select>
+          </Form.Item>
         </Form>
       </Drawer>
       <Modal

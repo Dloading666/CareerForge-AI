@@ -36,16 +36,15 @@ def generate_captcha() -> dict:
 
 
 def verify_captcha(captcha_id: str, code: str) -> bool:
-    """校验图形验证码，成功后立即删除（一次性）。"""
+    """校验图形验证码，原子删除（一次性）。使用 GETDEL 防止并发复用。"""
     if not captcha_id or not code:
         return False
     try:
         client = get_redis()
         key = _redis_key(captcha_id)
-        answer = client.get(key)
+        answer = client.getdel(key)  # 原子：GET + DELETE
         if answer is None:
             return False
-        client.delete(key)
         return str(answer).strip().upper() == code.strip().upper()
     except Exception:
         return False
@@ -55,39 +54,66 @@ def _render_image(code: str) -> str:
     """用 Pillow 渲染带干扰的验证码图片，返回 base64（不含前缀）。"""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-    width, height = 120, 44
-    image = Image.new("RGB", (width, height), color=(245, 247, 252))
+    width, height = 200, 72
+    bg = random.choice([(245, 248, 255), (255, 248, 245), (248, 255, 248), (255, 252, 240)])
+    image = Image.new("RGB", (width, height), color=bg)
     draw = ImageDraw.Draw(image)
 
-    font = _load_font(28)
+    font = _load_font(56)
 
-    # 背景干扰线
-    for _ in range(6):
-        x1, y1 = random.randint(0, width), random.randint(0, height)
-        x2, y2 = random.randint(0, width), random.randint(0, height)
-        draw.line([(x1, y1), (x2, y2)], fill=_soft_color(), width=1)
+    # 背景干扰弧线
+    for _ in range(4):
+        x1, y1 = random.randint(-20, width), random.randint(-10, height + 10)
+        x2, y2 = random.randint(-20, width), random.randint(-10, height + 10)
+        mid_x = (x1 + x2) // 2 + random.randint(-40, 40)
+        mid_y = random.randint(-10, height + 10)
+        points = []
+        for t_i in range(20):
+            t = t_i / 19.0
+            px = int((1 - t) ** 2 * x1 + 2 * (1 - t) * t * mid_x + t ** 2 * x2)
+            py = int((1 - t) ** 2 * y1 + 2 * (1 - t) * t * mid_y + t ** 2 * y2)
+            points.append((px, py))
+        line_color = random.choice([
+            (180, 200, 230), (210, 180, 180), (180, 210, 180),
+            (200, 190, 170), (190, 180, 210),
+        ])
+        if len(points) >= 2:
+            draw.line(points, fill=line_color, width=2)
 
     # 干扰点
-    for _ in range(120):
-        draw.point((random.randint(0, width), random.randint(0, height)), fill=_soft_color())
+    for _ in range(80):
+        draw.point(
+            (random.randint(0, width), random.randint(0, height)),
+            fill=(random.randint(160, 220), random.randint(160, 220), random.randint(160, 230)),
+        )
 
-    # 逐字符绘制，带随机偏移和颜色
-    char_w = width // (len(code) + 1)
+    # 逐字符绘制：随机颜色 + 随机旋转 + 随机位置
+    colors = [
+        (30, 80, 180),   # 蓝
+        (180, 50, 30),   # 红
+        (30, 140, 60),   # 绿
+        (160, 80, 20),   # 棕
+        (100, 40, 160),  # 紫
+        (20, 130, 150),  # 青
+    ]
+    start_x = 16
+    spacing = (width - 32) // len(code)
     for index, char in enumerate(code):
-        color = (random.randint(20, 110), random.randint(20, 110), random.randint(80, 180))
-        x = char_w * (index + 1) - char_w // 2 + random.randint(-3, 3)
-        y = random.randint(2, 10)
-        draw.text((x, y), char, font=font, fill=color)
+        color = random.choice(colors)
+        x = start_x + spacing * index + random.randint(-4, 4)
+        y = random.randint(4, 14)
+        char_img = Image.new("RGBA", (60, 68), (0, 0, 0, 0))
+        char_draw = ImageDraw.Draw(char_img)
+        char_draw.text((4, 2), char, font=font, fill=(*color, 255))
+        angle = random.randint(-25, 25)
+        char_img = char_img.rotate(angle, expand=True, resample=Image.BICUBIC)
+        image.paste(char_img, (x, y), char_img)
 
     image = image.filter(ImageFilter.SMOOTH)
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("ascii")
-
-
-def _soft_color() -> tuple[int, int, int]:
-    return (random.randint(150, 220), random.randint(150, 220), random.randint(170, 230))
 
 
 def _load_font(size: int):

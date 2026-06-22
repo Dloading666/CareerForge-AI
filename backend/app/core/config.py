@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_name: str = Field(default="智培职联 AI 智能体平台", alias="APP_NAME")
+    app_name: str = Field(default="CareerForge AI 智能体平台", alias="APP_NAME")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
     frontend_origin: str = Field(default="http://localhost:5173", alias="FRONTEND_ORIGIN")
     database_url: str = Field(default="sqlite:///./zhipei_auth.db", alias="DATABASE_URL")
@@ -28,9 +28,6 @@ class Settings(BaseSettings):
     login_fail_limit: int = Field(default=10, alias="LOGIN_FAIL_LIMIT")
     login_fail_window_seconds: int = Field(default=600, alias="LOGIN_FAIL_WINDOW_SECONDS")
     login_lock_seconds: int = Field(default=300, alias="LOGIN_LOCK_SECONDS")
-
-    api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
-    api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")
 
     api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
     api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")

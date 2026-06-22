@@ -111,9 +111,10 @@ export type AgentModelOption = {
   default_temp: number | null
   max_output: number | null
   timeout_sec: number | null
+  supported_efforts: string[]
 }
 
-type ReasoningEffort = 'low' | 'medium' | 'high'
+type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -138,10 +139,13 @@ export interface AgentChatViewProps {
 
 const MAX_RESUMES = 6
 
-const reasoningOptions: { value: ReasoningEffort; label: string }[] = [
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
+const reasoningOptions: { value: ReasoningEffort; label: string; desc?: string }[] = [
+  { value: 'auto', label: '自动', desc: '根据任务难度智能选择' },
+  { value: 'low', label: '低', desc: '快速响应，简洁建议' },
+  { value: 'medium', label: '中', desc: '平衡速度与质量' },
+  { value: 'high', label: '高', desc: '充分分析，补齐细节' },
+  { value: 'xhigh', label: '超高', desc: '系统拆解，多角度验证' },
+  { value: 'max', label: '极限', desc: '穷举推理，最全面分析' },
 ]
 
 // ── Resume list types (for workspace selector) ────────────────────────────
@@ -172,6 +176,9 @@ function ModelReasoningPicker({
   const [popupVisible, setPopupVisible] = useState(false)
   const [modelMenuVisible, setModelMenuVisible] = useState(false)
   const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
+  const supportedEfforts = selectedModel?.supported_efforts ?? ['low', 'medium', 'high']
+  // "auto" 始终可用（服务端处理），其他档位按模型支持过滤
+  const filteredOptions = reasoningOptions.filter((opt) => opt.value === 'auto' || supportedEfforts.includes(opt.value))
   const selectedReasoning = reasoningOptions.find((option) => option.value === reasoningEffort)
 
   const closePicker = () => {
@@ -206,7 +213,7 @@ function ModelReasoningPicker({
             <span>推理</span>
           </div>
           <div className="composer-settings-options">
-            {reasoningOptions.map((option) => {
+            {filteredOptions.map((option) => {
               const selected = option.value === reasoningEffort
               return (
                 <button
@@ -254,7 +261,17 @@ function ModelReasoningPicker({
                       type="button"
                       className={`composer-settings-option${selected ? ' selected' : ''}`}
                       title={`${model.provider} · ${model.model_identifier}`}
-                      onClick={() => { onModelChange(model.id); closePicker() }}
+                      onClick={() => {
+                        onModelChange(model.id)
+                        // 切换模型时，如果当前 effort 不是 auto 且不被新模型支持，自动调整
+                        if (reasoningEffort !== 'auto') {
+                          const newEfforts = model.supported_efforts ?? ['low', 'medium', 'high']
+                          if (!newEfforts.includes(reasoningEffort)) {
+                            onReasoningChange((newEfforts.includes('medium') ? 'medium' : newEfforts[0]) as ReasoningEffort)
+                          }
+                        }
+                        closePicker()
+                      }}
                     >
                       <span>{model.display_name}</span>
                       {selected && <IconCheck />}
@@ -284,9 +301,21 @@ function ResumeSelector({
   const [resumes, setResumes] = useState<ResumeSummary[]>([])
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const activeResume = resumes.find((r) => r.id === activeResumeId)
   const fetchedRef = useRef(false)
+
+  useEffect(() => {
+    if (!popupVisible) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setPopupVisible(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [popupVisible])
 
   const fetchResumes = async () => {
     setLoading(true)
@@ -370,7 +399,7 @@ function ResumeSelector({
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={containerRef} style={{ position: 'relative' }}>
       <button
         type="button"
         className="attachment-chip"
@@ -379,11 +408,14 @@ function ResumeSelector({
           borderStyle: 'dashed',
           background: 'transparent',
           color: '#86909C',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
         }}
         disabled={disabled}
         onClick={handleOpen}
       >
-        📄
+        <IconFile style={{ fontSize: 15, opacity: 0.7 }} />
         <span>选择简历</span>
       </button>
       {popupVisible && (
@@ -1057,7 +1089,7 @@ export function AgentChatView({
   const [streaming, setStreaming] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('auto')
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [activeResumeId, setActiveResumeId] = useState<number | null>(null)
@@ -1066,19 +1098,28 @@ export function AgentChatView({
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
-  // 新用户提示：个人档案未填写完整（教育/经历/技能等任一板块缺失）时，弹窗建议先去完善；
-  // 注意：注册时系统会给默认姓名「同学」，所以不能只看姓名，要看整体完整度。填完整后自动不再弹。
+  // 新用户提示：个人档案未填写完整时弹窗。档案完善后永不弹出。
   const [profilePromptVisible, setProfilePromptVisible] = useState(false)
-  const profilePromptHandledRef = useRef(false)  // 本次加载只判定一次，避免重复弹
+  const profilePromptHandledRef = useRef(false)
 
   useEffect(() => {
     if (agentType !== 'resume' || messages.length > 0 || profilePromptHandledRef.current) return
+    // 如果用户之前已关闭过弹窗，本次不再检查
+    if (localStorage.getItem('zhipei-profile-prompt-dismissed') === '1') {
+      profilePromptHandledRef.current = true
+      return
+    }
     apiRequest<{ items: Record<string, boolean>; missing: string[] }>('/api/v1/student/profile/completeness')
       .then((c) => {
         profilePromptHandledRef.current = true
-        if ((c.missing?.length ?? 0) > 0) setProfilePromptVisible(true)
+        if ((c.missing?.length ?? 0) > 0) {
+          setProfilePromptVisible(true)
+        } else {
+          // 档案已完善，标记为不再弹出
+          localStorage.setItem('zhipei-profile-prompt-dismissed', '1')
+        }
       })
-      .catch(() => {})
+      .catch(() => { profilePromptHandledRef.current = true })
   }, [agentType, messages.length])
 
 
@@ -1945,7 +1986,7 @@ export function AgentChatView({
       <Modal
         visible={profilePromptVisible}
         title="欢迎使用 👋"
-        onCancel={() => setProfilePromptVisible(false)}
+        onCancel={() => { setProfilePromptVisible(false); localStorage.setItem('zhipei-profile-prompt-dismissed', '1') }}
         okText="去完善个人档案"
         cancelText="暂不"
         onOk={() => { setProfilePromptVisible(false); onOpenProfile?.() }}

@@ -54,10 +54,13 @@ export const DEFAULT_BASIC_ICONS: Partial<Record<BasicFieldKey, string>> = {
   location: 'location',
 }
 
+export const RESUME_PHOTO_WIDTH = 100
+export const RESUME_PHOTO_HEIGHT = 125
+
 export const DEFAULT_PHOTO_CONFIG: PhotoConfig = {
-  width: 90,
-  height: 120,
-  aspectRatio: '1:1',
+  width: RESUME_PHOTO_WIDTH,
+  height: RESUME_PHOTO_HEIGHT,
+  aspectRatio: '4:5',
   borderRadius: 'none',
   customBorderRadius: 0,
   visible: true,

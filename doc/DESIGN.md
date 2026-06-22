@@ -1,6 +1,6 @@
-# 智培职联（CareerForge-AI）系统设计文档
+# CareerForge-AI 系统设计文档
 
-> 最后更新：2026-06-16（基于当前代码库重新整理）
+> 最后更新：2026-06-22（基于当前代码库重新整理）
 >
 > 产品需求见 `doc/PRD.md`，给 AI 协作者的速查见 `CLAUDE.md` / `AGENTS.md`。
 
@@ -212,6 +212,23 @@ POST /student/master/sessions/{id}/messages/stream
 - `FACT_GUARD_SHADOW_MODE`：可切换仅日志不拦截
 
 **上下文组装**：分层（system + 工作简历状态 + 记忆 + 滚动摘要 + 最近 K 轮全文 + 更早截断）
+
+**思考程度系统**（`reasoning_effort`）：
+- 前端可选六档：`auto` / `low` / `medium` / `high` / `xhigh` / `max`，默认 `auto`
+- `auto` 模式由 `auto_classify_effort()` 根据消息内容自动判断（问候→low、简历操作→medium、JD分析→high、全面重写→xhigh）
+- 配置函数 `get_model_effort_config()` 返回每个模型的 `supported_efforts`（前端可选档位）、`effort_api_params`（API 参数映射）、`reasoning_temp`（推理温度覆盖）
+- 模型列表 API（`GET /student/master/models`）返回 `supported_efforts` 字段，前端据此动态过滤可选档位
+
+| 模型类型 | 生效方式 | supported_efforts |
+|---------|---------|-------------------|
+| OpenAI o1/o3/o4/gpt-5 | 原生 `reasoning_effort` API 参数 | low/medium/high/[xhigh] |
+| Anthropic Claude | `thinking.type: "enabled"` + `budgetTokens`（4K/10K/16K） | low/medium/high |
+| Anthropic Claude 4.6+ | 同上，max=31999 | low/medium/high/max |
+| Google Gemini 2.5 | `thinkingConfig.thinkingBudget`（4K/10K/16K/24-32K） | low/medium/high/max |
+| DeepSeek | 不发送参数（推理始终开启），仅 system prompt 引导 | low/medium/high |
+| 其他模型 | 仅 system prompt 文字引导 | low/medium/high |
+
+- 温度控制：`get_model_default_temperature()` 按模型 ID 设置默认值（Qwen=0.55, Gemini=1.0, GLM=1.0 等），管理端配置优先。推理模式下 Claude/Gemini 强制 temperature=1.0
 
 **RunManager**（`run_manager.py`）：
 - `POST /student/master/sessions/{id}/runs` 启动后台运行

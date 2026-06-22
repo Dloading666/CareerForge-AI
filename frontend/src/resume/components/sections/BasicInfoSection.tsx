@@ -3,7 +3,7 @@ import { IconCamera, IconDelete, IconPlus } from '@arco-design/web-react/icon'
 import { useRef, useState } from 'react'
 
 import { useResumeEditor } from '../../useResumeEditor'
-import { createCustomField } from '../../constants'
+import { createCustomField, RESUME_PHOTO_HEIGHT, RESUME_PHOTO_WIDTH } from '../../constants'
 import { updateResume, uploadResumeAvatar } from '../../api'
 
 const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp'
@@ -114,8 +114,8 @@ export function BasicInfoSection() {
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <div
               style={{
-                width: 72,
-                height: 72,
+                width: RESUME_PHOTO_WIDTH * 0.8,
+                height: RESUME_PHOTO_HEIGHT * 0.8,
                 borderRadius: 8,
                 border: "1px dashed #cbd5e1",
                 background: "#f8fafc",

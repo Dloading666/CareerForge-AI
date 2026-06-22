@@ -90,7 +90,7 @@ export function AnnouncementBellDropdown() {
             }}
           >
             <IconNotification style={{ marginRight: 6, fontSize: 16 }} />
-            Platform Announcements
+            系统公告
           </div>
           {anns.length === 0 ? (
             <div

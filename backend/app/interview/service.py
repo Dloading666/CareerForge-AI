@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -1406,7 +1409,6 @@ def submit_turn(
     raw_next_q = str(parsed.get("next_question") or "").strip()
     qa_score, qa_issues = _qa_score_question(raw_next_q)
     if qa_score < 6 and raw_next_q:
-        logger = __import__("logging").getLogger(__name__)
         logger.warning("submit_turn QA score=%.1f (<6), issues=%s — triggering lightweight retry", qa_score, qa_issues)
         retry_prompt_parts = [
             "你的上一个 next_question 质量不达标，请重新生成一个更具体的追问。",

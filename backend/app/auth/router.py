@@ -15,11 +15,13 @@ from app.auth.schemas import (
     StudentLoginRequest,
     StudentRegisterRequest,
     StudentResetPasswordRequest,
+    UnifiedLoginRequest,
 )
 from app.auth.service import (
     get_current_user,
     login_admin,
     login_student,
+    login_unified,
     logout_refresh_token,
     refresh_access_token,
     register_student,
@@ -41,8 +43,23 @@ def get_captcha():
 
 
 @router.post("/student/email/send-code")
-def student_send_code(payload: StudentEmailCodeSendRequest, db: Session = Depends(get_db)):
-    data = send_student_email_code(db, payload)
+def student_send_code(
+    payload: StudentEmailCodeSendRequest,
+    db: Session = Depends(get_db),
+    x_forwarded_for: Optional[str] = Header(default=None),
+):
+    data = send_student_email_code(db, payload, ip=x_forwarded_for)
+    return ok(data)
+
+
+@router.post("/login")
+def unified_login(
+    payload: UnifiedLoginRequest,
+    db: Session = Depends(get_db),
+    x_forwarded_for: Optional[str] = Header(default=None),
+    user_agent: Optional[str] = Header(default=None),
+):
+    data = login_unified(db, payload, ip=x_forwarded_for, user_agent=user_agent)
     return ok(data)
 
 

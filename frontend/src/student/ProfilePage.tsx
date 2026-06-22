@@ -1201,7 +1201,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       />
       </>
       )}
-      <div style={{ position: 'relative', zIndex: 2, padding: inModal ? 0 : '0 28px 40px' }}>
+      <div style={{ position: 'relative', zIndex: 2, padding: inModal ? 0 : '0 28px 40px', ...(inModal ? { flex: 1, display: 'flex', flexDirection: 'column' } : {}) }}>
         {!inModal && (
         <div
           style={{
@@ -1445,7 +1445,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           />
           <MenuCard
             icon={<IconInfoCircle style={{ fontSize: 26, color: '#ff7d00' }} />}
-            label="关于智培职联"
+            label="关于 CareerForge"
             desc={'注册于 ' + (profile?.created_at ? new Date(profile.created_at).toLocaleDateString('zh-CN') : '-')}
             accentColor="#ff7d00"
           />
@@ -1454,8 +1454,31 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
 
         {inModal && activeTab === 'profile' && (
           <div className="profile-edit-inline">
-            <Tabs activeTab={editTab} onChange={setEditTab} type="rounded" size="small">
-              <Tabs.TabPane key="basic" title={<span><IconUser /> 基本信息</span>}>
+            <div className="profile-edit-layout">
+              <div className="profile-edit-nav">
+                {[
+                  { key: 'basic', icon: <IconUser />, label: '基本信息' },
+                  { key: 'advantage', icon: <IconStar />, label: '求职偏好' },
+                  { key: 'education', icon: <IconBook />, label: '教育经历' },
+                  { key: 'experience', icon: <IconCommon />, label: '工作经历' },
+                  { key: 'projects', icon: <IconCode />, label: '项目经历' },
+                  { key: 'skills', icon: <IconThunderbolt />, label: '专业技能', badge: skillItemCount > 0 ? skillItemCount : undefined },
+                  { key: 'credentials', icon: <IconTrophy />, label: '荣誉与证书' },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`profile-edit-nav-item${editTab === item.key ? ' active' : ''}`}
+                    onClick={() => setEditTab(item.key)}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                    {'badge' in item && item.badge ? <span className="profile-edit-nav-badge">{item.badge}</span> : null}
+                  </button>
+                ))}
+              </div>
+              <div className="profile-edit-content">
+                {editTab === 'basic' && (
                 <Form form={basicForm} layout="vertical" style={{ marginTop: 12 }}>
                   <div className="profile-resume-avatar">
                     <div className="profile-resume-avatar-preview">
@@ -1513,8 +1536,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     <Input.TextArea placeholder="写一句话介绍自己..." maxLength={200} showWordLimit rows={3} />
                   </Form.Item>
                 </Form>
-              </Tabs.TabPane>
-              <Tabs.TabPane key="advantage" title={<span><IconStar /> 求职偏好</span>}>
+              )}
+              {editTab === 'advantage' && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#4e5969', marginBottom: 6 }}>个人优势 / 自我评价</div>
@@ -1540,8 +1563,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     <FieldRow label="期望城市"><Input value={expectedLocation} onChange={setExpectedLocation} placeholder="如：北京" /></FieldRow>
                   </div>
                 </div>
-              </Tabs.TabPane>
-              <Tabs.TabPane key="education" title={<span><IconBook /> 教育经历</span>}>
+              )}
+              {editTab === 'education' && (
                 <div style={{ marginTop: 12 }}>
                   <SectionHeader
                     icon={<IconBook />}
@@ -1630,8 +1653,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     )}
                   />
                 </div>
-              </Tabs.TabPane>
-              <Tabs.TabPane key="experience" title={<span><IconCommon /> 工作经历</span>}>
+              )}
+              {editTab === 'experience' && (
                 <div style={{ marginTop: 12 }}>
                   <SectionHeader
                     icon={<IconCommon />}
@@ -1715,8 +1738,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     )}
                   />
                 </div>
-              </Tabs.TabPane>
-              <Tabs.TabPane key="projects" title={<span><IconCode /> 项目经历</span>}>
+              )}
+              {editTab === 'projects' && (
                 <div style={{ marginTop: 12 }}>
                   <SectionHeader
                     icon={<IconCode />}
@@ -1814,16 +1837,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     )}
                   />
                 </div>
-              </Tabs.TabPane>
-              <Tabs.TabPane
-                key="skills"
-                title={
-                  <span>
-                    <IconThunderbolt /> 专业技能
-                    {skillItemCount > 0 && <Tag color="arcoblue" size="small">{skillItemCount}</Tag>}
-                  </span>
-                }
-              >
+              )}
+              {editTab === 'skills' && (
                 <div style={{ marginTop: 12 }}>
                   <FieldRow label="专业技能">
                     <Input.TextArea
@@ -1836,8 +1851,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     />
                   </FieldRow>
                 </div>
-              </Tabs.TabPane>
-              <Tabs.TabPane key="credentials" title={<span><IconTrophy /> 荣誉与证书</span>}>
+              )}
+              {editTab === 'credentials' && (
                 <div className="profile-credential-sections">
                   <div>
                     <SectionHeader
@@ -1951,8 +1966,9 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     />
                   </div>
                 </div>
-              </Tabs.TabPane>
-            </Tabs>
+              )}
+              </div>
+            </div>
             <div className="profile-edit-actions">
               {lastSavedAt && (
                 <span className="profile-saved-status">
@@ -2096,14 +2112,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                 </div>
                 <div className="profile-account-identity-meta">
                   <span>{profile?.email || '尚未绑定邮箱'}</span>
-                  <span className="profile-account-dot" />
-                  <span>注册于 {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('zh-CN') : '-'}</span>
-                  {typeof profile?.id === 'number' && (
-                    <>
-                      <span className="profile-account-dot" />
-                      <span>ID {profile.id}</span>
-                    </>
-                  )}
                 </div>
                 <div className="profile-account-identity-actions">
                   <Button size="small" type="secondary" icon={<IconCamera />} onClick={() => accountAvatarInputRef.current?.click()}>
@@ -2168,10 +2176,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
               <div className="profile-account-info-label">账号信息</div>
               <div className="profile-account-info-list">
                 <div className="profile-account-info-row">
-                  <span className="profile-account-info-key">账号 ID</span>
-                  <span className="profile-account-info-val">{typeof profile?.id === 'number' ? '#' + profile.id : '-'}</span>
-                </div>
-                <div className="profile-account-info-row">
                   <span className="profile-account-info-key">角色</span>
                   <span className="profile-account-info-val">学生</span>
                 </div>
@@ -2179,16 +2183,12 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                   <span className="profile-account-info-key">登录账号</span>
                   <span className="profile-account-info-val">{profile?.account || profile?.email || '-'}</span>
                 </div>
-                <div className="profile-account-info-row">
-                  <span className="profile-account-info-key">注册时间</span>
-                  <span className="profile-account-info-val">{profile?.created_at ? new Date(profile.created_at).toLocaleString('zh-CN') : '-'}</span>
-                </div>
               </div>
             </div>
           </div>
         )}
         {inModal && activeTab === 'about' && (
-          <div style={{ padding: '40px 36px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+          <div style={{ padding: '40px 36px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
             <img className="global-rail-logo" src="/baidi.png" alt="CareerForge" style={{ width: 64, height: 64, margin: '0 auto 16px' }} />
             <h3 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#1d2129' }}>CareerForge AI</h3>
             <p style={{ margin: '0 0 24px', fontSize: 14, color: '#86909c' }}>智能辅助简历制作、优化表达与岗位匹配</p>

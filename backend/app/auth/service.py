@@ -27,6 +27,7 @@ from app.auth.schemas import (
     StudentChangeEmailRequest,
     StudentRegisterRequest,
     StudentResetPasswordRequest,
+    UnifiedLoginRequest,
 )
 from app.core.config import Settings, get_settings
 from app.core.security import (
@@ -93,11 +94,18 @@ def ensure_admin_bootstrap(db: Session) -> None:
         )
     )
     if existing:
-        existing.username = settings.admin_bootstrap_username
-        existing.email = email
-        existing.password_hash = hash_password(settings.admin_bootstrap_password)
-        existing.display_name = settings.admin_bootstrap_name
-        existing.status = "active"
+        # 仅更新非密码字段，不覆盖已修改的密码
+        if existing.username != settings.admin_bootstrap_username:
+            existing.username = settings.admin_bootstrap_username
+        if existing.email != email:
+            existing.email = email
+        if existing.display_name != settings.admin_bootstrap_name:
+            existing.display_name = settings.admin_bootstrap_name
+        if existing.status != "active":
+            existing.status = "active"
+        # 仅在密码哈希为空时才写入初始密码
+        if not existing.password_hash:
+            existing.password_hash = hash_password(settings.admin_bootstrap_password)
         db.commit()
         return
 
@@ -239,16 +247,39 @@ def clear_login_failures(*, role: str, account: str, ip: Optional[str]) -> None:
         return
 
 
-def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest) -> dict:
+def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest, ip: Optional[str] = None) -> dict:
     settings = get_settings()
     provider = get_mail_provider(settings)
     email = normalize_email(payload.email)
     scene = payload.scene
 
-    # 重置密码场景：先校验图形验证码，通过后才发送邮箱验证码
-    if scene == "reset":
+    # 注册和重置密码场景：先校验图形验证码，通过后才发送邮箱验证码
+    if scene in ("register", "reset"):
         if not verify_captcha(payload.captcha_id or "", payload.captcha_code or ""):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="图形验证码错误或已失效")
+
+    # 邮箱小时/每日发送上限（Redis 计数）
+    try:
+        from app.infra.redis_client import get_redis
+        r = get_redis()
+        hourly_key = f"email_rate:{email}:h"
+        daily_key = f"email_rate:{email}:d"
+        hourly_count = int(r.get(hourly_key) or 0)
+        daily_count = int(r.get(daily_key) or 0)
+        if hourly_count >= 5:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="该邮箱发送过于频繁，请 1 小时后再试")
+        if daily_count >= 10:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="该邮箱今日发送次数已达上限")
+        # IP 限流
+        if ip:
+            ip_key = f"email_rate:ip:{ip}:h"
+            ip_count = int(r.get(ip_key) or 0)
+            if ip_count >= 20:
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="当前 IP 发送过于频繁，请稍后再试")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Redis 不可用时限流降级
 
     existing_user = db.scalar(select(StudentUser).where(StudentUser.email == email, StudentUser.is_deleted.is_(False)))
     if scene == "register" and existing_user:
@@ -290,6 +321,24 @@ def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest) -
 
     db.commit()
     provider.send_code(email=email, scene=scene, code=code)
+
+    # 发送成功后递增 Redis 计数
+    try:
+        r = get_redis()
+        pipe = r.pipeline()
+        hourly_key = f"email_rate:{email}:h"
+        daily_key = f"email_rate:{email}:d"
+        pipe.incr(hourly_key)
+        pipe.expire(hourly_key, 3600)
+        pipe.incr(daily_key)
+        pipe.expire(daily_key, 86400)
+        if ip:
+            ip_key = f"email_rate:ip:{ip}:h"
+            pipe.incr(ip_key)
+            pipe.expire(ip_key, 3600)
+        pipe.execute()
+    except Exception:
+        pass
 
     data = {"cooldown_sec": settings.email_code_cooldown_seconds}
     if settings.is_development:
@@ -513,6 +562,58 @@ def login_admin(
         user_agent=user_agent,
     )
     return {**tokens, "role": "admin", "profile": build_profile(admin, "admin")["profile"]}
+
+
+def login_unified(
+    db: Session,
+    payload: UnifiedLoginRequest,
+    *,
+    ip: Optional[str],
+    user_agent: Optional[str],
+) -> dict:
+    """统一登录：先查管理员，再查学生。错误提示不暴露身份类型。"""
+    account = payload.account.strip()
+    normalized = normalize_email(account)
+
+    # 1) 查管理员（用户名或邮箱）
+    admin = db.scalar(
+        select(AdminUser).where(
+            ((AdminUser.username == account) | (AdminUser.email == normalized)) & AdminUser.is_deleted.is_(False)
+        )
+    )
+    if admin:
+        check_login_rate_limit(role="admin", account=normalized, ip=ip)
+        if not verify_password(payload.password, admin.password_hash):
+            record_login_failure(role="admin", account=normalized, ip=ip)
+            record_admin_login(db, account=account, result="fail", reason="invalid_credentials", admin=None, ip=ip, user_agent=user_agent)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
+        admin.last_login_at = utcnow()
+        db.commit()
+        clear_login_failures(role="admin", account=normalized, ip=ip)
+        tokens = issue_tokens(db, user_id=admin.id, role="admin", tenant_id=admin.tenant_id)
+        record_admin_login(db, account=account, result="success", reason="login", admin=admin, ip=ip, user_agent=user_agent)
+        return {**tokens, "role": "admin", "profile": build_profile(admin, "admin")["profile"]}
+
+    # 2) 查学生（邮箱）
+    student = db.scalar(select(StudentUser).where(StudentUser.email == normalized, StudentUser.is_deleted.is_(False)))
+    if student and student.password_hash:
+        check_login_rate_limit(role="student", account=normalized, ip=ip)
+        if not verify_password(payload.password, student.password_hash):
+            record_login_failure(role="student", account=normalized, ip=ip)
+            record_student_login(db, email=normalized, result="fail", reason="invalid_credentials", student=None, ip=ip, user_agent=user_agent)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
+        student.last_login_at = utcnow()
+        if student.email_verified_at is None:
+            student.email_verified_at = utcnow()
+        db.commit()
+        clear_login_failures(role="student", account=normalized, ip=ip)
+        tokens = issue_tokens(db, user_id=student.id, role="student", tenant_id=student.tenant_id)
+        record_student_login(db, email=normalized, result="success", reason="login", student=student, ip=ip, user_agent=user_agent)
+        return {**tokens, "role": "student", "profile": build_profile(student, "student")["profile"]}
+
+    # 3) 都不存在
+    record_login_failure(role="student", account=normalized, ip=ip)
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
 
 
 def refresh_access_token(db: Session, refresh_token: str) -> dict:

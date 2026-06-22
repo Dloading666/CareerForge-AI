@@ -1,6 +1,6 @@
 # 简历助手 Harness 质量提升与运行时解耦 — 产品设计文档
 
-> 智培职联 CareerForge-AI · AI 简历助手子系统  
+> CareerForge-AI · AI 简历助手子系统  
 > 文档版本：v1.0  
 > 最后更新：2026-06-10  
 > 关联文档：`DESIGN.md`（系统总设计）、`AGENT_LOOP_AND_KB_DEV_PLAN.md`（Agentic 改造计划）、`CLAUDE.md`（架构速查）

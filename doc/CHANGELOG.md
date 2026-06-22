@@ -1,3 +1,23 @@
+## 2026-06-22 — 思考程度系统升级 + 品牌重命名
+
+### 🔵 思考程度系统：从「软引导」到「真控制」
+
+- 新增 `auto` 默认模式：`auto_classify_effort()` 根据消息内容自动判断难度（问候→low、简历操作→medium、JD分析→high、全面重写→xhigh）
+- 六档可选：auto / low / medium / high / xhigh / max
+- `get_model_effort_config()` 替代旧的 `_supports_reasoning_effort()`，按模型类型返回差异化配置：
+  - Anthropic Claude：`thinking.budgetTokens`（4K~31K），temperature 强制 1.0
+  - Google Gemini：`thinkingConfig.thinkingBudget`（4K~32K），temperature 强制 1.0
+  - DeepSeek：不发送 reasoning_effort（推理始终开启）
+  - OpenAI o1/o3/o4/gpt-5：原生 `reasoning_effort` API 参数
+- `get_model_default_temperature()` 按模型 ID 设置默认温度（Qwen=0.55, Gemini=1.0, GLM=1.0 等）
+- 模型列表 API 新增 `supported_efforts` 字段，前端据此动态过滤可选档位
+- 切换模型时自动调整 effort 到新模型支持的档位
+
+### 🟢 品牌重命名：智培职联 → CareerForge
+
+- 全系统 16 处「智培职联」统一替换为「CareerForge」
+- 涉及：config、system prompt、邮件标题、前端关于页、所有文档
+
 ## 2026-06-15 — 后端安全加固 + 性能优化 + 前后端改造
 
 ### 🔴 P0：AI 提供商 API Key 真加密（Fernet）

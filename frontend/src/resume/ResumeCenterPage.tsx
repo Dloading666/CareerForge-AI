@@ -1,15 +1,16 @@
-import { Button, Empty, Input, Message, Modal, Popconfirm, Progress, Spin, Switch, Tag } from '@arco-design/web-react'
+import { Button, Empty, Input, Message, Modal, Popconfirm, Progress, Spin, Tag } from '@arco-design/web-react'
 import { IconCopy, IconDelete, IconDownload, IconEdit, IconPlus, IconRefresh, IconUpload } from '@arco-design/web-react/icon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 
 import { ApiError } from '../shared/api'
-import { deleteResume, downloadResumePdf, duplicateResume, getResume, importResumeFile, listResumes, updateResume } from './api'
+import { deleteResume, duplicateResume, getResume, importResumeFile, listResumes, updateResume } from './api'
 import { TEMPLATE_LABELS } from './constants'
 import { ResumeTemplatePreview } from './templates/registry'
 import { TEMPLATE_REGISTRY } from './templates/registry'
 import type { ResumeData, ResumeSummary, TemplateId } from './types'
+import { exportResumeElementToPdf } from './utils/exportResumePdf'
 
 const MAX_RESUMES = 6
 
@@ -33,6 +34,8 @@ export function ResumeCenterPage() {
   const importTimerRef = useRef<number | null>(null)
   const importDoneRef = useRef(false)
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
+  const exportContainerRef = useRef<HTMLDivElement | null>(null)
+  const [exportingId, setExportingId] = useState<number | null>(null)
 
   const mode = searchParams.get('mode')
 
@@ -172,20 +175,6 @@ export function ResumeCenterPage() {
       await refresh()
     } catch {
       Message.error('重命名失败')
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  const handleVisibilityChange = async (resumeId: number, visibility: boolean) => {
-    setBusyId(resumeId)
-    try {
-      const detail = await getResume(resumeId)
-      await updateResume({ ...detail, visibility })
-      Message.success('可读取状态已更新')
-      await refresh()
-    } catch {
-      Message.error('更新失败')
     } finally {
       setBusyId(null)
     }
@@ -474,10 +463,6 @@ export function ResumeCenterPage() {
                       <span>更新于 {new Date(resume.updatedAt).toLocaleDateString('zh-CN')}</span>
                     </p>
                   </div>
-                  <div className="resume-card-switch">
-                    <span>智能体可读取</span>
-                    <Switch checked={resume.visibility} onChange={(checked) => void handleVisibilityChange(resume.id, checked)} />
-                  </div>
                 </div>
                 <div className="resume-card-item-footer">
                   <Button icon={<IconEdit />} onClick={() => navigate(`/student/resumes/${resume.id}`)}>
@@ -493,15 +478,29 @@ export function ResumeCenterPage() {
                   </Button>
                   <Button
                     icon={<IconDownload />}
-                    onClick={() => {
-                      setBusyId(resume.id)
-                      downloadResumePdf(resume.id, resume.title)
-                        .catch((err: Error) => {
-                          Message.error(err.message || "导出失败")
-                        })
-                        .finally(() => setBusyId(null))
+                    onClick={async () => {
+                      const data = resumeDataMap[resume.id]
+                      if (!data) { Message.warning('简历数据未加载'); return }
+                      setExportingId(resume.id)
+                      try {
+                        const container = exportContainerRef.current
+                        if (!container) throw new Error('导出容器未就绪')
+                        // 渲染简历到隐藏容器
+                        const { createRoot } = await import('react-dom/client')
+                        const { createElement } = await import('react')
+                        const root = createRoot(container)
+                        root.render(createElement(ResumeTemplatePreview, { resume: data }))
+                        await new Promise(r => setTimeout(r, 500))
+                        await exportResumeElementToPdf(container, { filename: resume.title, scale: 2 })
+                        root.unmount()
+                        Message.success('导出成功')
+                      } catch (err) {
+                        Message.error((err as Error)?.message || '导出失败')
+                      } finally {
+                        setExportingId(null)
+                      }
                     }}
-                    loading={busyId === resume.id}
+                    loading={exportingId === resume.id}
                   >
                     导出
                   </Button>
@@ -596,6 +595,21 @@ export function ResumeCenterPage() {
           <div style={{ padding: 48, textAlign: 'center' }}><Spin /></div>
         )}
       </Modal>
+
+      {/* 隐藏的导出容器：用于客户端 PDF 导出，与编辑器导出保持一致 */}
+      <div
+        ref={exportContainerRef}
+        style={{
+          position: 'fixed',
+          left: '-9999px',
+          top: 0,
+          width: '210mm',
+          minWidth: '210mm',
+          background: '#fff',
+          zIndex: -1,
+          pointerEvents: 'none',
+        }}
+      />
     </div>
   )
 }

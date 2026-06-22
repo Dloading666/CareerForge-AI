@@ -1,4 +1,4 @@
-# CareerForge-AI · 智培职联
+# CareerForge-AI
 
 > 面向高校学生的 AI 就业辅助平台。学生端内置 **AI简历助手** 与 **AI面试官** 两个对话智能体，管理端负责配置模型、Skill 与系统参数。
 
@@ -9,7 +9,7 @@
 ### 学生端
 | 模块 | 说明 |
 |------|------|
-| **AI简历助手** | 基于 Agentic Loop 的对话式简历工作台，支持 AI 订制简历、简历优化（上传 PDF + JD）、在线编辑与 PDF 导出 |
+| **AI简历助手** | 基于 Agentic Loop 的对话式简历工作台，支持 AI 订制简历、简历优化（上传 PDF + JD）、在线编辑与 PDF 导出；六档思考程度（自动/低/中/高/超高/极限），默认自动模式根据任务难度智能选择 |
 | **AI面试官** | 一对一模拟面试智能体，读取个人档案定制问题，逐轮提问 + 专业点评 |
 | **简历制作** | 在线简历编辑器，多模板切换、实时预览、数据持久化 |
 | **个人中心** | 个人信息、求职意向、头像、密码管理 |
@@ -164,6 +164,8 @@ npm run lint    # eslint
 3. 两类智能体工具池不同：AI简历助手拥有完整工具集（含简历生成/导出），AI面试官只读取学生信息，不操作简历
 
 SSE 事件流：`message.saved` → `activity.started/completed/failed` → `message.delta` → `message.snapshot` → `message.completed` → `done`
+
+**思考程度系统**：默认「自动」模式根据消息内容自动判断难度。支持六档手动选择，各模型生效方式不同——OpenAI 用原生 `reasoning_effort` 参数，Claude 用 `thinking.budgetTokens`（4K~31K），Gemini 用 `thinkingConfig.thinkingBudget`（4K~32K），DeepSeek 不发参数（推理始终开启）。
 
 前端采用 Codex 式「叙述 + 动作胶囊」交错时间线，模型边思考边输出，工具执行以动画胶囊实时展示。
 

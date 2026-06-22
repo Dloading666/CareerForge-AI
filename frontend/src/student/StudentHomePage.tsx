@@ -3,7 +3,6 @@ import {
   IconBook,
   IconDashboard,
   IconCamera,
-  IconBug,
   IconCalendar,
   IconClose,
   IconDelete,
@@ -13,6 +12,7 @@ import {
   IconLoading,
   IconMenuFold,
   IconMenuUnfold,
+  IconMessage,
   IconPlus,
   IconPoweroff,
   IconRobot,
@@ -335,12 +335,10 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
         <span>个人资料</span>
       </button>
       <div className="user-card-menu-divider" />
-      <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout} position="tl">
-        <button type="button" className="user-card-menu-item user-card-menu-item--danger">
-          <IconPoweroff />
-          <span>退出登录</span>
-        </button>
-      </Popconfirm>
+      <button type="button" className="user-card-menu-item user-card-menu-item--danger" onClick={logout}>
+        <IconPoweroff />
+        <span>退出登录</span>
+      </button>
     </div>
   )
 
@@ -555,7 +553,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
         onCancel={() => setProfileModalVisible(false)}
         footer={null}
         closable
-        maskClosable={false}
+        maskClosable
         className="profile-modal"
         style={{ top: '6vh' }}
         maskStyle={{ background: 'rgba(23, 30, 48, 0.28)', backdropFilter: 'blur(2px)' }}
@@ -569,7 +567,7 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
               { key: 'profile', icon: <IconUser style={{ fontSize: 18, color: '#165dff' }} />, label: '个人资料', color: '#e8f0fe' },
               { key: 'calendar', icon: <IconCalendar style={{ fontSize: 18, color: '#722ed1' }} />, label: '日程管理', color: '#f3e8ff' },
               { key: 'security', icon: <IconSafe style={{ fontSize: 18, color: '#00b42a' }} />, label: '账号安全', color: '#e8ffea' },
-              { key: 'feedback', icon: <IconBug style={{ fontSize: 18, color: '#f53f3f' }} />, label: '意见反馈', color: '#ffece8' },
+              { key: 'feedback', icon: <IconMessage style={{ fontSize: 18, color: '#eb6b00' }} />, label: '意见反馈', color: '#fff3e8' },
               { key: 'about', icon: <IconInfoCircle style={{ fontSize: 18, color: '#ff7d00' }} />, label: '关于', color: '#fff7e8' },
             ].map((item) => (
               <button

@@ -15,18 +15,18 @@ import {
   Switch,
   Tag,
   Tabs,
+  Tooltip,
   Upload,
   Modal,
   Badge,
 } from '@arco-design/web-react'
 import {
   IconApps,
-  IconBug,
-  IconDashboard,
   IconDelete,
   IconEdit,
   IconExperiment,
   IconHistory,
+  IconMessage,
   IconPlayArrow,
   IconNotification,
   IconPlus,
@@ -545,7 +545,7 @@ export function AdminHomePage() {
   const avatarUrl = (session?.profile.avatar_url as string) || ''
   const [avatarKey, setAvatarKey] = useState(0)
   const email = (session?.profile.email as string) || ''
-  const [activeNav, setActiveNav] = useState<NavKey>('agents')
+  const [activeNav, setActiveNav] = useState<NavKey>('models')
 
   // 用户反馈通知：铃铛徽章 + 新反馈弹窗
   const [openFeedbackCount, setOpenFeedbackCount] = useState(0)
@@ -725,13 +725,10 @@ export function AdminHomePage() {
   }, [session?.access])
 
   const navItems: { key: NavKey; icon: React.ReactNode; label: string }[] = [
-    { key: 'agents', icon: <IconRobot />, label: '智能体管理' },
-    { key: 'master', icon: <IconDashboard />, label: '主智能体配置' },
     { key: 'models', icon: <IconExperiment />, label: '模型广场' },
-    { key: 'mcp', icon: <IconSafe />, label: 'MCP 广场' },
     { key: 'skills', icon: <IconApps />, label: 'Skills 广场' },
     { key: 'knowledge', icon: <IconHistory />, label: '知识库' },
-    { key: 'feedback', icon: <IconBug />, label: '用户反馈' },
+    { key: 'feedback', icon: <IconMessage />, label: '用户反馈' },
     { key: 'settings', icon: <IconSettings />, label: '系统设置' },
   ]
 
@@ -1013,27 +1010,21 @@ export function AdminHomePage() {
             </Button>
           ))}
         </div>
-
-        <div className="admin-sidebar-status">
-          <span className="status-dot" />
-          <span>本地大模型 · 在线</span>
-        </div>
       </aside>
 
       <section className="admin-main">
         <header className="admin-topbar">
-          <strong>CareerForge AI Platform</strong>
+          <strong>CareerForge</strong>
           <div className="admin-topbar-actions">
-            <Input className="admin-search" placeholder="Search..." allowClear />
-            <Badge count={openFeedbackCount} maxCount={99} offset={[-2, 2]}>
+            <Tooltip content="通知"><Badge count={openFeedbackCount} maxCount={99} offset={[-2, 2]}>
               <Button
                 icon={<IconNotification />}
                 type="text"
                 className="admin-bell"
                 onClick={() => { setActiveNav('feedback'); markFeedbackSeen() }}
               />
-            </Badge>
-            <Button icon={<IconSettings />} type="text" onClick={() => setActiveNav("settings")} />
+            </Badge></Tooltip>
+            <Tooltip content="系统设置"><Button icon={<IconSettings />} type="text" onClick={() => setActiveNav("settings")} /></Tooltip>
             <Dropdown
               droplist={
                 <Menu>
@@ -1052,19 +1043,21 @@ export function AdminHomePage() {
               trigger="click"
               position="br"
             >
-              <div className="admin-avatar" style={{ cursor: 'pointer', overflow: 'hidden' }}>
-                {avatarUrl ? (
-                  <img
-                    key={avatarKey}
-                    src={avatarUrl}
-                    alt="avatar"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                  />
-                ) : (
-                  <IconUser />
-                )}
-              </div>
+              <Tooltip content={displayName}>
+                <div className="admin-avatar" style={{ cursor: 'pointer' }}>
+                  {avatarUrl ? (
+                    <img
+                      key={avatarKey}
+                      src={avatarUrl}
+                      alt="avatar"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    />
+                  ) : (
+                    <span>{(displayName || 'A').charAt(0).toUpperCase()}</span>
+                  )}
+                </div>
+              </Tooltip>
             </Dropdown>
           </div>
         </header>
@@ -1858,11 +1851,9 @@ function renderSettingsPage(displayName: string, email: string, avatarUrl: strin
             <Switch defaultChecked size="small" />
             <span style={{ fontSize: 13 }}>异常通知</span>
           </div>
-          <Popconfirm title="确定要退出登录吗？" okText="退出" cancelText="取消" onOk={logout}>
-            <Button type="outline" status="danger" icon={<IconPoweroff />} long>
-              退出登录
-            </Button>
-          </Popconfirm>
+          <Button type="outline" status="danger" icon={<IconPoweroff />} long onClick={logout}>
+            退出登录
+          </Button>
         </div>
       </div>
 

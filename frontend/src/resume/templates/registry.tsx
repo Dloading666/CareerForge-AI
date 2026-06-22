@@ -9,6 +9,7 @@ import type {
   TemplateViewModel,
   ViewListItem,
 } from '../types'
+import { RESUME_PHOTO_HEIGHT, RESUME_PHOTO_WIDTH } from '../constants'
 import { richTextToInlineBlocks, type RichInlineBlock } from '../utils/content'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
@@ -269,8 +270,8 @@ function ResumePhoto({ resume }: { resume: ResumeData }) {
       onError={() => setFailed(true)}
       style={{
         display: 'block',
-        width: config.width || 90,
-        height: config.height || 120,
+        width: RESUME_PHOTO_WIDTH,
+        height: RESUME_PHOTO_HEIGHT,
         borderRadius: photoRadius(resume),
         objectFit: 'cover',
         flex: '0 0 auto',

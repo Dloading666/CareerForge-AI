@@ -1350,7 +1350,12 @@ def list_available_models(
         )
         .order_by(ModelConfig.id.asc())
     ).all()
-    return [AgentModelOptionResponse.model_validate(row) for row in rows]
+    results = []
+    for row in rows:
+        resp = AgentModelOptionResponse.model_validate(row)
+        resp.supported_efforts = get_model_effort_config(row).get("supported_efforts", ["low", "medium", "high"])
+        results.append(resp)
+    return results
 
 
 def serialize_attachment(attachment: StudentAgentAttachment) -> AgentAttachmentResponse:
@@ -1613,6 +1618,12 @@ async def stream_master_reply(
     # Harness hard boundary — 尊重管理端配置的轮次，但保留一个安全上限防止失控。
     max_iterations = max(1, min(int(config.max_iterations or 8), 20))
     permission_mode = (config.permission_mode or "ask").lower()
+
+    # ── Auto effort classification ──
+    if reasoning_effort == "auto":
+        has_jd = bool(session.jd_text and session.jd_text.strip())
+        reasoning_effort = auto_classify_effort(content, has_jd=has_jd, has_attachments=bool(attachments))
+        logger.info("auto effort classified as '%s' for session=%s", reasoning_effort, session.id)
 
     # Curated, safe tool registry. Only tools the Harness can honestly fulfil
     # are exposed — fabricating stubs are intentionally excluded.
@@ -2266,12 +2277,87 @@ def _select_chat_model(
 
 def _effort_instruction(reasoning_effort: str) -> str:
     labels = {
-        "low": "低。快速响应，给出简洁可执行建议。",
+        "low": "低。快速响应，给出简洁可执行建议。控制输出长度，直奔主题。",
         "medium": "中。平衡速度和质量，覆盖关键依据与下一步。",
-        "high": "高。充分分析，补齐风险和细节。",
-        "xhigh": "超高。系统拆解、多角度验证，给出完整行动计划。",
+        "high": "高。充分分析，补齐风险和细节，给出完整论据。",
+        "xhigh": "超高。系统拆解、多角度验证，给出完整行动计划和备选方案。",
+        "max": "极限。穷举所有角度，深度推理每一步，给出最全面的分析。",
     }
     return labels.get(reasoning_effort, labels["medium"])
+
+
+# ── Auto effort classification ──────────────────────────────────────────────
+
+_AUTO_LOW_PATTERNS = _re.compile(
+    r"^(你好|hi|hello|hey|嗨|嗯|好的|ok|thanks|谢谢|感谢|在吗|在不在|你是谁|"
+    r"你能做什么|help|帮助|测试|test|ping|帮|啥|怎么|什么|嗯嗯|哦|行|可以)[\s!！。.？?]*$",
+    _re.IGNORECASE,
+)
+
+_AUTO_ACTION_KEYWORDS = {
+    "帮我", "请", "优化", "生成", "修改", "改写", "添加", "删", "更新",
+    "分析", "简历", "导出", "导入", "创建", "写", "润色", "翻译",
+}
+
+_AUTO_HIGH_KEYWORDS = {
+    "差距分析", "gap分析", "岗位匹配", "JD匹配", "JD分析", "ATS优化",
+    "全面优化", "整体优化", "重写简历", "重新生成", "从零开始",
+    "多份简历", "对比分析", "岗位分析", "竞争分析", "求职策略",
+    "订制", "针对岗位", " tailor", "customize",
+}
+
+_AUTO_XHIGH_KEYWORDS = {
+    "全面改写", "彻底重写", "大改", "推倒重来", "重新设计",
+    "多个岗位", "不同岗位", "批量优化", "系统性",
+}
+
+
+def auto_classify_effort(content: str, has_jd: bool = False, has_attachments: bool = False) -> str:
+    """根据用户消息内容自动判断合适的思考程度。
+
+    规则：
+    - 问候/闲聊/极短消息 → low
+    - 简单简历操作（加一条经历、改个措辞）→ medium
+    - 涉及 JD 分析、多步骤任务、附件分析 → high
+    - 全面重写、多岗位对比、系统性任务 → xhigh
+    """
+    text = content.strip()
+    if not text:
+        return "medium"
+
+    # 纯问候/闲聊 → low
+    if _AUTO_LOW_PATTERNS.match(text):
+        return "low"
+
+    # 极短消息（<8 字）且不含动作关键词 → low
+    if len(text) < 8 and not any(kw in text for kw in _AUTO_ACTION_KEYWORDS):
+        return "low"
+
+    # 检查是否包含高难度关键词
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in _AUTO_XHIGH_KEYWORDS):
+        return "xhigh"
+    if any(kw in text_lower for kw in _AUTO_HIGH_KEYWORDS):
+        return "high"
+
+    # 有 JD 内容 → high（JD 匹配分析本身就需要深度推理）
+    if has_jd:
+        return "high"
+
+    # 有附件（简历文件等）→ high
+    if has_attachments:
+        return "high"
+
+    # 消息较长（>200 字）→ 可能是复杂需求
+    if len(text) > 200:
+        return "high"
+
+    # 含动作关键词的短消息 → medium
+    if any(kw in text for kw in _AUTO_ACTION_KEYWORDS):
+        return "medium"
+
+    # 默认中等
+    return "medium"
 
 
 def _attachment_prompt_text(
@@ -2322,12 +2408,125 @@ def _has_image_attachments(attachments: list[StudentAgentAttachment]) -> bool:
 
 
 def _supports_reasoning_effort(model: ModelConfig) -> bool:
-    # 保守策略：仅当模型标识中明确包含已知支持 reasoning_effort 的系列标记时才发送。
-    # 之前用 "openai" in haystack 会匹配所有 OpenAI 兼容模型（protocols 默认就是 "openai"），
-    # 导致不支持的网关收到 reasoning_effort 后返回 400。
-    haystack = f"{model.provider} {model.model_identifier}".lower()
-    reasoning_tokens = ["o1", "o3", "o4", "gpt-5", "o1-mini", "o1-preview", "o3-mini", "o4-mini"]
-    return any(token in haystack for token in reasoning_tokens)
+    """保留兼容：判断模型是否支持 reasoning_effort API 参数。"""
+    return get_model_effort_config(model).get("supports_api_effort", False)
+
+
+def get_model_effort_config(model: ModelConfig) -> dict:
+    """返回模型的思考程度配置。
+
+    结构：
+      supported_efforts: list[str]  — 前端可选的 effort 档位
+      effort_api_params: dict[str, dict]  — 每个 effort 对应的 API 参数（注入请求体）
+      reasoning_temp: float | None  — 使用 reasoning 时应覆盖的 temperature（None 表示不覆盖）
+      supports_api_effort: bool  — 是否原生支持 reasoning_effort 字段
+    """
+    mid = (model.model_identifier or "").lower()
+    prov = (model.provider or "").lower()
+    haystack = f"{prov} {mid}"
+
+    config: dict = {
+        "supported_efforts": ["low", "medium", "high"],
+        "effort_api_params": {},
+        "reasoning_temp": None,
+        "supports_api_effort": False,
+    }
+
+    # ── Anthropic (Claude)：通过 thinking budget 控制推理深度 ──
+    if is_anthropic_model(model):
+        config["reasoning_temp"] = 1.0  # Anthropic thinking 模式强制 temperature=1
+        # Claude 4.6+ / opus-4.6+ 支持 max 档位
+        if any(k in mid for k in ["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"]):
+            config["supported_efforts"] = ["low", "medium", "high", "max"]
+            config["effort_api_params"] = {
+                "low": {"thinking": {"type": "enabled", "budgetTokens": 4000}},
+                "medium": {"thinking": {"type": "enabled", "budgetTokens": 10000}},
+                "high": {"thinking": {"type": "enabled", "budgetTokens": 16000}},
+                "max": {"thinking": {"type": "enabled", "budgetTokens": 31999}},
+            }
+        else:
+            config["supported_efforts"] = ["low", "medium", "high"]
+            config["effort_api_params"] = {
+                "low": {"thinking": {"type": "enabled", "budgetTokens": 4000}},
+                "medium": {"thinking": {"type": "enabled", "budgetTokens": 10000}},
+                "high": {"thinking": {"type": "enabled", "budgetTokens": 16000}},
+            }
+        return config
+
+    # ── Google Gemini：thinkingLevel / thinkingBudget ──
+    if "gemini" in mid:
+        config["reasoning_temp"] = 1.0
+        if "2.5" in mid:
+            budget_max = 32768 if ("pro" in mid and "flash" not in mid) else 24576
+            config["supported_efforts"] = ["low", "medium", "high", "max"]
+            config["effort_api_params"] = {
+                "low": {"thinkingConfig": {"includeThoughts": True, "thinkingBudget": 4000}},
+                "medium": {"thinkingConfig": {"includeThoughts": True, "thinkingBudget": 10000}},
+                "high": {"thinkingConfig": {"includeThoughts": True, "thinkingBudget": 16000}},
+                "max": {"thinkingConfig": {"includeThoughts": True, "thinkingBudget": budget_max}},
+            }
+        else:
+            config["supported_efforts"] = ["low", "high"]
+            config["effort_api_params"] = {
+                "low": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": "low"}},
+                "high": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": "high"}},
+            }
+        return config
+
+    # ── DeepSeek：推理始终开启，不发送 reasoning_effort ──
+    if "deepseek" in mid:
+        config["supported_efforts"] = ["low", "medium", "high"]
+        config["effort_api_params"] = {}
+        config["supports_api_effort"] = False
+        return config
+
+    # ── Grok-3-mini：支持 low/high ──
+    if "grok" in mid and "mini" in mid:
+        config["supported_efforts"] = ["low", "high"]
+        config["effort_api_params"] = {
+            "low": {"reasoning_effort": "low"},
+            "high": {"reasoning_effort": "high"},
+        }
+        config["supports_api_effort"] = True
+        return config
+
+    # ── OpenAI 推理系列：o1 / o3 / o4 / gpt-5 ──
+    reasoning_tokens = ["o1", "o3", "o4", "gpt-5"]
+    if any(token in mid for token in reasoning_tokens):
+        config["supports_api_effort"] = True
+        efforts = ["low", "medium", "high"]
+        if any(k in mid for k in ["gpt-5", "o3", "o4"]):
+            efforts.append("xhigh")
+        config["supported_efforts"] = efforts
+        config["effort_api_params"] = {e: {"reasoning_effort": e} for e in efforts}
+        return config
+
+    # ── 其他模型：无原生 effort 支持，仅靠 system prompt 引导 ──
+    return config
+
+
+_MODEL_TEMP_MAP = {
+    "qwen": 0.55,
+    "gemini": 1.0,
+    "glm-4.6": 1.0,
+    "glm-4.7": 1.0,
+    "minimax-m2": 1.0,
+    "kimi-k2": 0.6,
+}
+
+
+def get_model_default_temperature(model: ModelConfig) -> float:
+    """按模型 ID 返回推荐的默认 temperature（参考 OpenCode），管理端配置优先。"""
+    if model.default_temp is not None:
+        return model.default_temp
+    mid = (model.model_identifier or "").lower()
+    for key, temp in _MODEL_TEMP_MAP.items():
+        if key in mid:
+            return temp
+    # Claude 不设 temperature（让 API 用默认值），这里返回 1.0
+    if is_anthropic_model(model):
+        return 1.0
+    return 0.7
 
 
 def _supports_image_input(model: ModelConfig) -> bool:
@@ -3346,8 +3545,16 @@ async def _stream_llm_turn(
     max_tokens: Optional[int] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """Single streaming turn. Yields ("delta", text) / ("error", msg) / ("final", dict)."""
+    effort_config = get_model_effort_config(model)
+    api_params = effort_config.get("effort_api_params", {}).get(reasoning_effort, {})
+
+    # 温度：先看调用方显式传入，再看 effort 配置的 reasoning_temp，最后用模型默认值
+    effective_temp = temperature
+    if effective_temp is None and effort_config.get("reasoning_temp") is not None and api_params:
+        effective_temp = effort_config["reasoning_temp"]
+
     if is_anthropic_model(model):
-        async for item in _stream_anthropic_turn(model, messages, temperature, max_tokens):
+        async for item in _stream_anthropic_turn(model, messages, effective_temp, max_tokens, api_params):
             yield item
         return
 
@@ -3356,9 +3563,7 @@ async def _stream_llm_turn(
         payload: dict[str, Any] = {
             "model": model.model_identifier,
             "messages": messages,
-            "temperature": temperature if temperature is not None else (
-                model.default_temp if model.default_temp is not None else 0.7
-            ),
+            "temperature": effective_temp if effective_temp is not None else get_model_default_temperature(model),
             "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -3366,8 +3571,9 @@ async def _stream_llm_turn(
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        if _supports_reasoning_effort(model):
-            payload["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort
+        # 注入 effort 对应的 API 参数（reasoning_effort / thinking budget 等）
+        if api_params:
+            payload.update(api_params)
 
         tool_calls_acc: dict[int, dict[str, str]] = {}
         content_acc = ""
@@ -3481,6 +3687,7 @@ async def _stream_anthropic_turn(
     messages: list[dict[str, Any]],
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    effort_api_params: Optional[dict] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     try:
         api_key = decrypt_api_key(model.api_key_cipher or "")
@@ -3488,14 +3695,15 @@ async def _stream_anthropic_turn(
         payload: dict[str, Any] = {
             "model": model.model_identifier,
             "messages": payload_messages,
-            "temperature": temperature if temperature is not None else (
-                model.default_temp if model.default_temp is not None else 0.7
-            ),
+            "temperature": temperature if temperature is not None else get_model_default_temperature(model),
             "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
             "stream": True,
         }
         if system_prompt:
             payload["system"] = system_prompt
+        # 注入 thinking budget（effort_api_params 中的 thinking 配置）
+        if effort_api_params:
+            payload.update(effort_api_params)
         content_acc = ""
         finish: Optional[str] = None
         async with httpx.AsyncClient(

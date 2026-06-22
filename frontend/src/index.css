@@ -323,6 +323,25 @@ textarea {
   box-shadow: 0 22px 60px rgba(24, 28, 42, 0.12);
 }
 
+/* 登录/注册输入框：去掉浏览器自动填充的蓝色背景 */
+.auth-card input:-webkit-autofill,
+.auth-card input:-webkit-autofill:hover,
+.auth-card input:-webkit-autofill:focus,
+.auth-card input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+  box-shadow: 0 0 0 1000px #fff inset !important;
+  -webkit-text-fill-color: #1d2129 !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.auth-card .arco-input-inner-wrapper {
+  background: #fff !important;
+}
+
+.auth-card .arco-input-inner-wrapper:focus-within {
+  background: #fff !important;
+}
+
 .auth-card-header {
   text-align: center;
   margin-bottom: 20px;
@@ -363,6 +382,25 @@ textarea {
 
 .debug-code-banner {
   margin-bottom: 16px;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 12px;
+  align-items: center;
+}
+
+@media (max-width: 520px) {
+  .code-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .app-shell {
@@ -3752,39 +3790,36 @@ textarea {
 
 .admin-shell.app-shell {
   min-height: 100vh;
-  background:
-    radial-gradient(circle, rgba(32, 86, 210, 0.16) 1px, transparent 1px),
-    #fbfbff;
-  background-size: 18px 18px;
+  background: #f5f6fa;
   color: #171923;
 }
 
 .admin-sidebar {
-  width: 268px;
+  width: 232px;
   flex-shrink: 0;
-  background: #f7f7fc;
-  border-right: 1px solid #d8ddeb;
-  padding: 24px 18px 18px;
+  background: #fff;
+  border-right: 1px solid #e5e6eb;
+  padding: 20px 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
 }
 
 .admin-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 2px 8px 10px;
+  gap: 12px;
+  padding: 2px 8px 8px;
 }
 
 .admin-brand-logo {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
   object-fit: contain;
   background: #fff;
-  padding: 4px;
-  box-shadow: 0 12px 28px rgba(22, 93, 255, 0.24);
+  padding: 3px;
+  box-shadow: 0 2px 8px rgba(22, 93, 255, 0.12);
 }
 
 .auth-brand-logo {
@@ -3811,30 +3846,45 @@ textarea {
 }
 
 .admin-brand h1 {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.1;
-  color: #0b45d9;
+  color: #171923;
 }
 
 .admin-brand p {
-  margin-top: 4px;
-  color: #5f6678;
-  font-size: 13px;
+  margin-top: 2px;
+  color: #86909c;
+  font-size: 12px;
 }
 
 .admin-nav-menu {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .admin-nav-item {
   width: 100%;
-  min-height: 46px;
+  min-height: 40px;
   border-radius: 8px;
   justify-content: flex-start;
   text-align: left;
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 14px;
+  color: #4e5969;
+  background: transparent;
+  border: none;
+}
+
+.admin-nav-item:hover {
+  background: #f2f3f5;
+}
+
+.admin-nav-item.arco-btn-primary {
+  background: #e8f0fe;
+  color: #165dff;
+  border: none;
+  box-shadow: none;
 }
 
 .admin-nav-item .arco-btn-content {
@@ -3857,13 +3907,13 @@ textarea {
 
 .admin-sidebar-status {
   margin-top: auto;
-  padding-top: 18px;
-  border-top: 1px solid #d8ddeb;
+  padding-top: 14px;
+  border-top: 1px solid #e5e6eb;
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: #3f4556;
-  font-size: 13px;
+  gap: 8px;
+  color: #86909c;
+  font-size: 12px;
 }
 
 .admin-main {
@@ -3874,35 +3924,36 @@ textarea {
 }
 
 .admin-topbar {
-  min-height: 72px;
-  padding: 14px 28px 14px 30px;
-  background: rgba(255, 255, 255, 0.88);
-  border-bottom: 1px solid #d8ddeb;
+  min-height: 56px;
+  padding: 10px 28px;
+  background: #fff;
+  border-bottom: 1px solid #e5e6eb;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  backdrop-filter: blur(16px);
 }
 
 .admin-topbar strong {
-  font-size: 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d2129;
 }
 
 .admin-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .admin-search {
-  width: 280px;
+  width: 240px;
 }
 
 .admin-search .arco-input-inner-wrapper {
-  height: 42px;
-  border: 0;
+  height: 36px;
+  border: 1px solid #e5e6eb;
   border-radius: 8px;
-  background: #eceef8;
+  background: #fff;
 }
 
 .admin-bell {
@@ -3920,50 +3971,51 @@ textarea {
 }
 
 .admin-avatar {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #0b45d9;
-  background: #edf2ff;
-  border: 1px solid #cfd8ff;
+  color: #165dff;
+  background: #e8f0fe;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .admin-page {
-  padding: 28px 30px 48px;
+  padding: 24px 32px 48px;
 }
 
 .admin-page-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 20px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid #e0e5f2;
-  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e6eb;
+  margin-bottom: 20px;
 }
 
 .admin-eyebrow {
-  color: #25314d;
+  color: #86909c;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0;
-  margin-bottom: 8px;
+  font-weight: 500;
+  margin-bottom: 4px;
 }
 
 .admin-page-head h2 {
-  font-size: 36px;
-  line-height: 1.15;
-  font-weight: 800;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: #1d2129;
 }
 
 .admin-page-head p {
-  margin-top: 10px;
-  max-width: 760px;
-  color: #555d70;
-  font-size: 15px;
+  margin-top: 4px;
+  max-width: 600px;
+  color: #86909c;
+  font-size: 13px;
 }
 
 .admin-layout-grid,
@@ -3982,27 +4034,26 @@ textarea {
 .admin-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
-  gap: 18px;
+  gap: 16px;
 }
 
 .admin-card {
-  min-height: 236px;
-  border: 1px solid #cfd5e6;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 10px 24px rgba(20, 28, 48, 0.04);
+  min-height: 180px;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  background: #fff;
 }
 
 .admin-card .arco-card-body {
   height: 100%;
-  padding: 22px 24px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
 }
 
 .admin-card.is-selected {
   border-color: #165dff;
-  box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(22, 93, 255, 0.08);
 }
 
 .agent-card-head,
@@ -4028,15 +4079,17 @@ textarea {
 .detail-panel-head h3,
 .admin-section-title h3,
 .kb-row h3 {
-  font-size: 20px;
-  line-height: 1.25;
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: #1d2129;
 }
 
 .admin-card p {
-  color: #596174;
-  font-size: 14px;
-  line-height: 1.7;
-  margin: 18px 0;
+  color: #86909c;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 8px 0;
 }
 
 .resource-icon {
@@ -4096,9 +4149,9 @@ textarea {
 }
 
 .admin-card-footer {
-  border-top: 1px solid #e5e8f0;
-  margin-top: 18px;
-  padding-top: 16px;
+  border-top: 1px solid #f2f3f5;
+  margin-top: auto;
+  padding-top: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4109,11 +4162,10 @@ textarea {
 .master-config-panel,
 .route-panel,
 .form-surface {
-  border: 1px solid #cfd5e6;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  padding: 22px;
-  box-shadow: 0 10px 24px rgba(20, 28, 48, 0.04);
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  background: #fff;
+  padding: 20px;
 }
 
 .admin-detail-panel {
@@ -6312,6 +6364,333 @@ textarea {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
+}
+
+.interview-model-empty-hint {
+  margin-top: 6px;
+  padding: 10px 14px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.interview-model-empty-select {
+  height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+  color: #c9cdd4;
+  font-size: 14px;
+}
+
+/* ── 能力分析页面 ────────────────────────────────── */
+.analysis-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.analysis-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 300px;
+  color: #86909c;
+}
+
+.analysis-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.analysis-page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1d2129;
+  margin: 0 0 6px;
+}
+
+.analysis-page-subtitle {
+  font-size: 13px;
+  color: #86909c;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.analysis-page-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #c9cdd4;
+  font-size: 12px;
+}
+
+/* ── 统计卡片 ── */
+.analysis-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+}
+
+.stat-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.stat-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-card-label {
+  font-size: 12px;
+  color: #86909c;
+  margin-bottom: 4px;
+}
+
+.stat-card-value {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.stat-card-value-num {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-card-value-unit {
+  font-size: 13px;
+  color: #86909c;
+}
+
+.stat-card-hint {
+  font-size: 11px;
+  color: #c9cdd4;
+  margin-top: 2px;
+}
+
+/* ── 分析卡片 ── */
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.analysis-card {
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.analysis-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 20px 0;
+}
+
+.analysis-card-head h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2129;
+  margin: 0;
+}
+
+.analysis-card-head p {
+  font-size: 12px;
+  color: #86909c;
+  margin: 4px 0 0;
+}
+
+.analysis-card-body {
+  padding: 16px 20px 20px;
+}
+
+.analysis-card-body--centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.analysis-card--weakness {
+  margin-bottom: 20px;
+}
+
+/* ── 雷达图 ── */
+.radar-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-empty {
+  padding: 40px;
+  text-align: center;
+  color: #c9cdd4;
+  font-size: 13px;
+}
+
+/* ── 知识点柱状图 ── */
+.kn-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kn-empty {
+  padding: 24px;
+  text-align: center;
+  color: #c9cdd4;
+  font-size: 13px;
+}
+
+.kn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kn-row-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.kn-row-name {
+  color: #1d2129;
+  font-weight: 500;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kn-row-meta {
+  color: #c9cdd4;
+  font-size: 11px;
+}
+
+.kn-row-bar {
+  position: relative;
+  height: 8px;
+  background: #f2f3f5;
+  border-radius: 4px;
+  overflow: visible;
+}
+
+.kn-row-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.kn-row-value {
+  position: absolute;
+  right: -28px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ── 弱点提示 ── */
+.weakness-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.weakness-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  color: #4e5969;
+  line-height: 1.6;
+  padding: 12px 16px;
+  background: #fff1f0;
+  border-radius: 8px;
+  border: 1px solid #ffccc7;
+}
+
+/* ── 空状态 ── */
+.analysis-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 60px 20px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+}
+
+.analysis-empty-text {
+  text-align: center;
+}
+
+.analysis-empty-text p {
+  margin: 0;
+  font-size: 14px;
+  color: #86909c;
+  line-height: 1.8;
+}
+
+.analysis-error {
+  margin-top: 16px;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .analysis-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .analysis-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .knowledge-status {
@@ -9205,6 +9584,7 @@ textarea {
   background: #fff;
   display: flex;
   flex-direction: column;
+  padding-right: 24px;
 }
 
 /* Profile modal form controls use the same restrained geometry as the workspace. */
@@ -9328,15 +9708,76 @@ textarea {
   padding: 28px 32px 0;
 }
 
-.profile-edit-inline .arco-tabs {
+.profile-edit-layout {
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  gap: 20px;
+}
+
+.profile-edit-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 140px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+.profile-edit-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
   color: #4e5969;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.profile-edit-nav-item:hover {
+  background: #f2f3f5;
+}
+
+.profile-edit-nav-item.active {
+  background: #e8f3ff;
+  color: #165dff;
+  font-weight: 500;
+}
+
+.profile-edit-nav-item svg {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.profile-edit-nav-badge {
+  margin-left: auto;
+  font-size: 11px;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  background: #e8f3ff;
+  color: #165dff;
+  font-weight: 600;
+}
+
+.profile-edit-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 .profile-edit-inline .arco-tabs-header-scroll {
   scrollbar-width: none;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .profile-edit-inline .arco-tabs-header-scroll::-webkit-scrollbar {
@@ -9373,8 +9814,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 54px;
-  height: 54px;
+  width: 60px;
+  height: 75px;
   flex-shrink: 0;
   overflow: hidden;
   border: 1px solid #d9e2f2;
@@ -9464,6 +9905,245 @@ textarea {
 .profile-modal-content::-webkit-scrollbar-thumb {
   background: rgba(120, 130, 160, 0.25);
   border-radius: 3px;
+}
+
+/* ── 账号管理 Tab ── */
+.profile-account-tab {
+  padding: 24px 28px 40px;
+}
+
+.profile-account-header {
+  margin-bottom: 24px;
+}
+
+.profile-account-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1d2129;
+  margin: 0 0 4px;
+}
+
+.profile-account-subtitle {
+  font-size: 13px;
+  color: #86909c;
+  margin: 0;
+}
+
+.profile-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  background: #f7f8fa;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+
+.profile-account-avatar {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: #e5e6eb;
+}
+
+.profile-account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-account-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 28px;
+  font-weight: 700;
+  color: #165dff;
+  background: #e8f0fe;
+}
+
+.profile-account-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.profile-account-avatar:hover .profile-account-avatar-overlay {
+  opacity: 1;
+}
+
+.profile-account-avatar-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  color: #165dff;
+}
+
+.profile-account-identity-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-account-identity-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.profile-account-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.profile-account-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-account-chip--role {
+  background: #e8f0fe;
+  color: #165dff;
+}
+
+.profile-account-chip--ok {
+  background: #e8ffea;
+  color: #00a854;
+}
+
+.profile-account-chip--warn {
+  background: #fff7e8;
+  color: #ff7d00;
+}
+
+.profile-account-identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #86909c;
+  margin-bottom: 10px;
+}
+
+.profile-account-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #c9cdd4;
+}
+
+.profile-account-identity-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-account-settings {
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.profile-account-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: #fff;
+}
+
+.profile-account-row-label {
+  width: 100px;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d2129;
+}
+
+.profile-account-row-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-account-row-action {
+  flex-shrink: 0;
+}
+
+.profile-account-row-hint {
+  font-size: 12px;
+  color: #c9cdd4;
+  margin-top: 4px;
+}
+
+.profile-account-email-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #4e5969;
+}
+
+.profile-account-divider {
+  height: 1px;
+  background: #f2f3f5;
+  margin: 0 20px;
+}
+
+.profile-account-info {
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.profile-account-info-label {
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #86909c;
+  background: #f7f8fa;
+  border-bottom: 1px solid #f2f3f5;
+}
+
+.profile-account-info-list {
+  padding: 4px 0;
+}
+
+.profile-account-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  font-size: 13px;
+}
+
+.profile-account-info-key {
+  color: #86909c;
+}
+
+.profile-account-info-val {
+  color: #1d2129;
+  font-weight: 500;
 }
 
 @media (max-width: 780px) {
@@ -9961,6 +10641,26 @@ textarea {
 .interview-page .interview-field .arco-select-view-placeholder {
   display: flex;
   align-items: center;
+}
+
+/* 覆盖 Arco 内置截断样式 */
+.interview-page .interview-field .arco-select-single .arco-select-view-value,
+.interview-page .interview-field .arco-select-single .arco-select-view-placeholder {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.5;
+}
+
+.interview-page .interview-field .arco-select-view-value,
+.interview-page .interview-field .arco-select-view-placeholder {
+  display: flex;
+  align-items: center;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.5;
+  max-width: none !important;
 }
 
 /* 防止 label → div 后选择框被遮挡 */

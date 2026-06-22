@@ -1,12 +1,52 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from html import escape
 import httpx
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+
+_CJK_FONT_CANDIDATES = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+)
+
+_CJK_FONT_NAME = "ResumeCJK"
+
+
+def _ensure_cjk_font() -> str:
+    """注册中文字体并返回字体名称。"""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    if _CJK_FONT_NAME in pdfmetrics.getRegisteredFontNames():
+        return _CJK_FONT_NAME
+    for path in _CJK_FONT_CANDIDATES:
+        if not Path(path).exists():
+            continue
+        try:
+            pdfmetrics.registerFont(TTFont(_CJK_FONT_NAME, path, subfontIndex=0))
+            return _CJK_FONT_NAME
+        except Exception:
+            continue
+    try:
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        return "STSong-Light"
+    except Exception:
+        return "Helvetica"
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -390,7 +430,20 @@ def _clean_resume_document(data: dict[str, Any], *, title: str, template_id: str
 def _split_lines(text: Any) -> list[str]:
     if not text:
         return []
-    return [line.strip() for line in str(text).splitlines() if line.strip()]
+    s = str(text).strip()
+    # 处理 HTML 内容：<ul><li>、<p>、<br> 等
+    import re
+    # <li> 或 <p> 作为行分隔
+    s = re.sub(r'<br\s*/?>', '\n', s, flags=re.IGNORECASE)
+    s = re.sub(r'</?p[^>]*>', '\n', s, flags=re.IGNORECASE)
+    s = re.sub(r'<li[^>]*>', '\n• ', s, flags=re.IGNORECASE)
+    s = re.sub(r'</li>', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'</?ul[^>]*>', '\n', s, flags=re.IGNORECASE)
+    # 去掉剩余 HTML 标签
+    s = re.sub(r'<[^>]+>', '', s)
+    # HTML 实体
+    s = s.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&nbsp;', ' ')
+    return [line.strip().lstrip('•·-—').strip() for line in s.splitlines() if line.strip()]
 
 
 def _escape_text(value: Any) -> str:
@@ -407,60 +460,67 @@ def _render_resume_pdf(row: StudentResume) -> bytes:
     data = _merge_resume_payload(row)
     basic = data.get("basic") or {}
     theme_color = TEMPLATE_COLORS.get(row.template_id, TEMPLATE_COLORS[DEFAULT_TEMPLATE_ID])
+    font_name = _ensure_cjk_font()
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
     )
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "ResumeTitle",
         parent=styles["Title"],
+        fontName=font_name,
         alignment=TA_CENTER,
-        fontSize=22,
-        leading=28,
+        fontSize=20,
+        leading=26,
         textColor=theme_color,
-        spaceAfter=8,
+        spaceAfter=6,
     )
     subtitle_style = ParagraphStyle(
         "ResumeSubtitle",
         parent=styles["BodyText"],
+        fontName=font_name,
         alignment=TA_CENTER,
-        fontSize=10.5,
-        leading=15,
+        fontSize=10,
+        leading=14,
         textColor=colors.HexColor("#475569"),
-        spaceAfter=12,
+        spaceAfter=14,
     )
     section_style = ParagraphStyle(
         "ResumeSection",
         parent=styles["Heading2"],
-        fontSize=12.5,
+        fontName=font_name,
+        fontSize=13,
         leading=18,
         textColor=theme_color,
         borderPadding=0,
-        spaceBefore=6,
+        spaceBefore=12,
         spaceAfter=6,
     )
     body_style = ParagraphStyle(
         "ResumeBody",
         parent=styles["BodyText"],
-        fontSize=10.5,
+        fontName=font_name,
+        fontSize=10,
         leading=16,
         textColor=colors.HexColor("#1e293b"),
-        spaceAfter=5,
+        spaceAfter=4,
     )
     item_title_style = ParagraphStyle(
         "ResumeItemTitle",
         parent=styles["BodyText"],
-        fontSize=10.8,
+        fontName=font_name,
+        fontSize=10.5,
         leading=16,
         textColor=colors.HexColor("#0f172a"),
-        spaceAfter=2,
+        spaceBefore=6,
+        spaceAfter=3,
     )
 
     story = [
@@ -487,7 +547,7 @@ def _render_resume_pdf(row: StudentResume) -> bytes:
             return
         story.append(Paragraph(_escape_text(title), section_style))
         story.extend(paragraphs)
-        story.append(Spacer(1, 4))
+        story.append(Spacer(1, 6))
 
     skills = data.get("skills") or []
     skill_lines = [
@@ -972,77 +1032,6 @@ def _compute_sections_summary(data: dict[str, Any]) -> dict[str, Any]:
         "skills": bool((data.get("skills") or "").strip()),
         "self_evaluation": bool((data.get("self_evaluation") or "").strip()),
     }
-async def upload_resume_file(
-    file: UploadFile,
-    db: Session = Depends(get_db),
-    current=Depends(require_role("student")),
-):
-    """上传 PDF/DOCX/TXT/MD 简历文件，提取文本后创建一条新的简历记录。"""
-    import tempfile
-
-    identity, _ = current
-    _ensure_resume_limit(db, identity.user_id, identity.tenant_id)
-
-    original_name = file.filename or "resume"
-    ext = Path(original_name).suffix.lower()
-    if ext not in {".pdf", ".docx", ".txt", ".md"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 PDF、DOCX、TXT、Markdown 格式")
-
-    content = await file.read()
-    if len(content) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="简历文件不能超过 8MB")
-
-    text = ""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-    try:
-        if ext == ".pdf":
-            from pypdf import PdfReader
-
-            reader = PdfReader(str(tmp_path))
-            for page in reader.pages[:20]:
-                page_text = (page.extract_text() or "").strip()
-                if page_text:
-                    text += page_text + "\n"
-        elif ext == ".docx":
-            from docx import Document
-
-            doc = Document(str(tmp_path))
-            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-        else:
-            text = content.decode("utf-8", errors="replace")
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    text = text.strip()[:30000]
-    if not text:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未能从文件中提取到文本内容")
-
-    # 从学生档案自动填充基本信息
-    student = db.get(StudentUser, identity.user_id)
-    title = Path(original_name).stem[:60] or "上传的简历"
-
-    document = _default_resume_data(student, title, "blank", False)
-    document["selfEvaluation"] = text
-
-    if identity.tenant_id:
-        pass  # tenant 隔离由 _ensure_resume_limit 保证
-
-    row = StudentResume(
-        tenant_id=identity.tenant_id,
-        student_id=identity.user_id,
-        title=title,
-        template_id="blank",
-        visibility=False,
-        data_json=json.dumps(document, ensure_ascii=False),
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return ok({"id": row.id, "title": title, "chars": len(text)}, msg="uploaded")
-
-
 @router.get("/{resume_id}")
 def get_resume(
     resume_id: int,

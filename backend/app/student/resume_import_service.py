@@ -1,4 +1,4 @@
-﻿"""简历文件导入：文本抽取 + LLM 结构化解析。
+"""简历文件导入：文本抽取 + LLM 结构化解析。
 
 技术决策（E0）：不写规则解析器，不默认走多模态。
 复用 file_text 抽取纯文本，用管理端配置的普通模型做 JSON 结构化。
@@ -499,7 +499,7 @@ def parse_resume_images_to_data(db, identity, page_images):
     for model_index, model in enumerate(models):
         base_url = (model.base_url or "https://api.openai.com/v1").rstrip("/")
         api_key = decrypt_api_key(model.api_key_cipher)
-        is_anthropic = is_anthropic_model(model)
+        is_anthropic = is_anthropic_model(model.model_identifier)
         def _build_messages(text):
             parts = [{"type": "text", "text": text}]
             for png in page_images:

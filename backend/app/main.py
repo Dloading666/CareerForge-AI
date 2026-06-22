@@ -5,11 +5,9 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.admin.agent_router import router as agent_router
 from app.admin.agent_service import seed_default_agents
@@ -137,7 +135,7 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_frontend_origins,
 )
 app.add_middleware(IPRateLimitMiddleware)
 
-os.makedirs("data/avatars", exist_ok=True)
+os.makedirs(str(AVATAR_DIR), exist_ok=True)
 os.makedirs("/app/data/feedbacks", exist_ok=True)
 app.mount("/feedback-images", StaticFiles(directory="/app/data/feedbacks"), name="feedback-images")
 # /data 静态挂载已移除：学生简历 PDF 等敏感文件不再通过文件名 obscurity 保护。
