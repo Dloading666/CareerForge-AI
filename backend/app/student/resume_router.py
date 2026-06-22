@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from reportlab.lib import colors
@@ -24,6 +24,17 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import StudentUser
 from app.auth.service import require_role
+from app.student.avatar_extractor import (
+    extract_avatar_from_docx,
+    extract_avatar_from_pdf,
+    extract_avatar_from_scanned,
+    find_avatar_region,
+)
+from app.student.avatar_storage import (
+    ALLOWED_EXTENSIONS,
+    MAX_AVATAR_SIZE,
+    save_uploaded_avatar,
+)
 from app.core.response import ok
 from app.infra.db import get_db
 from app.student.resume_models import StudentResume
@@ -631,7 +642,14 @@ async def import_resume_file(
 ):
     """导入简历文件（PDF/DOCX/JSON）。PDF/DOCX 通过 LLM 结构化解析，JSON 直接校验。"""
     from fastapi.concurrency import run_in_threadpool
-    from app.student.resume_import_service import extract_resume_file, parse_resume_text_to_data, _SCANNER_THRESHOLD
+    from app.student.resume_import_service import (
+        extract_resume_file,
+        parse_resume_text_to_data,
+        parse_resume_images_to_data,
+        NoMultimodalModelError,
+        _SCANNER_THRESHOLD,
+    )
+    from app.student.file_text import render_pdf_pages_to_png
 
     identity, student = current
     _ensure_resume_limit(db, identity.user_id, identity.tenant_id)
@@ -646,6 +664,7 @@ async def import_resume_file(
         raise HTTPException(status_code=413, detail="文件不能超过 10MB")
 
     parsed_data: dict[str, Any] = {}
+    photo_url: Optional[str] = None
 
     if ext == ".json":
         # JSON 分支：直接解析校验
@@ -657,26 +676,85 @@ async def import_resume_file(
             raise HTTPException(status_code=400, detail="JSON 文件应为对象格式")
         parsed_data = _normalize_import_json(raw)
     else:
-        # PDF/DOCX 分支：抽取文本 → LLM 结构化
+        # PDF/DOCX 分支：先抽文字，抽不到再走多模态 OCR 兜底
         text = extract_resume_file(content, original_name, "")
         if len(text) < _SCANNER_THRESHOLD:
-            raise HTTPException(
-                status_code=400,
-                detail="PDF 似乎是扫描件或图片型 PDF，无法提取文字。请上传文字版 PDF，或下载 JSON 模板填写后导入。",
-            )
-        try:
-            parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)[:300])
-        except httpx.HTTPStatusError as exc:
-            # Upstream LLM provider rejected the request (4xx/5xx).
-            # Surface the actual provider message so the user can see whether
-            # the configured model / API key / base URL is wrong.
-            logger.warning("resume import upstream LLM error: %s", exc)
-            raise HTTPException(
-                status_code=502,
-                detail=f"LLM 解析失败: {str(exc)[:500]}",
-            )
+            if ext == ".pdf":
+                # 扫描件 / 图片型 PDF：渲染前几页，让多模态模型识别
+                import tempfile as _ocr_tempfile
+                with _ocr_tempfile.NamedTemporaryFile(delete=False, suffix=ext) as _ocr_tmp:
+                    _ocr_tmp.write(content)
+                    _ocr_tmp_path = Path(_ocr_tmp.name)
+                try:
+                    page_images = render_pdf_pages_to_png(_ocr_tmp_path, max_pages=3)
+                finally:
+                    try:
+                        _ocr_tmp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                if not page_images:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="该 PDF 无法渲染页面，可能是已损坏的文件。请重新上传，或者下载 JSON 模板填写后导入。",
+                    )
+                # 头像提取：page_images[0] 已经是首页 PNG 字节，先在它上面扫描候选区；
+                # 失败时再让 extract_avatar_from_pdf 重新渲染（与有文字层分支走同一套逻辑）。
+                try:
+                    photo_url = await run_in_threadpool(find_avatar_region, page_images[0])
+                except Exception as exc:
+                    logger.info("avatar find in page png failed: %s", exc)
+                if not photo_url:
+                    try:
+                        photo_url = await run_in_threadpool(extract_avatar_from_pdf, content)
+                    except Exception as exc:
+                        logger.info("avatar extract from pdf failed: %s", exc)
+                try:
+                    parsed_data = await run_in_threadpool(
+                        parse_resume_images_to_data, db, identity, page_images,
+                    )
+                except NoMultimodalModelError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"该 PDF 为扫描件或图片型文件，需要多模态模型去识别，但管理员尚未在「模型广场」配置对学生开放的多模态模型：{exc}",
+                    )
+                except ValueError as exc:
+                    # OCR 模型幻觉或无法读取简历内容时抛 ValueError（如 _looks_like_hallucinated_resume 检测失败后）
+                    raise HTTPException(status_code=422, detail=str(exc)[:400])
+                except httpx.HTTPStatusError as exc:
+                    logger.warning("resume OCR upstream LLM error: %s", exc)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"多模态 LLM 解析失败: {str(exc)[:500]}",
+                    )
+            else:
+                # DOCX 抽不到文字（极少见），给出清晰提示
+                raise HTTPException(
+                    status_code=400,
+                    detail="无法从该文件中提取文字内容，请确认文件未加密且包含文字。",
+                )
+        else:
+            try:
+                parsed_data = await run_in_threadpool(parse_resume_text_to_data, db, identity, text)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)[:300])
+            except httpx.HTTPStatusError as exc:
+                # Upstream LLM provider rejected the request (4xx/5xx).
+                # Surface the actual provider message so the user can see whether
+                # the configured model / API key / base URL is wrong.
+                logger.warning("resume import upstream LLM error: %s", exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"LLM 解析失败: {str(exc)[:500]}",
+                )
+
+            # 头像提取：pdf/docx 嵌入图
+            try:
+                if ext == ".pdf":
+                    photo_url = await run_in_threadpool(extract_avatar_from_pdf, content)
+                elif ext == ".docx":
+                    photo_url = await run_in_threadpool(extract_avatar_from_docx, content)
+            except Exception as exc:
+                logger.info("avatar extract from file failed: %s", exc)
 
     # 标题：传入 > 解析出的姓名+岗位 > 文件名
     resolved_title = (
@@ -687,7 +765,7 @@ async def import_resume_file(
     template_id = DEFAULT_TEMPLATE_ID
 
     # 转为完整编辑器 data_json
-    document = _build_import_document(parsed_data, resolved_title, template_id, student)
+    document = _build_import_document(parsed_data, resolved_title, template_id, student, photo_url=photo_url)
 
     row = StudentResume(
         tenant_id=identity.tenant_id,
@@ -703,7 +781,30 @@ async def import_resume_file(
 
     # 返回简历摘要
     sections = _compute_sections_summary(parsed_data)
-    return ok({"resume_id": row.id, "title": resolved_title, "sections_summary": sections}, msg="imported")
+    payload = {"resume_id": row.id, "title": resolved_title, "sections_summary": sections}
+    if photo_url:
+        payload["photo_url"] = photo_url
+    return ok(payload, msg="imported")
+
+
+@router.post("/{resume_id}/avatar", status_code=201)
+async def upload_resume_avatar(
+    resume_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current=Depends(require_role("student")),
+):
+    """上传/替换某个简历的头像。返回 URL，前端调用 updateResume 把 URL 写入 data_json.basic.photo。"""
+    identity, _ = current
+    _get_student_resume(db, identity.user_id, identity.tenant_id, resume_id)  # 404 自动抛
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="仅支持 jpg / jpeg / png / gif / webp")
+    content_bytes = await file.read()
+    if len(content_bytes) > MAX_AVATAR_SIZE:
+        raise HTTPException(status_code=413, detail="头像文件不能超过 2MB")
+    avatar_url = save_uploaded_avatar(content_bytes, file.filename or "avatar.png")
+    return ok({"avatar_url": avatar_url}, msg="uploaded")
 
 
 def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
@@ -773,6 +874,8 @@ def _build_import_document(
     title: str,
     template_id: str,
     student: Any,
+    *,
+    photo_url: Optional[str] = None,
 ) -> dict[str, Any]:
     """将 LLM 解析的结构化数据转为完整编辑器 data_json。"""
     import uuid
@@ -828,7 +931,7 @@ def _build_import_document(
             "phone": basic.get("phone") or student.phone or "",
             "location": basic.get("location") or "",
             "birthDate": basic.get("birth_date") or "",
-            "photo": student.resume_avatar_url or "",
+            "photo": photo_url or student.resume_avatar_url or "",
             "icons": dict(DEFAULT_BASIC_ICONS),
             "photoConfig": dict(DEFAULT_PHOTO_CONFIG),
             "fieldOrder": [dict(item) for item in DEFAULT_BASIC_FIELD_ORDER],

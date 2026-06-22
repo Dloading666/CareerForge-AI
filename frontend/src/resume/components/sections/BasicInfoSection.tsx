@@ -1,12 +1,56 @@
-import { Button, Card, Form, Input, Switch } from '@arco-design/web-react'
-import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
+import { Button, Card, Form, Input, Switch, Message } from '@arco-design/web-react'
+import { IconCamera, IconDelete, IconPlus } from '@arco-design/web-react/icon'
+import { useRef, useState } from 'react'
 
 import { useResumeEditor } from '../../useResumeEditor'
 import { createCustomField } from '../../constants'
+import { updateResume, uploadResumeAvatar } from '../../api'
+
+const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp'
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 
 export function BasicInfoSection() {
-  const { resume, updateBasic } = useResumeEditor()
+  const { resume, updateBasic, markSaving, markSaved, markError } = useResumeEditor()
+
+  const avatarInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
   if (!resume) return null
+
+  const handleAvatarFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const isImageType = file.type.startsWith('image/')
+    const isImageExt = AVATAR_ACCEPT.split(',').some((ext) => file.name.toLowerCase().endsWith(ext.trim()))
+    if (!isImageType && !isImageExt) {
+      Message.error('仅支持 jpg / jpeg / png / gif / webp 格式')
+      return
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      Message.error('头像文件不能超过 2MB')
+      return
+    }
+    setUploadingAvatar(true)
+    markSaving()
+    try {
+      const { avatar_url } = await uploadResumeAvatar(resume.id, file)
+      const nextResume = { ...resume, basic: { ...resume.basic, photo: avatar_url } }
+      updateBasic({ photo: avatar_url })
+      await updateResume(nextResume)
+      markSaved(nextResume)
+      Message.success('头像已上传')
+    } catch (err) {
+      markError()
+      const detail = err instanceof Error ? err.message : '上传失败，请稍后重试'
+      Message.error(detail)
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  const clearAvatar = () => {
+    updateBasic({ photo: '' })
+  }
 
   const customFields = resume.basic.customFields ?? []
 
@@ -66,12 +110,63 @@ export function BasicInfoSection() {
         <Form.Item label="显示 GitHub 贡献图">
           <Switch checked={resume.basic.githubContributionsVisible} onChange={(checked) => updateBasic({ githubContributionsVisible: checked })} />
         </Form.Item>
-        <Form.Item label="简历头像 URL">
-          <Input
-            value={resume.basic.photo}
-            onChange={(value) => updateBasic({ photo: value })}
-            placeholder="可粘贴证件照或头像链接，用于模板预览"
-          />
+        <Form.Item label="简历头像">
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 8,
+                border: "1px dashed #cbd5e1",
+                background: "#f8fafc",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                flexShrink: 0,
+              }}
+            >
+              {resume.basic.photo ? (
+                <img
+                  src={resume.basic.photo}
+                  alt="头像预览"
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : (
+                <IconCamera style={{ fontSize: 24, color: "#94a3b8" }} />
+              )}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+              <Input
+                value={resume.basic.photo}
+                onChange={(value) => updateBasic({ photo: value })}
+                placeholder="可粘贴证件照或头像链接，用于模板预览"
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button
+                  type="outline"
+                  size="mini"
+                  icon={<IconCamera />}
+                  loading={uploadingAvatar}
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  {resume.basic.photo ? "替换头像" : "上传头像"}
+                </Button>
+                {resume.basic.photo ? (
+                  <Button type="text" status="danger" size="mini" icon={<IconDelete />} onClick={clearAvatar}>
+                    清空
+                  </Button>
+                ) : null}
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept={AVATAR_ACCEPT}
+                  style={{ display: "none" }}
+                  onChange={handleAvatarFile}
+                />
+              </div>
+            </div>
+          </div>
         </Form.Item>
       </Form>
 

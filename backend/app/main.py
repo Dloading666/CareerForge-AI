@@ -56,23 +56,40 @@ BANNER_DIR.mkdir(parents=True, exist_ok=True)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
-    # Ensure user_feedback table exists
+    # Ensure user_feedback table exists (dev-only SQLite fallback)
     from sqlalchemy import text as _text
     with engine.connect() as _conn:
-        _conn.execute(_text(
-            "CREATE TABLE IF NOT EXISTS user_feedback ("
-            "  id INT AUTO_INCREMENT PRIMARY KEY,"
-            "  student_id INT NOT NULL,"
-            "  student_name VARCHAR(100),"
-            "  student_email VARCHAR(200),"
-            "  description TEXT NOT NULL,"
-            "  category VARCHAR(50) DEFAULT 'bug',"
-            "  screenshot_path VARCHAR(500),"
-            "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-            "  status VARCHAR(20) DEFAULT 'open'"
-            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        ))
+        if engine.dialect.name.startswith('mysql'):
+            _conn.execute(_text(
+                "CREATE TABLE IF NOT EXISTS user_feedback ("
+                "  id INT AUTO_INCREMENT PRIMARY KEY,"
+                "  student_id INT NOT NULL,"
+                "  student_name VARCHAR(100),"
+                "  student_email VARCHAR(200),"
+                "  description TEXT NOT NULL,"
+                "  category VARCHAR(50) DEFAULT 'bug',"
+                "  screenshot_path VARCHAR(500),"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  status VARCHAR(20) DEFAULT 'open'"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            ))
+        else:
+            # SQLite fallback (dev only)
+            _conn.execute(_text(
+                "CREATE TABLE IF NOT EXISTS user_feedback ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  student_id INTEGER NOT NULL,"
+                "  student_name VARCHAR(100),"
+                "  student_email VARCHAR(200),"
+                "  description TEXT NOT NULL,"
+                "  category VARCHAR(50) DEFAULT 'bug',"
+                "  screenshot_path VARCHAR(500),"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  status VARCHAR(20) DEFAULT 'open'"
+                ")"
+            ))
         _conn.commit()
+
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)
@@ -262,6 +279,9 @@ def read_root():
 # ── Interview module exception handler ───────────────────────────────────────
 from fastapi.responses import JSONResponse as _JSONResponse
 from app.interview.exceptions import InterviewError as _InterviewError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @app.exception_handler(_InterviewError)
@@ -269,6 +289,27 @@ async def interview_error_handler(request, exc: _InterviewError):  # noqa: ANN00
     return _JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.status_code, "msg": exc.detail, "data": None},
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):  # noqa: ANN001
+    """Catch-all safety net.
+
+    Without this, any unhandled exception in a route is rendered by FastAPI as
+    a plain-text "Internal Server Error" body. The frontend (apiRequest) parses
+    every non-stream response as the standard {code, msg, data} envelope, so a
+    non-JSON body breaks the flow and shows up as "Non-JSON API response" in the
+    console. This handler guarantees a structured envelope even on unexpected 500s.
+    """
+    # Log full traceback server-side; only expose a safe summary to the client.
+    logger.exception("unhandled exception in %s %s", request.method, request.url.path)
+    return _JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "msg": f"服务器内部错误：{type(exc).__name__}",
+            "data": None,
+        },
     )
 
 

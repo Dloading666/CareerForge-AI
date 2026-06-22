@@ -4,7 +4,7 @@
 > ② 简历优化 = 选择工作简历 + 粘贴 JD，全程不离开对话；
 > ③ 新用户进站第一眼就知道「先补档案 → 再备简历 → 然后开聊」。
 
-**全局约定**：同 `docs/agent-improvement-plan.md` 开头（迁移命名、tenant_id 隔离、信封、SSE 三处同步、env 配置、验证方式）。**不要改动 AI 面试官代码**（可以引用其抽取逻辑，不能修改 `/student/interviews/*`）。
+**全局约定**：同 `doc/agent-improvement-plan.md` 开头（迁移命名、tenant_id 隔离、信封、SSE 三处同步、env 配置、验证方式）。**不要改动 AI 面试官代码**（可以引用其抽取逻辑，不能修改 `/student/interviews/*`）。
 
 ---
 

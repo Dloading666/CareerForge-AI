@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date
 from pathlib import Path
@@ -45,6 +46,7 @@ from app.student.profile_details_models import (
     StudentSkill,
     StudentWorkExperience,
 )
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/student", tags=["student"])
 
@@ -716,6 +718,44 @@ async def upload_avatar(
     return ok({"avatar_url": student.avatar_url})
 
 
+def _propagate_resume_avatar(db: Session, *, student_id: int, tenant_id: int,
+                              old_url: Optional[str], new_url: str) -> int:
+    """When the user updates their resume avatar, also rewrite any of their existing
+    resumes whose `basic.photo` was the previous avatar URL. This keeps the rendered
+    resume in sync with the current avatar and avoids stale 404s in the browser console
+    for users who uploaded a new avatar after creating a resume.
+
+    Only resumes whose photo exactly equals the old URL are touched — per-resume
+    customizations (the user can set a different photo in the editor) are preserved.
+    Returns the number of resumes updated.
+    """
+    if not old_url or old_url == new_url:
+        return 0
+    rows = db.execute(
+        select(StudentResume).where(
+            StudentResume.tenant_id == tenant_id,
+            StudentResume.student_id == student_id,
+        )
+    ).scalars().all()
+    updated = 0
+    for r in rows:
+        try:
+            data = json.loads(r.data_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        basic = data.get("basic") or {}
+        if isinstance(basic, dict) and basic.get("photo") == old_url:
+            basic["photo"] = new_url
+            r.data_json = json.dumps(data, ensure_ascii=False)
+            updated += 1
+    if updated:
+        logger.info(
+            "propagated new resume avatar to %d existing resume(s) for student %d",
+            updated, student_id,
+        )
+    return updated
+
+
 @router.post("/profile/resume-avatar")
 async def upload_resume_avatar(
     file: UploadFile = File(...),
@@ -729,14 +769,24 @@ async def upload_resume_avatar(
     content = await file.read()
     if len(content) > MAX_AVATAR_SIZE:
         return error("file too large, max 2MB")
-    if student.resume_avatar_url:
-        old = AVATAR_DIR / Path(student.resume_avatar_url).name
+    old_url = student.resume_avatar_url
+    if old_url:
+        old = AVATAR_DIR / Path(old_url).name
         if old.exists():
             old.unlink()
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"resume-{uuid.uuid4().hex}{ext}"
     (AVATAR_DIR / filename).write_bytes(content)
     student.resume_avatar_url = f"/static/avatars/{filename}"
+    # Rewrite basic.photo on any existing resume that was using the old avatar URL,
+    # so old resumes do not keep requesting a 404 file from the browser.
+    _propagate_resume_avatar(
+        db,
+        student_id=student.id,
+        tenant_id=student.tenant_id,
+        old_url=old_url,
+        new_url=student.resume_avatar_url,
+    )
     db.commit()
     return ok({"resume_avatar_url": student.resume_avatar_url})
 
