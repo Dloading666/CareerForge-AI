@@ -47,7 +47,66 @@ from app.student.profile_details_models import (
 from app.student.resume_models import StudentResume
 from app.student.tool_validation import parse_tool_arguments
 
+# ── Import from extracted modules (re-export for backward compatibility) ──
+from app.student.agent_fact_guard import (  # noqa: E402
+    FACT_GUARD_SHADOW_MODE,
+    ITEM_ATTRIBUTION_SHADOW_MODE,
+    FactWhitelist,
+    SessionEvidencePool,
+    _EMPTY_PHRASES,
+    _ROLE_ESCALATION_LADDER,
+    _ROLE_VERB_RE,
+    _SINGLE_DATE_RE,
+    _STRONG_VERBS,
+    _TIME_RANGE_RE,
+    _WEAK_ITEM_RATIO_THRESHOLD,
+    _collect_evidence_values,
+    _extract_candidate_facts,
+    _extract_fact_whitelist,
+    _fact_guard_failure,
+    _fact_values_from_args,
+    _flatten_dict_values,
+    _norm_time_token,
+    _norm_token,
+    _validate_resume_facts,
+)
+from app.student.agent_utils import (  # noqa: E402
+    _AUTO_HIGH_KEYWORDS,
+    _AUTO_LOW_PATTERNS,
+    _AUTO_XHIGH_KEYWORDS,
+    _MODEL_TEMP_MAP,
+    _configured_fallback_answer,
+    _effort_instruction,
+    _fallback_answer,
+    _looks_like_jd,
+    _supports_image_input,
+    _supports_reasoning_effort,
+    auto_classify_effort,
+    get_model_default_temperature,
+    get_model_effort_config,
+)
+
 logger = logging.getLogger(__name__)
+
+
+# ── Structured logging helpers ──────────────────────────────────────────────
+
+def _req_id() -> str:
+    """生成短请求 ID，用于日志串联。"""
+    return uuid.uuid4().hex[:12]
+
+
+def _log_ctx(request_id: str = "", session_id: Any = "", model: str = "", **extra: Any) -> dict[str, Any]:
+    """构建结构化日志 extra 字段。"""
+    ctx: dict[str, Any] = {}
+    if request_id:
+        ctx["request_id"] = request_id
+    if session_id:
+        ctx["session_id"] = session_id
+    if model:
+        ctx["model"] = model
+    ctx.update(extra)
+    return ctx
 
 
 # ── Value objects ──────────────────────────────────────────────────────────────
@@ -1582,6 +1641,7 @@ async def stream_master_reply(
     《Agent = Model + Harness 开发准则》— "Harness 提供信任".
     """
     session = get_session_or_404(db, identity, session_id)
+    req_id = _req_id()
     user_message = _save_message(db, session, "user", content.strip())
     attachments = _claim_message_attachments(db, identity, session, user_message, attachment_ids)
     if (
@@ -1623,7 +1683,7 @@ async def stream_master_reply(
     if reasoning_effort == "auto":
         has_jd = bool(session.jd_text and session.jd_text.strip())
         reasoning_effort = auto_classify_effort(content, has_jd=has_jd, has_attachments=bool(attachments))
-        logger.info("auto effort classified as '%s' for session=%s", reasoning_effort, session.id)
+        logger.info("auto effort classified", extra=_log_ctx(request_id=req_id, session_id=session.id, effort=reasoning_effort))
 
     # Curated, safe tool registry. Only tools the Harness can honestly fulfil
     # are exposed — fabricating stubs are intentionally excluded.
@@ -3255,7 +3315,7 @@ async def run_agent_loop(
             usage_totals[key] += int(usage.get(key) or 0)
 
     deadline = time.monotonic() + 300  # 5 分钟总超时
-    logger.info("agent_loop 开始 session=%s model=%s max_iter=%s", session.id, model.model_identifier, max_iterations)
+    logger.info("agent_loop start", extra=_log_ctx(request_id=req_id, session_id=session.id, model=model.model_identifier, max_iter=max_iterations))
 
     completed_tools: set[str] = set()
     evidence_pool = SessionEvidencePool()
@@ -3270,12 +3330,12 @@ async def run_agent_loop(
     if user_message.content and _looks_like_jd(user_message.content) and session.jd_text != detected_jd:
         session.jd_text = detected_jd  # type: ignore[attr-defined]
         db.commit()
-        logger.info("自动识别 JD 并写入 session=%s（%d 字）", session.id, len(session.jd_text))
+        logger.info("JD auto-detected and saved", extra=_log_ctx(request_id=req_id, session_id=session.id, jd_len=len(session.jd_text)))
     # 工具结果字符预算跟踪（本轮所有工具结果总和）
     tool_result_budget_used = 0
     for iteration in range(max_iterations):
         if time.monotonic() > deadline:
-            logger.warning("agent_loop 超时 session=%s iteration=%s", session.id, iteration)
+            logger.warning("agent_loop timeout", extra=_log_ctx(request_id=req_id, session_id=session.id, iteration=iteration))
             yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[回复超时，请重试]"}
             yield "runtime.completed", runtime_payload()
             return
@@ -3560,6 +3620,7 @@ async def _stream_llm_turn(
 
     try:
         api_key = decrypt_api_key(model.api_key_cipher or "")
+        llm_start = time.monotonic()
         payload: dict[str, Any] = {
             "model": model.model_identifier,
             "messages": messages,
@@ -3639,11 +3700,19 @@ async def _stream_llm_turn(
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
     except Exception as exc:  # noqa: BLE001 — surfaced to caller for graceful fallback
-        logger.exception("LLM 流式调用失败")
+        llm_latency_ms = int((time.monotonic() - llm_start) * 1000)
+        logger.exception("LLM stream failed", extra=_log_ctx(model=model.model_identifier, latency_ms=llm_latency_ms))
         yield "error", str(exc)[:200]
         return
 
+    llm_latency_ms = int((time.monotonic() - llm_start) * 1000)
     ordered = [tool_calls_acc[key] for key in sorted(tool_calls_acc.keys())]
+    logger.info("LLM stream done", extra=_log_ctx(
+        model=model.model_identifier, latency_ms=llm_latency_ms,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        finish_reason=finish,
+    ))
     yield "final", {"content": content_acc, "tool_calls": ordered, "finish_reason": finish, "usage": usage}
 
 
@@ -3742,7 +3811,7 @@ async def _stream_anthropic_turn(
                         delta = obj.get("delta") or {}
                         finish = delta.get("stop_reason") or finish
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Anthropic stream call failed")
+        logger.exception("Anthropic stream call failed", extra=_log_ctx(model=model.model_identifier))
         yield "error", str(exc)[:300]
         return
 
