@@ -54,12 +54,12 @@ def _render_image(code: str) -> str:
     """用 Pillow 渲染带干扰的验证码图片，返回 base64（不含前缀）。"""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-    width, height = 200, 72
+    width, height = 280, 90
     bg = random.choice([(245, 248, 255), (255, 248, 245), (248, 255, 248), (255, 252, 240)])
     image = Image.new("RGB", (width, height), color=bg)
     draw = ImageDraw.Draw(image)
 
-    font = _load_font(56)
+    font = _load_font(72)
 
     # 背景干扰弧线
     for _ in range(4):
@@ -96,13 +96,13 @@ def _render_image(code: str) -> str:
         (100, 40, 160),  # 紫
         (20, 130, 150),  # 青
     ]
-    start_x = 16
-    spacing = (width - 32) // len(code)
+    start_x = 20
+    spacing = (width - 40) // len(code)
     for index, char in enumerate(code):
         color = random.choice(colors)
         x = start_x + spacing * index + random.randint(-4, 4)
-        y = random.randint(4, 14)
-        char_img = Image.new("RGBA", (60, 68), (0, 0, 0, 0))
+        y = random.randint(2, 12)
+        char_img = Image.new("RGBA", (80, 84), (0, 0, 0, 0))
         char_draw = ImageDraw.Draw(char_img)
         char_draw.text((4, 2), char, font=font, fill=(*color, 255))
         angle = random.randint(-25, 25)
@@ -118,8 +118,12 @@ def _render_image(code: str) -> str:
 
 def _load_font(size: int):
     from PIL import ImageFont
+    import os
 
+    # 使用同目录下的 VeraBd.ttf（粗体，清晰可读）
+    local_font = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VeraBd.ttf")
     candidates = [
+        local_font,
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "DejaVuSans-Bold.ttf",
