@@ -959,6 +959,7 @@ async def stream_master_reply(
         db, identity, session, user_message, assistant_message,
         model, messages, openai_tools, registry, attachments, reasoning_effort,
         max_iterations, permission_mode, config.temperature, config.max_tokens,
+        request_id=req_id,
     ):
         if event_name == "message.delta":
             full_content += str(data.get("delta", ""))
@@ -1006,6 +1007,7 @@ async def stream_master_reply(
                     model, messages, openai_tools, registry, attachments, reasoning_effort,
                     1,  # 只重试一次
                     permission_mode, config.temperature, config.max_tokens,
+                    request_id=req_id,
                 ):
                     if retry_event == "message.delta":
                         full_content += str(retry_data.get("delta", ""))
@@ -2281,8 +2283,10 @@ async def run_agent_loop(
     permission_mode: str = "ask",
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    request_id: str = "",
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """The harness-owned ReAct loop. Yields (sse_event_name, data) tuples."""
+    req_id = request_id or _req_id()
     assistant_id = assistant_message.id
     run_started = time.monotonic()
     usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
