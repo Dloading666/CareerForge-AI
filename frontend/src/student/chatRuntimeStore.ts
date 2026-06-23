@@ -66,15 +66,13 @@ export type TimelineSegment = TextSegment | ActionsSegment
 
 /** 将活动按类别聚合计数 */
 export function aggregateActions(activities: AgentActivity[]): string {
+  const displayActivities = filterRecoveredActivities(activities)
   const groups: Record<string, number> = {}
-  let failCount = 0
-  for (const a of activities) {
+  let hintCount = 0
+  for (const a of displayActivities) {
     const cat = categorizeActivity(a.name, a.kind)
     groups[cat] = (groups[cat] || 0) + 1
-    const recovered = a.status === 'failed' && activities.some(
-      (candidate) => candidate.name === a.name && candidate.status === 'completed' && candidate.id > a.id,
-    )
-    if (a.status === 'failed' && !recovered) failCount++
+    if (a.status === 'failed') hintCount++
   }
   const parts: string[] = []
   const order = ['查阅资料', '搜索', '简历操作', '调用技能', '处理']
@@ -87,8 +85,17 @@ export function aggregateActions(activities: AgentActivity[]): string {
     else if (cat === '调用技能') parts.push(`已运行 ${count} 个技能`)
     else parts.push(`已处理 ${count} 个步骤`)
   }
-  if (failCount > 0) parts.push(`${failCount} 项未完成`)
+  if (hintCount > 0) parts.push(`${hintCount} 项轻提示`)
   return parts.join('，') || '处理中…'
+}
+
+function filterRecoveredActivities(activities: AgentActivity[]): AgentActivity[] {
+  return activities.filter((activity) => {
+    if (activity.status !== 'failed') return true
+    return !activities.some(
+      (candidate) => candidate.name === activity.name && candidate.status === 'completed' && candidate.id > activity.id,
+    )
+  })
 }
 
 function categorizeActivity(name: string, kind: string): string {
@@ -144,10 +151,11 @@ type Listener = () => void
 
 /** 按 content_offset 重建时间线，用于流式快照、断线恢复和历史回放。 */
 export function buildTimelineSegments(fullContent: string, activities: AgentActivity[]): TimelineSegment[] {
-  if (!activities.length) return fullContent ? [{ type: 'text', content: fullContent }] : []
+  const displayActivities = filterRecoveredActivities(activities)
+  if (!displayActivities.length) return fullContent ? [{ type: 'text', content: fullContent }] : []
 
   // 按 content_offset 排序活动
-  const sorted = [...activities].sort((a, b) => {
+  const sorted = [...displayActivities].sort((a, b) => {
     const oa = Number(a.detail?.content_offset ?? Infinity)
     const ob = Number(b.detail?.content_offset ?? Infinity)
     return oa - ob
@@ -604,29 +612,7 @@ class ChatRuntimeStore {
         if (idx >= 0) activities[idx] = activity
         else activities.push(activity)
 
-        // 快照可能先于活动回放到达。只要已有正文，就用 content_offset
-        // 重新定位全部活动，避免活动被快照覆盖后只能追加到末尾。
-        let segments: TimelineSegment[]
-        if (s.assistantContent) {
-          segments = buildTimelineSegments(s.assistantContent, activities)
-        } else {
-          segments = s.segments.map((segment) => (
-            segment.type === 'actions'
-              ? { ...segment, activities: [...segment.activities] }
-              : { ...segment }
-          ))
-          const existingSegment = segments.find(
-            (segment) => segment.type === 'actions' && segment.activities.some((item) => item.id === activity.id),
-          )
-          if (existingSegment?.type === 'actions') {
-            const activityIndex = existingSegment.activities.findIndex((item) => item.id === activity.id)
-            existingSegment.activities[activityIndex] = activity
-          } else {
-            const last = segments[segments.length - 1]
-            if (last?.type === 'actions') last.activities.push(activity)
-            else segments.push({ type: 'actions', activities: [activity], collapsed: false })
-          }
-        }
+        const segments = buildTimelineSegments(s.assistantContent, activities)
 
         // 检查是否需要跳转简历编辑器
         if (event === 'activity.completed') {

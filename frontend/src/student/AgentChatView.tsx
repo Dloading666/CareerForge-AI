@@ -508,8 +508,15 @@ function activityDisplayName(activity: AgentActivity) {
 function activityAction(activity: AgentActivity) {
   const action = activityDisplayName(activity)
   if (activity.status === 'started') return `正在${action}…`
-  if (activity.status === 'failed') return `${action}未完成`
+  if (activity.status === 'failed') {
+    return activity.display_summary || `${action}需要轻微调整`
+  }
   return `已${action}`
+}
+
+function activityStatusClass(activity: AgentActivity) {
+  if (activity.status === 'failed') return 'status-hint'
+  return `status-${activity.status}`
 }
 
 
@@ -702,15 +709,13 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
   const visibleActivities = toolActivities.filter((activity) => !isRecoveredFailure(activity))
   const primaryActivity = [...visibleActivities].reverse().find((activity) => activity.status === 'started')
     || visibleActivities[visibleActivities.length - 1]
-  const hasFailures = visibleActivities.some((activity) => activity.status === 'failed')
-
   if (!primaryActivity) return null
 
   const { src, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
   const isRunning = visibleActivities.some((activity) => activity.status === 'started')
 
   return (
-    <div className={`activity-trace${isRunning ? ' is-running' : ''}${hasFailures ? ' has-failures' : ''}`}>
+    <div className={`activity-trace${isRunning ? ' is-running' : ''}`}>
       <Tooltip content={activityDisplayName(primaryActivity)} mini>
         <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
           <img className="activity-trace-image" src={src} alt="" />
@@ -720,7 +725,7 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
         {visibleActivities.map((activity, index) => (
           <span key={activity.id}>
             {index > 0 && <span className="activity-trace-separator"> · </span>}
-            <span className={`activity-trace-action status-${activity.status}`}>
+            <span className={`activity-trace-action ${activityStatusClass(activity)}`}>
               {activityAction(activity)}
             </span>
           </span>

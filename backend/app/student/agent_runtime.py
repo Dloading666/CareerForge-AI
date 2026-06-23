@@ -338,9 +338,10 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
         name="generate_resume_data",
         description=(
-            "根据学生信息和目标 JD，生成一份结构化在线简历并保存到系统。"
+            "根据学生信息和目标 JD，生成第一版结构化在线简历并保存到系统，作为后续连续精修的工作简历。"
             "调用前必须先 query_student_profile 读取学生信息。"
-            "经历、项目、教育、技能和自我评价将由服务端仅根据个人档案生成，传入的同名字段不会被视为事实来源。"
+            "适用于用户提供 JD、要求先出一版、从零创建、没有绑定工作简历的场景。"
+            "经历、项目、教育、技能和自我评价必须来自个人档案或用户明确提供的新事实，禁止补齐空经历。"
             "完成后不要在正文中输出任何链接或 URL——系统会自动在消息下方渲染「查看简历」按钮。正文里用一句话引导即可，例如：简历已生成，点击下方按钮查看并编辑。"
         ),
         source="builtin",
@@ -414,8 +415,9 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
         name="optimize_resume_data",
         description=(
-            "基于学生已有简历内容和目标 JD，生成一份优化版简历并保存到系统。"
+            "基于学生已有简历内容和目标 JD，生成一份优化版简历并保存到系统，适合作为第一版后的岗位定制版本。"
             "调用前必须已获取简历内容（通过 read_resume 或本轮上传的文档附件），禁止凭空捏造。"
+            "用户要求“给一版/出一版/按 JD 做一版”时可保存为新版本；用户要求在当前简历上微调时优先使用 update_resume_data。"
             "所有事实字段都会在服务端核验；无来源内容将拒绝保存。"
             "完成后不要在正文中输出任何链接或 URL——系统会自动在消息下方渲染「查看简历」按钮。正文里用一句话引导即可，例如：简历已优化完成，点击下方按钮查看并编辑。"
         ),
@@ -486,10 +488,11 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
         name="update_resume_data",
         description=(
-            "更新学生已有的在线简历（局部修改）。"
+            "更新学生已有的在线简历（局部修改），用于像 Codex 改代码一样持续精修当前工作简历。"
             "调用前必须先 read_resume 确认简历内容。"
             "resume_id 可选：不传则更新当前工作简历（session 绑定）。"
-            "不得增加原简历或个人档案中不存在的事实，服务端会在保存前强制核验。"
+            "用户要求调整语气、顺序、重点、删改段落、突出某项能力、换成更强表达时优先调用本工具。"
+            "若用户在本轮明确提供了新事实，先用 save_session_note(type=fact) 保存，再写入简历；不得增加原简历、个人档案或用户明说内容之外的事实。"
         ),
         source="builtin",
         priority=966,
@@ -1764,11 +1767,12 @@ def _resume_skill_prerequisite_failure(
             "status": "failed",
             "tool": name,
             "error_code": "resume_tailor_skill_required",
+            "recoverable": True,
             "summary": (
                 "Harness 已阻止写入：订制或优化简历前必须先调用「证据约束订制简历」Skill，"
                 "完成事实清单、JD 优先级和证据匹配矩阵后再保存。"
             ),
-            "display_summary": "需要先完成事实清单与证据矩阵",
+            "display_summary": "正在准备事实清单与证据矩阵",
         }
     # optimize 场景额外要求：必须已提交 JD 分析
     if name == "optimize_resume_data" and session and not getattr(session, "jd_text", None):
@@ -1776,11 +1780,12 @@ def _resume_skill_prerequisite_failure(
             "status": "failed",
             "tool": name,
             "error_code": "jd_analysis_required",
+            "recoverable": True,
             "summary": (
                 "Harness 已阻止保存：请先调用 analyze_jd_match 提交目标岗位 JD 的结构化分析"
                 "（P0/P1 需求、证据匹配矩阵），再调用 optimize_resume_data 生成优化版简历。"
             ),
-            "display_summary": "需要先完成 JD 匹配分析",
+            "display_summary": "正在补齐 JD 匹配分析",
         }
     return None
 
@@ -1824,6 +1829,9 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "可以调整已有事实的顺序和表达，但不能增加原文没有的新事实、新技能、新指标或新经历。资料不足时明确列出缺少项并请学生补充。\n"
         "- 写入保护：generate_resume_data 会忽略模型提交的事实字段并由服务端从个人档案重建；"
         "optimize_resume_data、update_resume_data 和 export_resume_pdf 共享同一套事实核验契约——关键实体（公司名、学校名、职位、项目名、时间段、技术栈、数字指标）必须在证据中有据，但允许改写表达、动词、STAR 结构和措辞优化。校验失败后不得换一种说法绕过校验。\n"
+        "- 像 Codex 改代码一样工作：先根据用户意图生成或保存一个可编辑版本，然后围绕当前工作简历持续精修。"
+        "用户说『再改一下/精修/弱一点/强一点/突出某能力/删掉某段/换个语气』时，默认是在改当前工作简历；"
+        "必须先 read_resume 读取当前版本，再调用 update_resume_data 保存，不要只给建议、不落盘。\n"
         "- 订制 Skill：只要用户提供 JD 或要求『订制/针对岗位/ATS 优化/岗位匹配后改简历』，"
         "必须先调用 skill__evidence_backed_resume_tailor，再按其事实清单、JD 优先级、证据矩阵和保存前自检流程执行；"
         "然后调用 analyze_jd_match 提交结构化 JD 分析（P0/P1 需求、证据矩阵）；"
@@ -1850,8 +1858,8 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  但不要基于它调用 optimize/generate 生成新简历；同时告知用户把简历导入简历中心（路径：简历制作 → 导入简历），\n"
         "  导入后选为工作简历即可持续优化。\n"
         "- 简历写作标准（generate/optimize/update/export 均适用，四者共享同一套事实来源契约）：\n"
-        "  · 经历/项目每条描述必须以**强动词开头**（主导、设计、实现、优化、搭建、研发、负责……），"
-        "严禁用「参与」「协助」「了解」「接触」等弱动词；\n"
+        "  · 经历/项目每条描述尽量以真实强动词开头。优先使用「实现、完成、优化、搭建、设计、开发、整理、分析、封装」；"
+        "不要为了显得更强把「参与」升级成「主导/独立负责/从0到1」，强动词不等于角色升级；\n"
         "  · 尽量采用 STAR 格式：【背景/规模】→【具体行动】→【可量化结果】，"
         "原材料中有数字（性能提升%、用户量、团队人数、金额）必须保留；\n"
         "  · ATS 优化：experience/projects 的 details/description 字段和 skills 字段须自然地覆盖 JD 中出现的核心技术关键词；\n"
@@ -2897,8 +2905,9 @@ async def _dispatch_tool(
                 "status": "failed",
                 "tool": "generate_resume_data",
                 "error_code": "insufficient_evidence",
+                "recoverable": True,
                 "summary": "素材不足，无法生成高质量简历。" + quality_report["suggestions"][0],
-                "display_summary": "📋 你的档案素材还不够，AI 将改为向你提问补充",
+                "display_summary": "需要补充素材后继续生成",
                 "evidence_quality": quality_report,
             }
         return _generate_resume_data_tool(db, identity, args, evidence_pool=evidence_pool)
@@ -4153,6 +4162,8 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
     return {
         "status": "failed",
         "tool": tool,
+        "error_code": "fact_guard_retry",
+        "recoverable": True,
         "summary": (
             f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
             "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
@@ -4160,7 +4171,7 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
             "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM-DD 格式，不要照抄档案中的全角句号等笔误。"
             + whitelist_hint
         ),
-        "display_summary": f"🛡️ 事实核对：发现 {n} 处缺少依据的数据{suffix}，已退回 AI 重写",
+        "display_summary": f"正在核对事实并重写（{n} 处需调整）",
         "fact_validation": {"passed": False, "violations": violations[:20]},
     }
 
@@ -4235,10 +4246,12 @@ def _generate_resume_data_tool(
         return {
             "status": "failed",
             "tool": "generate_resume_data",
+            "error_code": "resume_quality_retry",
+            "recoverable": True,
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "display_summary": "正在根据质量建议调整简历",
             "quality_check": quality,
         }
     if quality.get("warnings"):
@@ -4384,10 +4397,12 @@ def _optimize_resume_data_tool(
         return {
             "status": "failed",
             "tool": "optimize_resume_data",
+            "error_code": "resume_quality_retry",
+            "recoverable": True,
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "display_summary": "正在根据质量建议调整简历",
             "quality_check": quality,
         }
     if quality.get("warnings"):
@@ -4404,12 +4419,14 @@ def _optimize_resume_data_tool(
             return {
                 "status": "failed",
                 "tool": "optimize_resume_data",
+                "error_code": "jd_coverage_retry",
+                "recoverable": True,
                 "summary": (
                     f"JD 关键词覆盖率 {coverage['coverage_ratio']:.0%} 过低（阈值 15%）。"
                     f"未覆盖关键词：{missing_preview}。"
                     f"请调整 skills 和经历描述以覆盖岗位核心要求，或在差距分析中明确说明缺口。"
                 ),
-                "display_summary": f"📊 JD 匹配度不足（{coverage['coverage_ratio']:.0%}），AI 正在补充岗位关键词",
+                "display_summary": f"正在补充岗位关键词（当前 {coverage['coverage_ratio']:.0%}）",
                 "jd_coverage": coverage,
             }
         if coverage.get("severity") == "warning":
@@ -4490,7 +4507,10 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
                 return {
                     "status": "failed",
                     "tool": "update_resume_data",
+                    "error_code": "resume_version_retry",
+                    "recoverable": True,
                     "summary": "这份简历在你读取之后被修改过（可能是用户手动编辑），请重新 read_resume 获取最新内容后再做最小修改。",
+                    "display_summary": "简历刚更新，正在重新读取最新版",
                 }
         except (ValueError, TypeError):
             pass  # 解析失败不阻塞
@@ -4541,10 +4561,12 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
         return {
             "status": "failed",
             "tool": "update_resume_data",
+            "error_code": "resume_quality_retry",
+            "recoverable": True,
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "✨ 简历质量未达标准，AI 正在按建议修改",
+            "display_summary": "正在根据质量建议调整简历",
             "quality_check": quality,
         }
     if quality.get("warnings"):

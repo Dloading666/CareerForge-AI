@@ -2496,7 +2496,7 @@ textarea {
 }
 
 .agent-error-line {
-  color: #c93535;
+  color: #7b8294;
 }
 
 @keyframes activity-live {
@@ -6122,15 +6122,15 @@ textarea {
 }
 
 .activity-trace-action.status-failed {
-  color: #c93535;
+  color: #667085;
+}
+
+.activity-trace-action.status-hint {
+  color: #667085;
 }
 
 .activity-trace.is-running .activity-trace-icon {
   animation: activity-trace-breathe 1.8s ease-in-out infinite;
-}
-
-.activity-trace.has-failures .activity-trace-icon {
-  background: #fff1f0;
 }
 
 .activity-trace-icon.tone-profile,
@@ -6160,7 +6160,7 @@ textarea {
 }
 
 .activity-trace-icon.tone-export {
-  background: #fff1f0;
+  background: #eef4ff;
 }
 
 @keyframes activity-trace-enter {
