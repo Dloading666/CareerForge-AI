@@ -1,4 +1,4 @@
-import { Input, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
+import { Input, Message, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconAttachment,
   IconBook,
@@ -852,6 +852,7 @@ function RuntimeStatusline({
 function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
   const navigate = useNavigate()
   const [reverting, setReverting] = useState<number | null>(null)
+  const [revertedResumeIds, setRevertedResumeIds] = useState<Set<number>>(new Set())
   const editorLinks = useMemo(() => {
     const links = new Map<number, { resumeId: number; label: string; activityName: string; revisionId?: number }>()
     for (const a of [...activities].sort((left, right) => left.id - right.id)) {
@@ -873,9 +874,17 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
     return [...links.values()]
   }, [activities])
 
-  const handleRevert = async (resumeId: number, revisionId: number | undefined, e: React.MouseEvent) => {
-    e.preventDefault()
-    if (!window.confirm('确定撤销本次修改？简历将恢复到修改前的状态。')) return
+  const handleRevert = (resumeId: number, revisionId: number | undefined) => {
+    Modal.confirm({
+      title: '撤销本次修改？',
+      content: '简历会恢复到这次 AI 修改之前的状态。',
+      okText: '撤销修改',
+      cancelText: '再想想',
+      onOk: () => doRevert(resumeId, revisionId),
+    })
+  }
+
+  const doRevert = async (resumeId: number, revisionId: number | undefined) => {
     setReverting(resumeId)
     try {
       let targetRevisionId = revisionId
@@ -883,7 +892,7 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
         // 兜底：获取最近的 revision
         const revisions = await apiRequest<{ id: number }[]>(`/api/v1/student/resumes/${resumeId}/revisions`)
         if (revisions.length === 0) {
-          alert('没有可撤销的快照')
+          Message.warning('没有可撤销的快照')
           return
         }
         targetRevisionId = revisions[0].id
@@ -895,12 +904,14 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
       })
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}))
-        alert(err.detail || '撤销失败，请重试')
+        Message.error(err.detail || '撤销失败，请重试')
         return
       }
-      alert('已撤销修改')
+      // 撤销成功：标记该链接已撤销（按钮消失，给出即时反馈）
+      setRevertedResumeIds((prev) => new Set(prev).add(resumeId))
+      Message.success('已撤销修改，简历已恢复')
     } catch {
-      alert('撤销失败，请重试')
+      Message.error('撤销失败，请重试')
     } finally {
       setReverting(null)
     }
@@ -925,10 +936,10 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
             <span>{link.label}</span>
             <IconCaretRight />
           </a>
-          {link.activityName === 'update_resume_data' && (
+          {link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId) && (
             <button
               type="button"
-              onClick={(e) => void handleRevert(link.resumeId, link.revisionId, e)}
+              onClick={() => handleRevert(link.resumeId, link.revisionId)}
               disabled={reverting === link.resumeId}
               style={{
                 padding: '6px 10px', borderRadius: 8,
@@ -938,6 +949,9 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
             >
               {reverting === link.resumeId ? '撤销中…' : '撤销本次修改'}
             </button>
+          )}
+          {link.activityName === 'update_resume_data' && revertedResumeIds.has(link.resumeId) && (
+            <span style={{ fontSize: 12, color: '#16A34A' }}>✓ 已撤销</span>
           )}
         </span>
       ))}
@@ -1435,10 +1449,20 @@ export function AgentChatView({
     }
   }
 
+  const markCurrentAssistantStopped = () => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1]
+      if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
+        return [...prev.slice(0, -1), { ...last, content: last.content + '\n\n*[已停止]*' }]
+      }
+      return prev
+    })
+  }
+
   const submitMessage = async (preset?: string) => {
     const text = (preset ?? inputValue).trim()
     const hasAttachments = pendingAttachments.length > 0
-    if ((!text && !hasAttachments) || isCurrentStreaming) return
+    if (!text && !hasAttachments) return
     const content = text || '请帮我分析上传的附件。'
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
@@ -1448,6 +1472,11 @@ export function AgentChatView({
     let currentSession = agentSession
     try {
       if (!currentSession) currentSession = await createAgentSession()
+      if (isCurrentStreaming && currentSession.id) {
+        markCurrentAssistantStopped()
+        await chatRuntimeStore.cancelSessionRun(currentSession.id)
+        setStreaming(false)
+      }
     } catch (error) {
       setNotice(error instanceof ApiError ? error.message : '创建对话失败')
       return
@@ -1549,15 +1578,9 @@ export function AgentChatView({
   }
 
   const stopStreaming = () => {
-    if (agentSession?.id != null) chatRuntimeStore.abortSession(agentSession.id)
+    if (agentSession?.id != null) void chatRuntimeStore.cancelSessionRun(agentSession.id)
     setStreaming(false)
-    setMessages((prev) => {
-      const last = prev[prev.length - 1]
-      if (last?.role === 'assistant' && last.content && !last.content.endsWith('*[已停止]*')) {
-        return [...prev.slice(0, -1), { ...last, content: last.content + '\n\n*[已停止]*' }]
-      }
-      return prev
-    })
+    markCurrentAssistantStopped()
   }
 
   const uploadFiles = async (files: File[], currentSession?: AgentChatSession | null) => {
@@ -1944,7 +1967,9 @@ export function AgentChatView({
           onKeyDown={handleComposerKeyDown}
           autoSize={{ minRows: 1, maxRows: 8 }}
           placeholder={
-            agentType === 'interviewer'
+            streaming
+              ? '输入新要求，会打断当前回复并继续'
+              : agentType === 'interviewer'
               ? '回答面试官的问题，或输入你想练习的岗位…'
               : '直接说你的求职需求，例如：帮我优化简历中的项目经历'
           }
@@ -2000,7 +2025,7 @@ export function AgentChatView({
               onModelChange={setSelectedModelId}
               onReasoningChange={setReasoningEffort}
             />
-            {streaming ? (
+            {streaming && !inputValue.trim() && pendingAttachments.length === 0 ? (
               <button type="button" className="composer-send-btn stop" onClick={stopStreaming}>
                 <span className="stop-icon" />
               </button>
@@ -2010,6 +2035,7 @@ export function AgentChatView({
                 className="composer-send-btn"
                 disabled={(!inputValue.trim() && pendingAttachments.length === 0) || !selectedModelId}
                 onClick={() => void submitMessage()}
+                title={streaming ? '打断当前回复并发送新要求' : undefined}
               >
                 <IconSend />
               </button>
