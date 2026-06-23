@@ -206,6 +206,42 @@ def _norm_token(s: str) -> str:
     return s.casefold().replace(" ", "").replace("\u3000", "")
 
 
+# 子串匹配容差（P1.3）：档案写「腾讯科技」、模型输出「腾讯」不应误拦。
+# 规则：
+# - 精确命中白名单 → 通过；
+# - 候选是中文专名（≥2 个汉字）且是某白名单词的子串 → 通过（腾讯 ← 腾讯科技）；
+# - 某白名单词是候选的子串 → 通过（腾讯科技 ← 腾讯，白名单更长）；
+# - 英文专名不做子串匹配（短词如 AI/Go 做子串误放面太大），仍走精确。
+_SUBSTR_MIN_CN_LEN = 2  # 中文子串匹配的最小候选长度
+_CN_CHAR_RE = _re.compile(r"[一-鿿]")
+
+
+def _is_chinese_noun(norm: str) -> bool:
+    """归一化后的专名是否主要由汉字构成（用于决定是否启用子串容差）。"""
+    return bool(_CN_CHAR_RE.search(norm))
+
+
+def _noun_has_source(candidate_norm: str, whitelist_norms: set[str]) -> bool:
+    """候选专名是否有证据来源（精确或双向子串匹配）。"""
+    if not candidate_norm:
+        return True
+    if candidate_norm in whitelist_norms:
+        return True
+    # 仅对中文专名启用子串容差，且候选需达到最小长度
+    if not _is_chinese_noun(candidate_norm) or len(candidate_norm) < _SUBSTR_MIN_CN_LEN:
+        return False
+    for wn in whitelist_norms:
+        if not _is_chinese_noun(wn) or len(wn) < _SUBSTR_MIN_CN_LEN:
+            continue
+        # 候选 ⊆ 白名单（腾讯 是 腾讯科技 的子串）
+        if candidate_norm in wn:
+            return True
+        # 白名单 ⊆ 候选（腾讯科技 包含 腾讯）
+        if wn in candidate_norm:
+            return True
+    return False
+
+
 def _flatten_dict_values(data: dict, target_key: str) -> list[Any]:
     results: list[Any] = []
     if isinstance(data, dict):
@@ -376,7 +412,8 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
     violations: list[str] = []
 
     for noun in candidate.proper_nouns:
-        if _norm_token(noun) not in norm_nouns:
+        # P1.3: 中文专名启用双向子串匹配容差（腾讯 ↔ 腾讯科技），英文仍精确。
+        if not _noun_has_source(_norm_token(noun), norm_nouns):
             violations.append(f"无来源专名「{noun}」")
 
     for tr in candidate.time_ranges:
@@ -393,7 +430,8 @@ def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) ->
             continue
         for m in _re.finditer(r"[一-鿿]{3,8}", raw_value):
             word = m.group()
-            if _norm_token(word) not in norm_nouns and len(word) >= 4:
+            # P1.3: 子串容差同样适用于描述正文里的疑似专名
+            if not _noun_has_source(_norm_token(word), norm_nouns) and len(word) >= 4:
                 if any(word.endswith(s) for s in ("大学", "学院", "公司", "集团", "科技", "有限")):
                     _desc_suspicious.append(word)
     if _desc_suspicious:

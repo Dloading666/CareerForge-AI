@@ -269,9 +269,8 @@ class TestFactGuardEval(unittest.TestCase):
                          f"技术词不应被拦截: {violations}")
 
 
-@unittest.skip("P1.3 专名模糊匹配容差未实现：当前 _norm_token 只做 casefold，不做子串匹配")
 class TestProperNounSubstringMatch(unittest.TestCase):
-    """专名模糊匹配容差评测。
+    """专名模糊匹配容差评测（P1.3）。
 
     回归场景：档案写"腾讯科技"但模型输出"腾讯"，不应误拦。
     """
