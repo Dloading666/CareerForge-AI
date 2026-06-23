@@ -64,6 +64,26 @@ JOB_SEARCH_STATUS_VALUES = {
 }
 
 
+def _normalize_month(value: str | None) -> str:
+    if not value:
+        return ""
+    text = value.strip()
+    match = re.match(r"^(\d{4})[.\-/年。．](\d{1,2})", text)
+    if not match:
+        return text
+    return f"{match.group(1)}-{int(match.group(2)):02d}"
+
+
+def _parse_birth_month(value: str | None) -> date | None:
+    text = _normalize_month(value)
+    if not text:
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}", text):
+        raise ValueError("birth_date 格式应为 YYYY-MM")
+    year, month = text.split("-")
+    return date(int(year), int(month), 1)
+
+
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     nickname: Optional[str] = Field(default=None, max_length=64)
@@ -524,9 +544,10 @@ def _serialize_profile(student) -> dict:
     age = student.age
     if student.birth_date:
         try:
-            born = date.fromisoformat(student.birth_date)
+            born = _parse_birth_month(student.birth_date)
             today = date.today()
-            age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+            if born:
+                age = today.year - born.year - (today.month < born.month)
         except ValueError:
             pass
     return {
@@ -649,14 +670,13 @@ def update_student_profile(
             return error("昵称长度不能超过 64 个字符")
         update_data["nickname"] = nickname or None
     if "birth_date" in update_data:
-        birth_date = update_data["birth_date"] or ""
-        if birth_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", birth_date):
-            return error("birth_date 格式应为 YYYY-MM-DD")
+        birth_date = _normalize_month(update_data["birth_date"] or "")
+        update_data["birth_date"] = birth_date or None
         if birth_date:
             try:
-                date.fromisoformat(birth_date)
+                _parse_birth_month(birth_date)
             except ValueError:
-                return error("birth_date 不是有效日期")
+                return error("birth_date 格式应为 YYYY-MM")
     if not update_data:
         return ok(_serialize_profile(student), msg="no fields to update")
     for field, value in update_data.items():
@@ -666,9 +686,9 @@ def update_student_profile(
     if "birth_date" in update_data:
         birth_date = update_data["birth_date"] or ""
         if birth_date:
-            born = date.fromisoformat(birth_date)
+            born = _parse_birth_month(birth_date)
             today = date.today()
-            student.age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+            student.age = today.year - born.year - (today.month < born.month) if born else None
         else:
             student.age = None
     db.commit()

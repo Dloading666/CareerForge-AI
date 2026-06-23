@@ -44,20 +44,38 @@ import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
 
-// 日期字段统一精确到天（YYYY-MM-DD），所有相关输入都使用 DatePicker，
-// DatePicker 自身不允许键盘输入，只能通过面板选择，避免用户手填格式不规范的日期。
-const DAY_FORMAT = 'YYYY-MM-DD'
+// 简历事实源中的日期统一精确到月（YYYY-MM），不保留具体日期。
+const MONTH_FORMAT = 'YYYY-MM'
 const RANGE_SEPARATOR = ' ~ '
 
 function toDate(value: string | null | undefined): Date | undefined {
   if (!value) return undefined
-  const s = value.trim()
+  const s = normalizeMonth(value)
   if (!s || s === '至今' || s === 'present' || s === 'now') return undefined
-  const d = new Date(s)
+  const d = new Date(`${s}-01T00:00:00`)
   return isNaN(d.getTime()) ? undefined : d
 }
 
-function formatDay(date: unknown): string {
+function normalizeMonth(value: string | null | undefined): string {
+  if (!value) return ''
+  const raw = value.trim()
+  if (!raw || isPresentFlag(raw)) return raw
+  const match = raw.match(/(\d{4})[.\-/年。．](\d{1,2})/)
+  if (!match) return raw
+  return `${match[1]}-${match[2].padStart(2, '0')}`
+}
+
+function normalizeMonthOrPresent(value: string | null | undefined): string {
+  if (isPresentFlag(value)) return '至今'
+  return normalizeMonth(value)
+}
+
+function normalizeDateRange(value: string | null | undefined): string {
+  const [start, end] = splitDateRange(value)
+  return joinDateRange(start, end)
+}
+
+function formatMonth(date: unknown): string {
   if (!date) return ''
   let d: Date
   if (date instanceof Date) {
@@ -71,7 +89,7 @@ function formatDay(date: unknown): string {
   }
   if (isNaN(d.getTime())) return ''
   const pad = (n: number) => n.toString().padStart(2, '0')
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1)
 }
 
 function isPresentFlag(value: string | null | undefined): boolean {
@@ -90,8 +108,8 @@ function splitDateRange(value: string | null | undefined): [string, string] {
   const v = value.trim()
   if (!v) return ['', '']
   const sepIdx = v.indexOf(RANGE_SEPARATOR)
-  if (sepIdx === -1) return [v, '']
-  return [v.slice(0, sepIdx).trim(), v.slice(sepIdx + RANGE_SEPARATOR.length).trim()]
+  if (sepIdx === -1) return [normalizeMonth(v), '']
+  return [normalizeMonth(v.slice(0, sepIdx).trim()), normalizeMonth(v.slice(sepIdx + RANGE_SEPARATOR.length).trim())]
 }
 
 // ---------- Types ----------
@@ -785,7 +803,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         },
         body: JSON.stringify({
           ...values,
-          birth_date: formatDay(values.birth_date),
+          birth_date: formatMonth(values.birth_date),
           personal_advantages: advantageText,
           job_search_status: jobStatus ?? null,
           expected_position: expectedPosition,
@@ -800,11 +818,29 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           Authorization: `Bearer ${session?.access}`,
         },
         body: JSON.stringify({
-          work_experiences: workExperiences,
-          projects: projects,
-          honors: honors,
-          educations: educations,
-          certifications: certifications,
+          work_experiences: workExperiences.map((item) => ({
+            ...item,
+            start_date: normalizeMonthOrPresent(item.start_date),
+            end_date: normalizeMonthOrPresent(item.end_date),
+          })),
+          projects: projects.map((item) => ({
+            ...item,
+            start_date: normalizeMonthOrPresent(item.start_date),
+            end_date: normalizeMonthOrPresent(item.end_date),
+          })),
+          honors: honors.map((item) => ({
+            ...item,
+            award_date: normalizeMonth(item.award_date),
+          })),
+          educations: educations.map((item) => ({
+            ...item,
+            duration: normalizeDateRange(item.duration),
+          })),
+          certifications: certifications.map((item) => ({
+            ...item,
+            issue_date: normalizeMonth(item.issue_date),
+            expire_date: normalizeMonth(item.expire_date),
+          })),
           skills: skillItems,
         }),
       })
@@ -1518,11 +1554,11 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                         </Radio.Group>
                       </Form.Item>
                     </FieldRow>
-                    <FieldRow label="出生日期">
+                    <FieldRow label="出生月份">
                       <Form.Item field="birth_date" noStyle>
-                        <DatePicker
-                          format={DAY_FORMAT}
-                          placeholder="请选择出生日期"
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
+                          placeholder="请选择出生月份"
                           allowClear
                           style={{ width: '100%' }}
                         />
@@ -1607,7 +1643,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                               placeholder="如：本科"
                             />
                           </FieldRow>
-                          <FieldRow label="起止日期">
+                          <FieldRow label="起止月份">
                             {(() => {
                               const [startDate, endDate] = splitDateRange(item.duration)
                               return (
@@ -1690,27 +1726,27 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                               placeholder="如：前端开发实习生"
                             />
                           </FieldRow>
-                          <FieldRow label="开始日期">
-                            <DatePicker
-                              format={DAY_FORMAT}
+                          <FieldRow label="开始月份">
+                            <DatePicker.MonthPicker
+                              format={MONTH_FORMAT}
                               value={toDate(item.start_date)}
                               onChange={(_dateString, date) =>
-                                update({ ...item, start_date: formatDay(date) })
+                                update({ ...item, start_date: formatMonth(date) })
                               }
-                              placeholder="请选择开始日期"
+                              placeholder="请选择开始月份"
                               allowClear
                               style={{ width: '100%' }}
                             />
                           </FieldRow>
-                          <FieldRow label="结束日期">
+                          <FieldRow label="结束月份">
                             <div className="profile-date-with-present">
-                              <DatePicker
-                                format={DAY_FORMAT}
+                              <DatePicker.MonthPicker
+                                format={MONTH_FORMAT}
                                 value={toDate(item.end_date)}
                                 onChange={(_dateString, date) =>
-                                  update({ ...item, end_date: formatDay(date) })
+                                  update({ ...item, end_date: formatMonth(date) })
                                 }
-                                placeholder="请选择结束日期"
+                                placeholder="请选择结束月份"
                                 allowClear
                                 disabled={isPresentFlag(item.end_date)}
                                 style={{ flex: 1 }}
@@ -1775,27 +1811,27 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                               placeholder="如：前端负责人"
                             />
                           </FieldRow>
-                          <FieldRow label="开始日期">
-                            <DatePicker
-                              format={DAY_FORMAT}
+                          <FieldRow label="开始月份">
+                            <DatePicker.MonthPicker
+                              format={MONTH_FORMAT}
                               value={toDate(item.start_date)}
                               onChange={(_dateString, date) =>
-                                update({ ...item, start_date: formatDay(date) })
+                                update({ ...item, start_date: formatMonth(date) })
                               }
-                              placeholder="请选择开始日期"
+                              placeholder="请选择开始月份"
                               allowClear
                               style={{ width: '100%' }}
                             />
                           </FieldRow>
-                          <FieldRow label="结束日期">
+                          <FieldRow label="结束月份">
                             <div className="profile-date-with-present">
-                              <DatePicker
-                                format={DAY_FORMAT}
+                              <DatePicker.MonthPicker
+                                format={MONTH_FORMAT}
                                 value={toDate(item.end_date)}
                                 onChange={(_dateString, date) =>
-                                  update({ ...item, end_date: formatDay(date) })
+                                  update({ ...item, end_date: formatMonth(date) })
                                 }
-                                placeholder="请选择结束日期"
+                                placeholder="请选择结束月份"
                                 allowClear
                                 disabled={isPresentFlag(item.end_date)}
                                 style={{ flex: 1 }}
@@ -1881,12 +1917,12 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                             <FieldRow label="级别 / 颁奖方">
                               <Input value={item.level} onChange={(value) => update({ ...item, level: value })} />
                             </FieldRow>
-                            <FieldRow label="获奖日期">
-                              <DatePicker
-                                format={DAY_FORMAT}
+                            <FieldRow label="获奖月份">
+                              <DatePicker.MonthPicker
+                                format={MONTH_FORMAT}
                                 value={toDate(item.award_date)}
                                 onChange={(_dateString, date) =>
-                                  update({ ...item, award_date: formatDay(date) })
+                                  update({ ...item, award_date: formatMonth(date) })
                                 }
                                 style={{ width: '100%' }}
                                 allowClear
@@ -1931,23 +1967,23 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                             <FieldRow label="颁发机构">
                               <Input value={item.issuer} onChange={(value) => update({ ...item, issuer: value })} />
                             </FieldRow>
-                            <FieldRow label="获得日期">
-                              <DatePicker
-                                format={DAY_FORMAT}
+                            <FieldRow label="获得月份">
+                              <DatePicker.MonthPicker
+                                format={MONTH_FORMAT}
                                 value={toDate(item.issue_date)}
                                 onChange={(_dateString, date) =>
-                                  update({ ...item, issue_date: formatDay(date) })
+                                  update({ ...item, issue_date: formatMonth(date) })
                                 }
                                 style={{ width: '100%' }}
                                 allowClear
                               />
                             </FieldRow>
                             <FieldRow label="有效期至">
-                              <DatePicker
-                                format={DAY_FORMAT}
+                              <DatePicker.MonthPicker
+                                format={MONTH_FORMAT}
                                 value={toDate(item.expire_date)}
                                 onChange={(_dateString, date) =>
-                                  update({ ...item, expire_date: formatDay(date) })
+                                  update({ ...item, expire_date: formatMonth(date) })
                                 }
                                 style={{ width: '100%' }}
                                 allowClear
@@ -2395,11 +2431,11 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                     </Radio.Group>
                   </Form.Item>
                 </FieldRow>
-                <FieldRow label="出生日期">
+                <FieldRow label="出生月份">
                   <Form.Item field="birth_date" noStyle>
-                    <DatePicker
-                      format={DAY_FORMAT}
-                      placeholder="请选择出生日期"
+                    <DatePicker.MonthPicker
+                      format={MONTH_FORMAT}
+                      placeholder="请选择出生月份"
                       allowClear
                       style={{ width: '100%' }}
                     />
@@ -2534,27 +2570,27 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           placeholder="如：后端开发实习生"
                         />
                       </FieldRow>
-                      <FieldRow label="开始日期">
-                        <DatePicker
-                          format={DAY_FORMAT}
+                      <FieldRow label="开始月份">
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
                           value={toDate(item.start_date)}
                           onChange={(_dateString, date) =>
-                            update({ ...item, start_date: formatDay(date) })
+                            update({ ...item, start_date: formatMonth(date) })
                           }
-                          placeholder="请选择开始日期"
+                          placeholder="请选择开始月份"
                           allowClear
                           style={{ width: '100%' }}
                         />
                       </FieldRow>
-                      <FieldRow label="结束日期">
+                      <FieldRow label="结束月份">
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <DatePicker
-                            format={DAY_FORMAT}
+                          <DatePicker.MonthPicker
+                            format={MONTH_FORMAT}
                             value={toDate(item.end_date)}
                             onChange={(_dateString, date) =>
-                              update({ ...item, end_date: formatDay(date) })
+                              update({ ...item, end_date: formatMonth(date) })
                             }
-                            placeholder="请选择结束日期"
+                            placeholder="请选择结束月份"
                             allowClear
                             disabled={isPresentFlag(item.end_date)}
                             style={{ flex: 1 }}
@@ -2631,27 +2667,27 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           placeholder="如：后端开发 / 项目负责人"
                         />
                       </FieldRow>
-                      <FieldRow label="开始日期">
-                        <DatePicker
-                          format={DAY_FORMAT}
+                      <FieldRow label="开始月份">
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
                           value={toDate(item.start_date)}
                           onChange={(_dateString, date) =>
-                            update({ ...item, start_date: formatDay(date) })
+                            update({ ...item, start_date: formatMonth(date) })
                           }
-                          placeholder="请选择开始日期"
+                          placeholder="请选择开始月份"
                           allowClear
                           style={{ width: '100%' }}
                         />
                       </FieldRow>
-                      <FieldRow label="结束日期">
+                      <FieldRow label="结束月份">
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <DatePicker
-                            format={DAY_FORMAT}
+                          <DatePicker.MonthPicker
+                            format={MONTH_FORMAT}
                             value={toDate(item.end_date)}
                             onChange={(_dateString, date) =>
-                              update({ ...item, end_date: formatDay(date) })
+                              update({ ...item, end_date: formatMonth(date) })
                             }
-                            placeholder="请选择结束日期"
+                            placeholder="请选择结束月份"
                             allowClear
                             disabled={isPresentFlag(item.end_date)}
                             style={{ flex: 1 }}
@@ -2736,7 +2772,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           placeholder="如：本科 / 硕士"
                         />
                       </FieldRow>
-                      <FieldRow label="起止日期">
+                      <FieldRow label="起止月份">
                         {(() => {
                           const [startStr, endStr] = splitDateRange(item.duration)
                           const startDate = toDate(startStr)
@@ -2746,7 +2782,8 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           return (
                             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                               <DatePicker.RangePicker
-                                format={DAY_FORMAT}
+                                mode="month"
+                                format={MONTH_FORMAT}
                                 value={
                                   hasAny
                                     ? ([startDate, endDate].filter(Boolean) as Date[])
@@ -2754,11 +2791,11 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                                 }
                                 onChange={(_dateStrings, dates) => {
                                   const arr = (Array.isArray(dates) ? dates : []) as unknown[]
-                                  const s = formatDay(arr[0])
-                                  const e = formatDay(arr[1])
+                                  const s = formatMonth(arr[0])
+                                  const e = formatMonth(arr[1])
                                   update({ ...item, duration: joinDateRange(s, e) })
                                 }}
-                                placeholder={['开始日期', '结束日期']}
+                                placeholder={['开始月份', '结束月份']}
                                 allowClear
                                 disabled={disabled}
                                 style={{ flex: 1 }}
@@ -2839,14 +2876,14 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           placeholder="如：国家级 / 校级 / ACM 区域赛"
                         />
                       </FieldRow>
-                      <FieldRow label="获奖日期">
-                        <DatePicker
-                          format={DAY_FORMAT}
+                      <FieldRow label="获奖月份">
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
                           value={toDate(item.award_date)}
                           onChange={(_dateString, date) =>
-                            update({ ...item, award_date: formatDay(date) })
+                            update({ ...item, award_date: formatMonth(date) })
                           }
-                          placeholder="请选择获奖日期"
+                          placeholder="请选择获奖月份"
                           allowClear
                           style={{ width: '100%' }}
                         />
@@ -2909,24 +2946,24 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           placeholder="如：工信部 / PMI"
                         />
                       </FieldRow>
-                      <FieldRow label="获得日期">
-                        <DatePicker
-                          format={DAY_FORMAT}
+                      <FieldRow label="获得月份">
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
                           value={toDate(item.issue_date)}
                           onChange={(_dateString, date) =>
-                            update({ ...item, issue_date: formatDay(date) })
+                            update({ ...item, issue_date: formatMonth(date) })
                           }
-                          placeholder="请选择获得日期"
+                          placeholder="请选择获得月份"
                           allowClear
                           style={{ width: '100%' }}
                         />
                       </FieldRow>
                       <FieldRow label="有效期至">
-                        <DatePicker
-                          format={DAY_FORMAT}
+                        <DatePicker.MonthPicker
+                          format={MONTH_FORMAT}
                           value={toDate(item.expire_date)}
                           onChange={(_dateString, date) =>
-                            update({ ...item, expire_date: formatDay(date) })
+                            update({ ...item, expire_date: formatMonth(date) })
                           }
                           placeholder="请选择有效期至；长期有效可不填"
                           allowClear

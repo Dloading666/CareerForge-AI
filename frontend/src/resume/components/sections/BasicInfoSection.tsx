@@ -9,6 +9,13 @@ import { updateResume, uploadResumeAvatar } from '../../api'
 const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp'
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 
+function normalizeMonth(value: string | null | undefined): string {
+  if (!value) return ''
+  const match = value.trim().match(/(\d{4})[.\-/年。．](\d{1,2})/)
+  if (!match) return value.trim()
+  return `${match[1]}-${match[2].padStart(2, '0')}`
+}
+
 export function BasicInfoSection() {
   const { resume, updateBasic, markSaving, markSaved, markError } = useResumeEditor()
 
@@ -93,12 +100,12 @@ export function BasicInfoSection() {
         <Form.Item label="期望城市">
           <Input value={resume.basic.location} onChange={(value) => updateBasic({ location: value })} />
         </Form.Item>
-        <Form.Item label="出生日期">
+        <Form.Item label="出生月份">
           <Input
-            value={resume.basic.birthDate}
-            onChange={(value) => updateBasic({ birthDate: value })}
-            placeholder="YYYY-MM-DD"
-            maxLength={10}
+            value={normalizeMonth(resume.basic.birthDate)}
+            onChange={(value) => updateBasic({ birthDate: normalizeMonth(value) })}
+            placeholder="YYYY-MM"
+            maxLength={7}
           />
         </Form.Item>
         <Form.Item label="GitHub Key">

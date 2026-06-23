@@ -168,6 +168,18 @@ DEFAULT_PHOTO_CONFIG = {
 }
 
 
+def _normalize_month(value: str | None) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text in {"至今", "present", "now"}:
+        return "至今"
+    match = re.match(r"^(\d{4})[.\-/年。．](\d{1,2})", text)
+    if not match:
+        return text
+    return f"{match.group(1)}-{int(match.group(2)):02d}"
+
+
 def _split_profile_duration(value: str | None) -> tuple[str, str]:
     text = (value or "").strip()
     if not text:
@@ -175,13 +187,13 @@ def _split_profile_duration(value: str | None) -> tuple[str, str]:
     for separator in (" ~ ", " - ", " 至 ", "~", "～"):
         if separator in text:
             start, end = text.split(separator, 1)
-            return start.strip(), end.strip()
-    return text, ""
+            return _normalize_month(start), _normalize_month(end)
+    return _normalize_month(text), ""
 
 
 def _profile_date_range(start: str | None, end: str | None) -> str:
-    start_text = (start or "").strip()
-    end_text = (end or "").strip()
+    start_text = _normalize_month(start)
+    end_text = _normalize_month(end)
     if start_text and end_text:
         return f"{start_text} - {end_text}"
     return start_text or end_text
@@ -298,7 +310,7 @@ def _default_resume_data(
             "email": student.email or "",
             "phone": student.phone or "",
             "location": student.expected_location or "",
-            "birthDate": student.birth_date or "",
+            "birthDate": _normalize_month(student.birth_date),
             "photo": student.resume_avatar_url or "",
             "icons": dict(DEFAULT_BASIC_ICONS),
             "photoConfig": dict(DEFAULT_PHOTO_CONFIG),
@@ -877,15 +889,15 @@ def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
             "email": str(basic.get("email") or "").strip(),
             "phone": str(basic.get("phone") or "").strip(),
             "location": str(basic.get("location") or "").strip(),
-            "birth_date": str(basic.get("birth_date") or basic.get("birthDate") or "").strip(),
+            "birth_date": _normalize_month(str(basic.get("birth_date") or basic.get("birthDate") or "")),
         },
         "education": [
             {
                 "school": str(e.get("school") or "").strip(),
                 "major": str(e.get("major") or "").strip(),
                 "degree": str(e.get("degree") or "").strip(),
-                "start_date": str(e.get("start_date") or e.get("startDate") or "").strip(),
-                "end_date": str(e.get("end_date") or e.get("endDate") or "").strip(),
+                "start_date": _normalize_month(str(e.get("start_date") or e.get("startDate") or "")),
+                "end_date": _normalize_month(str(e.get("end_date") or e.get("endDate") or "")),
                 "gpa": str(e.get("gpa") or "").strip(),
                 "description": str(e.get("description") or "").strip(),
             }
@@ -896,7 +908,7 @@ def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
             {
                 "company": str(e.get("company") or "").strip(),
                 "position": str(e.get("position") or "").strip(),
-                "date": str(e.get("date") or "").strip(),
+                "date": _profile_date_range(*_split_profile_duration(str(e.get("date") or ""))),
                 "details": str(e.get("details") or e.get("description") or "").strip(),
             }
             for e in (raw.get("experience") or [])
@@ -906,7 +918,7 @@ def _normalize_import_json(raw: dict[str, Any]) -> dict[str, Any]:
             {
                 "name": str(p.get("name") or "").strip(),
                 "role": str(p.get("role") or "").strip(),
-                "date": str(p.get("date") or "").strip(),
+                "date": _profile_date_range(*_split_profile_duration(str(p.get("date") or ""))),
                 "description": str(p.get("description") or "").strip(),
             }
             for p in (raw.get("projects") or [])

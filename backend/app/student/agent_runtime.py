@@ -360,7 +360,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "email": {"type": "string"},
                         "phone": {"type": "string"},
                         "location": {"type": "string"},
-                        "birth_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2002-09-15）"},
+                        "birth_date": {"type": "string", "description": "格式 YYYY-MM（如 2002-09）"},
                     },
                 },
                 "education": {
@@ -372,8 +372,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                             "school": {"type": "string"},
                             "major": {"type": "string"},
                             "degree": {"type": "string"},
-                            "start_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2021-09-01）"},
-                            "end_date": {"type": "string", "description": "格式 YYYY-MM-DD（如 2025-06-30），尚未毕业请填“至今”"},
+                            "start_date": {"type": "string", "description": "格式 YYYY-MM（如 2021-09）"},
+                            "end_date": {"type": "string", "description": "格式 YYYY-MM（如 2025-06），尚未毕业请填“至今”"},
                             "gpa": {"type": "string"},
                             "description": {"type": "string", "description": "每行一个亮点，换行分隔"},
                         },
@@ -387,7 +387,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "company": {"type": "string"},
                             "position": {"type": "string"},
-                            "date": {"type": "string", "description": "时间段，例如 2022-06-01 - 2024-12-15，尚未结束请填“至今”"},
+                            "date": {"type": "string", "description": "时间段，例如 2022-06 - 2024-12，尚未结束请填“至今”"},
                             "details": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -400,7 +400,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                         "properties": {
                             "name": {"type": "string"},
                             "role": {"type": "string"},
-                            "date": {"type": "string", "description": "时间段，例如 2024-03-01 - 2024-08-15，尚未结束请填“至今”"},
+                            "date": {"type": "string", "description": "时间段，例如 2024-03 - 2024-08，尚未结束请填“至今”"},
                             "description": {"type": "string", "description": "每行一个要点，换行分隔"},
                         },
                     },
@@ -1865,7 +1865,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  · ATS 优化：experience/projects 的 details/description 字段和 skills 字段须自然地覆盖 JD 中出现的核心技术关键词；\n"
         "  · 自我评价控制在 2-3 句，重点突出与 JD 最匹配的核心能力，不写泛泛的「认真负责」「吃苦耐劳」；\n"
         "  · 没有具体数字时，用规模描述（「百万级 DAU」「10+ 人跨部门」）替代空洞形容词；\n"
-        "  · 同一份简历中时间格式统一为 YYYY-MM-DD（如 2022-06-01），勿混用。\n"
+        "  · 同一份简历中时间格式统一为 YYYY-MM（如 2022-06），不保留具体日期，勿混用。\n"
         "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），完成后不要在正文中输出任何链接或 URL——系统会自动在消息下方渲染「查看简历」按钮。\n"
         "- 修改简历前必须基于最近一次 read_resume 的内容做最小变更，禁止凭记忆重写整个章节。"
         "传入 read_resume 时拿到的 updated_at 作为 base_updated_at 参数，用于版本检查。\n"
@@ -3661,10 +3661,12 @@ def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, 
         "location": basic_in.get("location")
         or (getattr(student, "expected_location", None) if student else None)
         or "",
-        "birthDate": basic_in.get("birth_date")
-        or basic_in.get("birthDate")
-        or (getattr(student, "birth_date", None) if student else None)
-        or "",
+        "birthDate": _normalize_month_value(
+            basic_in.get("birth_date")
+            or basic_in.get("birthDate")
+            or (getattr(student, "birth_date", None) if student else None)
+            or ""
+        ),
         "employementStatus": "",
         "photo": (getattr(student, "resume_avatar_url", None) if student else None) or "",
         "icons": {"birthDate": "calendar", "employementStatus": "briefcase", "email": "mail", "phone": "phone", "location": "location"},
@@ -3714,17 +3716,29 @@ def _build_resume_doc(args: dict[str, Any], student: Optional[Any], title: str, 
     }
 
 
+def _normalize_month_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text in {"至今", "present", "now"}:
+        return "至今"
+    match = _re.match(r"^(\d{4})[.\-/年。．](\d{1,2})", text)
+    if not match:
+        return text
+    return f"{match.group(1)}-{int(match.group(2)):02d}"
+
+
 def _split_duration(value: Any) -> tuple[str, str]:
     text = str(value or "").strip()
     if not text:
         return "", ""
     parts = _re.split(r"\s*(?:-|–|—|至|~|～)\s*", text, maxsplit=1)
-    return (parts[0], parts[1]) if len(parts) == 2 else (text, "")
+    return (_normalize_month_value(parts[0]), _normalize_month_value(parts[1])) if len(parts) == 2 else (_normalize_month_value(text), "")
 
 
 def _date_range(start: Any, end: Any) -> str:
-    start_text = str(start or "").strip()
-    end_text = str(end or "").strip()
+    start_text = _normalize_month_value(start)
+    end_text = _normalize_month_value(end)
     if start_text and end_text:
         return f"{start_text} - {end_text}"
     return start_text or end_text
@@ -3940,10 +3954,12 @@ def _profile_backed_resume_args(
             "location": profile.get("expected_location") or "",
             # birth_date: 优先用 profile（学生在个人中心填的），
             # 否则保留模型提交的值（用户在对话中告诉 AI 的出生日期）
-            "birth_date": profile.get("birth_date")
-            or basic_requested.get("birth_date")
-            or basic_requested.get("birthDate")
-            or "",
+            "birth_date": _normalize_month_value(
+                profile.get("birth_date")
+                or basic_requested.get("birth_date")
+                or basic_requested.get("birthDate")
+                or ""
+            ),
         },
         "education": education,
         "experience": experience,
@@ -4168,7 +4184,7 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
             f"Harness 事实校验未通过，简历未保存。以下关键实体在个人档案或原简历中找不到依据：{preview}。"
             "请先让学生补充或确认这些信息（可调用 query_student_profile 或 read_resume 核实），"
             "禁止换一种说法绕过校验。允许改写表达和措辞，但不允许新增无来源的经历、项目、技术栈或指标。"
-            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM-DD 格式，不要照抄档案中的全角句号等笔误。"
+            "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM 格式，不要保留具体日期，也不要照抄档案中的全角句号等笔误。"
             + whitelist_hint
         ),
         "display_summary": f"正在核对事实并重写（{n} 处需调整）",
@@ -4714,7 +4730,7 @@ def _attachment_download_url(stored_path: Path | str, user_id: int = 0, tenant_i
     marker = "agent_uploads/"
     idx = s.find(marker)
     rel_path = s[idx:] if idx >= 0 else Path(s).name
-    if user_id and tenant_id:
+    if user_id is not None and tenant_id is not None:
         token = _sign_download_token(rel_path, user_id, tenant_id)
         return f"/api/v1/student/files/download?path={rel_path}&token={token}"
     return f"/api/v1/student/files/download?path={rel_path}"

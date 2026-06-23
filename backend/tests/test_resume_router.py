@@ -156,7 +156,7 @@ class ResumeRouterTests(unittest.TestCase):
         with self.SessionLocal() as db:
             student = db.get(StudentUser, 1)
             student.phone = "13800000000"
-            student.birth_date = "2003-08-15"
+            student.birth_date = "2003-08"
             student.expected_position = "前端开发工程师"
             student.expected_location = "重庆"
             student.job_search_status = "unemployed"
@@ -181,8 +181,8 @@ class ResumeRouterTests(unittest.TestCase):
                     student_id=1,
                     company="示例科技",
                     position="前端开发实习生",
-                    start_date="2024-07-01",
-                    end_date="2024-10-01",
+                    start_date="2024-07",
+                    end_date="2024-10",
                     description="负责管理后台开发",
                     sort_order=0,
                 )
@@ -193,7 +193,7 @@ class ResumeRouterTests(unittest.TestCase):
                     student_id=1,
                     name="校园智能问答助手",
                     role="前端负责人",
-                    start_date="2024-03-01",
+                    start_date="2024-03",
                     end_date="至今",
                     link="https://project.example.com",
                     link_label="在线访问",
@@ -223,7 +223,7 @@ class ResumeRouterTests(unittest.TestCase):
         document = response.json()["data"]["data"]
         self.assertEqual(document["basic"]["title"], "前端开发工程师")
         self.assertEqual(document["basic"]["location"], "重庆")
-        self.assertEqual(document["basic"]["birthDate"], "2003-08-15")
+        self.assertEqual(document["basic"]["birthDate"], "2003-08")
         self.assertEqual(document["basic"]["photo"], "/static/avatars/resume-test.png")
         self.assertEqual(document["education"][0]["school"], "重庆工程学院")
         self.assertEqual(document["education"][0]["gpa"], "3.8/4.0")
@@ -252,7 +252,7 @@ class ResumeRouterTests(unittest.TestCase):
                     {
                         "name": "校园智能问答助手",
                         "role": "前端负责人",
-                        "start_date": "2024-03-01",
+                        "start_date": "2024-03",
                         "end_date": "至今",
                         "link": "https://project.example.com",
                         "link_label": "在线访问",

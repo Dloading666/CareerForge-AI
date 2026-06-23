@@ -5716,7 +5716,7 @@ textarea {
 .scroll-to-bottom-btn {
   position: absolute;
   left: 50%;
-  bottom: 112px;
+  bottom: 180px;
   width: 40px;
   height: 40px;
   transform: translateX(-50%);
@@ -6077,36 +6077,36 @@ textarea {
 .activity-trace {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: min(980px, 100%);
-  min-height: 36px;
-  margin: 9px auto 12px;
+  min-height: 30px;
+  margin: 7px auto 10px;
   padding: 2px 0;
-  color: #8b919d;
+  color: #969aa3;
   animation: activity-trace-enter 0.18s ease-out both;
 }
 
 .activity-trace-icon {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border-radius: 8px;
-  background: #f2f4f7;
+  color: #9a9ea6;
+  background: transparent;
 }
 
-.activity-trace-image {
-  width: 25px;
-  height: 25px;
-  display: block;
-  object-fit: contain;
+.activity-trace-symbol {
+  width: 22px;
+  height: 22px;
+  color: currentColor;
+  stroke-width: 2;
 }
 
 .activity-trace-copy {
   min-width: 0;
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 500;
   line-height: 1.65;
   letter-spacing: 0;
@@ -6118,15 +6118,15 @@ textarea {
 }
 
 .activity-trace-action.status-started {
-  color: #5e6f91;
+  color: #8f96a3;
 }
 
 .activity-trace-action.status-failed {
-  color: #667085;
+  color: #8f96a3;
 }
 
 .activity-trace-action.status-hint {
-  color: #667085;
+  color: #8f96a3;
 }
 
 .activity-trace.is-running .activity-trace-icon {
@@ -6135,32 +6135,20 @@ textarea {
 
 .activity-trace-icon.tone-profile,
 .activity-trace-icon.tone-resume,
-.activity-trace-icon.tone-web {
-  background: #eef4ff;
-}
-
+.activity-trace-icon.tone-web,
 .activity-trace-icon.tone-file,
-.activity-trace-icon.tone-search {
-  background: #eaf8fb;
-}
-
+.activity-trace-icon.tone-search,
 .activity-trace-icon.tone-context,
-.activity-trace-icon.tone-analysis {
-  background: #f0f1ff;
-}
-
-.activity-trace-icon.tone-edit {
-  background: #fff6e8;
-}
-
+.activity-trace-icon.tone-analysis,
+.activity-trace-icon.tone-edit,
 .activity-trace-icon.tone-generate,
 .activity-trace-icon.tone-optimize,
-.activity-trace-icon.tone-skill {
-  background: #eaf8f1;
-}
-
-.activity-trace-icon.tone-export {
-  background: #eef4ff;
+.activity-trace-icon.tone-skill,
+.activity-trace-icon.tone-export,
+.activity-trace-icon.tone-note,
+.activity-trace-icon.tone-neutral {
+  color: #9a9ea6;
+  background: transparent;
 }
 
 @keyframes activity-trace-enter {

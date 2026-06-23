@@ -84,8 +84,8 @@ def parse_resume_text_to_data(
         "## 铁律\n"
         "- **只提取原文中明确存在的信息，禁止补全、润色、编造任何内容**\n"
         "- 缺失的字段必须留空字符串或空数组，不要猜测\n"
-        "- 时间格式统一为 YYYY-MM-DD（如原文是「2022年6月」，转为 2022-06-01）\n"
-        "- 时间段保持原文格式（如「2022-06-01 - 2024-12-15」或「2022.06 - 2024.12 至今」）\n"
+        "- 时间格式统一为 YYYY-MM（如原文是「2022年6月」或「2022-06-01」，都转为 2022-06）\n"
+        "- 时间段统一到年月（如「2022-06 - 2024-12」或「2022-06 - 至今」），不要保留具体日期\n"
         "- 经历的 details 每行一个要点，用换行分隔（保留原文的 bullet 符号或去掉都行）\n"
         "- 技能原文是什么就提取什么，不要添加你认为应该有的技能\n"
         "- 自我评价原文是什么就提取什么，不要改写\n"
@@ -111,7 +111,7 @@ def parse_resume_text_to_data(
                             "email": {"type": "string"},
                             "phone": {"type": "string"},
                             "location": {"type": "string", "description": "所在城市"},
-                            "birth_date": {"type": "string", "description": "出生日期 YYYY-MM-DD"},
+                            "birth_date": {"type": "string", "description": "出生日期 YYYY-MM"},
                         },
                     },
                     "education": {
@@ -123,8 +123,8 @@ def parse_resume_text_to_data(
                                 "school": {"type": "string"},
                                 "major": {"type": "string"},
                                 "degree": {"type": "string"},
-                                "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-                                "end_date": {"type": "string", "description": "YYYY-MM-DD 或 至今"},
+                                "start_date": {"type": "string", "description": "YYYY-MM"},
+                                "end_date": {"type": "string", "description": "YYYY-MM 或 至今"},
                                 "gpa": {"type": "string"},
                                 "description": {"type": "string", "description": "每行一个亮点，换行分隔"},
                             },
@@ -480,7 +480,7 @@ def parse_resume_images_to_data(db, identity, page_images):
         "- The resume may be written in Chinese, English, or any other language. Preserve the original language and wording exactly as they appear in the image.\n"
         "- NEVER use placeholder strings such as “John Doe”, “Jane Doe”, “Software Developer”, “example@email.com”, “(123) 456-7890”, “New York, NY”, “Tech Innovations”, “CodeMasters”, etc. These are sample-data hallucinations and are strictly forbidden.\n"
         "- If a field cannot be read clearly, return an empty string (or empty array). An empty result is always preferable to a wrong result.\n"
-        "- Date format: unify to YYYY-MM-DD (for example, “June 2022” becomes 2022-06-01; “2023.9” becomes 2023-09-01).\n"
+        "- Date format: unify to YYYY-MM (for example, “June 2022” becomes 2022-06; “2023.9” becomes 2023-09; remove exact days).\n"
         "- For experience/project details, keep one bullet per line, separated by newlines. Preserve the original wording.\n"
         "- Extract skills exactly as written, do not add skills you think should be there.\n"
         "- If the images do not look like a resume at all (or you cannot read them), still return a best-effort empty structure rather than fabricating a sample resume.\n"

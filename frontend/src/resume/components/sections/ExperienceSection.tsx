@@ -33,7 +33,7 @@ export function ExperienceSection() {
               <Input value={item.position} onChange={(value) => updateExperience(item.id, { position: value })} />
             </Form.Item>
             <Form.Item label="时间">
-              <Input value={item.date} onChange={(value) => updateExperience(item.id, { date: value })} placeholder="如 2023.06 - 至今" />
+              <Input value={item.date} onChange={(value) => updateExperience(item.id, { date: value })} placeholder="如 2023-06 - 至今" />
             </Form.Item>
             <Form.Item label="工作内容与成果">
               <FieldAiAssist

@@ -2,21 +2,31 @@ import { Input, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
   IconAttachment,
   IconBook,
+  IconBulb,
   IconCaretDown,
   IconCaretRight,
   IconCheck,
   IconClose,
+  IconCode,
   IconCopy,
   IconDashboard,
   IconDownload,
+  IconEdit,
+  IconExport,
   IconFile,
+  IconFilePdf,
+  IconHistory,
+  IconLink,
   IconLoading,
   IconMindMapping,
   IconNotification,
   IconPlus,
+  IconRobot,
+  IconSearch,
   IconSend,
+  IconUser,
 } from '@arco-design/web-react/icon'
-import type { ChangeEvent, KeyboardEvent } from 'react'
+import type { ChangeEvent, ComponentType, CSSProperties, KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
@@ -365,7 +375,7 @@ function ResumeSelector({
           style={{ cursor: disabled ? 'default' : 'pointer', background: '#EEF2FF', borderColor: '#C7D2FE', color: '#4338CA' }}
           onClick={handleOpen}
         >
-          📄
+          <IconFile style={{ fontSize: 15, opacity: 0.7 }} />
           <span>正在编辑：《{activeResume.title}》</span>
           <button type="button" onClick={handleClear} aria-label="解除绑定"><IconClose /></button>
         </span>
@@ -537,37 +547,37 @@ function formatTokens(chars: number): string {
 
 /** Resolve the statusline label with priority rules. */
 
+type ActivityIconComponent = ComponentType<{ className?: string; style?: CSSProperties }>
+
 type ActivityIconSpec = {
-  src: string
+  icon: ActivityIconComponent
   tone: string
 }
 
-const ACTIVITY_ICON_BASE = '/activity-icons-v2'
-
 const ACTIVITY_ICON_MAP: Record<string, ActivityIconSpec> = {
-  query_student_profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
-  read_resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
-  analyze_uploaded_file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
-  get_session_context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
-  generate_resume_data: { src: `${ACTIVITY_ICON_BASE}/generate-resume.png`, tone: 'generate' },
-  optimize_resume_data: { src: `${ACTIVITY_ICON_BASE}/optimize-resume.png`, tone: 'optimize' },
-  update_resume_data: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'edit' },
-  export_resume_pdf: { src: `${ACTIVITY_ICON_BASE}/export-pdf.png`, tone: 'export' },
-  read_webpage: { src: `${ACTIVITY_ICON_BASE}/read-webpage.png`, tone: 'web' },
-  web_search: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
-  analyze_jd_match: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
-  save_session_note: { src: `${ACTIVITY_ICON_BASE}/edit-resume.png`, tone: 'note' },
+  query_student_profile: { icon: IconUser, tone: 'profile' },
+  read_resume: { icon: IconFile, tone: 'resume' },
+  analyze_uploaded_file: { icon: IconFilePdf, tone: 'file' },
+  get_session_context: { icon: IconHistory, tone: 'context' },
+  generate_resume_data: { icon: IconRobot, tone: 'generate' },
+  optimize_resume_data: { icon: IconBulb, tone: 'optimize' },
+  update_resume_data: { icon: IconEdit, tone: 'edit' },
+  export_resume_pdf: { icon: IconExport, tone: 'export' },
+  read_webpage: { icon: IconLink, tone: 'web' },
+  web_search: { icon: IconSearch, tone: 'search' },
+  analyze_jd_match: { icon: IconDashboard, tone: 'analysis' },
+  save_session_note: { icon: IconCode, tone: 'note' },
 }
 
 const KIND_ICON_MAP: Record<string, ActivityIconSpec> = {
-  profile: { src: `${ACTIVITY_ICON_BASE}/profile.png`, tone: 'profile' },
-  resume: { src: `${ACTIVITY_ICON_BASE}/read-resume.png`, tone: 'resume' },
-  file: { src: `${ACTIVITY_ICON_BASE}/analyze-attachment.png`, tone: 'file' },
-  context: { src: `${ACTIVITY_ICON_BASE}/context-history.png`, tone: 'context' },
-  job: { src: `${ACTIVITY_ICON_BASE}/analyze-jd.png`, tone: 'analysis' },
-  knowledge: { src: `${ACTIVITY_ICON_BASE}/web-search.png`, tone: 'search' },
-  skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
-  resume_skill: { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' },
+  profile: { icon: IconUser, tone: 'profile' },
+  resume: { icon: IconFile, tone: 'resume' },
+  file: { icon: IconFilePdf, tone: 'file' },
+  context: { icon: IconHistory, tone: 'context' },
+  job: { icon: IconDashboard, tone: 'analysis' },
+  knowledge: { icon: IconSearch, tone: 'search' },
+  skill: { icon: IconRobot, tone: 'skill' },
+  resume_skill: { icon: IconRobot, tone: 'skill' },
 }
 
 type SessionMemory = {
@@ -688,10 +698,10 @@ function MemoryPanel({
 
 
 function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
-  if (name.startsWith('skill__')) return { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'skill' }
+  if (name.startsWith('skill__')) return { icon: IconRobot, tone: 'skill' }
   return ACTIVITY_ICON_MAP[name]
     || KIND_ICON_MAP[kind]
-    || { src: `${ACTIVITY_ICON_BASE}/run-skill.png`, tone: 'neutral' }
+    || { icon: IconRobot, tone: 'neutral' }
 }
 
 /** 工具动作像普通消息一样嵌入对话时间线，不再呈现为面板或列表。 */
@@ -711,14 +721,14 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
     || visibleActivities[visibleActivities.length - 1]
   if (!primaryActivity) return null
 
-  const { src, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
+  const { icon: ActivityIcon, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
   const isRunning = visibleActivities.some((activity) => activity.status === 'started')
 
   return (
     <div className={`activity-trace${isRunning ? ' is-running' : ''}`}>
       <Tooltip content={activityDisplayName(primaryActivity)} mini>
         <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
-          <img className="activity-trace-image" src={src} alt="" />
+          <ActivityIcon className="activity-trace-symbol" />
         </span>
       </Tooltip>
       <span className="activity-trace-copy">
@@ -735,20 +745,37 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
   )
 }
 
-/** 时间线渲染：text 和 actions 段交错 */
+function stripToolCallMarkup(content: string): string {
+  return content
+    .replace(/<tool_call\b[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call\b[\s\S]*$/gi, '')
+    .replace(/<function=[\s\S]*?<\/function>\s*/gi, '')
+    .replace(/<function=[\s\S]*$/gi, '')
+    .replace(/<parameter=[\s\S]*?<\/parameter>\s*/gi, '')
+    .replace(/<parameter=[\s\S]*$/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** 时间线渲染：工具动作固定在正文上方，避免正文被工具记录切开。 */
 function TimelineRenderer({ segments }: { segments: TimelineSegment[] }) {
+  const actionSegments = segments.filter((seg) => seg.type === 'actions')
+  const textContent = segments
+    .filter((seg): seg is Extract<TimelineSegment, { type: 'text' }> => seg.type === 'text')
+    .map((seg) => seg.content)
+    .join('')
+  const cleanTextContent = stripToolCallMarkup(textContent)
+
   return (
     <div className="timeline-container">
-      {segments.map((seg, i) => {
-        if (seg.type === 'text') {
-          return seg.content ? (
-            <div key={`t${i}`} className="assistant-answer timeline-text">
-              <MarkdownMessage content={seg.content} />
-            </div>
-          ) : null
-        }
-        return <ActivityTrace key={`a${i}`} segment={seg} />
-      })}
+      {actionSegments.map((seg, i) => (
+        <ActivityTrace key={`a${i}`} segment={seg} />
+      ))}
+      {cleanTextContent ? (
+        <div className="assistant-answer timeline-text">
+          <MarkdownMessage content={cleanTextContent} />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -826,8 +853,8 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
   const navigate = useNavigate()
   const [reverting, setReverting] = useState<number | null>(null)
   const editorLinks = useMemo(() => {
-    const links: { resumeId: number; label: string; activityName: string; revisionId?: number }[] = []
-    for (const a of activities) {
+    const links = new Map<number, { resumeId: number; label: string; activityName: string; revisionId?: number }>()
+    for (const a of [...activities].sort((left, right) => left.id - right.id)) {
       if (a.status !== 'completed') continue
       const detail = a.detail || {}
       if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
@@ -835,10 +862,15 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
           : a.name === 'optimize_resume_data' ? '查看优化后的简历'
           : a.name === 'update_resume_data' ? '查看修改后的简历'
           : '查看简历'
-        links.push({ resumeId: detail.resume_id as number, label, activityName: a.name, revisionId: typeof detail?.revision_id === 'number' ? detail.revision_id as number : undefined })
+        links.set(detail.resume_id as number, {
+          resumeId: detail.resume_id as number,
+          label,
+          activityName: a.name,
+          revisionId: typeof detail?.revision_id === 'number' ? detail.revision_id as number : undefined,
+        })
       }
     }
-    return links
+    return [...links.values()]
   }, [activities])
 
   const handleRevert = async (resumeId: number, revisionId: number | undefined, e: React.MouseEvent) => {
@@ -963,6 +995,7 @@ function AssistantMessage({
       ? buildTimelineSegments(message.content, activities)
       : []
   const hasSegments = timelineSegments.length > 0
+  const cleanMessageContent = stripToolCallMarkup(message.content)
   return (
     <div className="message-row assistant">
       <div className="assistant-message">
@@ -970,18 +1003,18 @@ function AssistantMessage({
           <TimelineRenderer segments={timelineSegments} />
         ) : (
           <>
-            {message.content ? (
+            {cleanMessageContent ? (
               <div className="assistant-answer">
                 {!pending && (
                   <button
                     className="msg-copy-btn"
                     title="复制"
-                    onClick={() => navigator.clipboard.writeText(message.content)}
+                    onClick={() => navigator.clipboard.writeText(cleanMessageContent)}
                   >
                     <IconCopy />
                   </button>
                 )}
-                <MarkdownMessage content={message.content} />
+                <MarkdownMessage content={cleanMessageContent} />
                 {pending && <span className="stream-cursor" />}
               </div>
             ) : (

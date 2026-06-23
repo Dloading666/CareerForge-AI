@@ -33,7 +33,7 @@ export function ProjectsSection() {
               <Input value={item.role} onChange={(value) => updateProject(item.id, { role: value })} />
             </Form.Item>
             <Form.Item label="时间">
-              <Input value={item.date} onChange={(value) => updateProject(item.id, { date: value })} />
+              <Input value={item.date} onChange={(value) => updateProject(item.id, { date: value })} placeholder="如 2024-03 - 2024-08" />
             </Form.Item>
             <Form.Item label="项目链接">
               <Input value={item.link} onChange={(value) => updateProject(item.id, { link: value })} placeholder="如 https://project.demo" />

@@ -465,7 +465,7 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
 
     self_eval = str(args.get("self_evaluation") or "")
     if self_eval:
-        eval_normalized = _normalize_evidence(self_eval)
+        eval_normalized = _re.sub(r"[\W_]+", "", self_eval, flags=_re.UNICODE).lower()
         for phrase in _EMPTY_PHRASES:
             if phrase in eval_normalized:
                 issues.append({"severity": "error", "section": "self_evaluation", "issue": f"含空话「{phrase}」，请用具体能力或成果替代"})
@@ -486,12 +486,15 @@ def _check_resume_quality(args: dict[str, Any], *, require_sections: bool = Fals
                 if val:
                     all_dates.append(str(val))
     if all_dates:
-        separators: set[str] = set()
+        invalid_tokens: list[str] = []
         for d in all_dates:
-            for m in _re.finditer(r"\d{4}([.\-/。．])\d{1,2}(?!\d)", d):
-                separators.add(m.group(1))
-        if len(separators) > 1:
-            issues.append({"severity": "error", "section": "dates", "issue": "时间格式混用（如同时出现 YYYY.MM 和 YYYY-MM-DD 或全角句号），请统一为 YYYY-MM-DD"})
+            for m in _re.finditer(r"\d{4}[.\-/年。．]\d{1,2}(?:[.\-/月。．]\d{1,2})?", d):
+                token = m.group()
+                if not _re.fullmatch(r"\d{4}-\d{2}", token):
+                    invalid_tokens.append(token)
+        if invalid_tokens:
+            preview = "、".join(invalid_tokens[:5])
+            issues.append({"severity": "error", "section": "dates", "issue": f"时间格式需统一为 YYYY-MM，不保留具体日期：{preview}"})
 
     errors = [i for i in issues if i["severity"] == "error"]
     warnings = [i for i in issues if i["severity"] == "warning"]
@@ -779,4 +782,5 @@ def _check_jd_coverage(args: dict[str, Any], jd_text: str) -> dict[str, Any]:
     return result
 
 
-# Note: _normalize_evidence is defined in agent_runtime.py (uses _rich_text_to_lines)
+# _normalize_evidence was previously referenced from agent_runtime.py but is now
+# inlined where needed (strips non-word chars for phrase matching).
