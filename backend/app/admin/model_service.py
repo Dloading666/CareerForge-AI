@@ -89,6 +89,24 @@ def toggle_open(db: Session, model_id: int, open_flag: bool) -> ModelResponse:
 
 # ── 测试连接 ────────────────────────────────────
 
+def _api_protocol(model: ModelConfig) -> str:
+    raw = (model.protocols or "").lower()
+    base_url = (model.base_url or "").lower()
+    if "responses" in raw or base_url.endswith("/responses"):
+        return "responses"
+    if "anthropic" in raw or "messages" in raw or "/anthropic" in base_url or "api.anthropic.com" in base_url:
+        return "anthropic"
+    return "openai"
+
+
+def _endpoint_url(base_url: str, suffix: str) -> str:
+    base = (base_url or "").rstrip("/")
+    clean_suffix = suffix if suffix.startswith("/") else f"/{suffix}"
+    if base.endswith(clean_suffix):
+        return base
+    return f"{base}{clean_suffix}"
+
+
 async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse:
     model = _get_model(db, model_id)
     api_key = decrypt_api_key(model.api_key_cipher) if model.api_key_cipher else None
@@ -99,13 +117,9 @@ async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=httpx.Timeout(model.timeout_sec or 30)) as client:
             base_url = (model.base_url or "").rstrip("/")
-            protocols = (model.protocols or "").lower()
-            if "anthropic" in protocols or "/anthropic" in base_url.lower():
-                if base_url.endswith("/anthropic"):
-                    base_url = f"{base_url}/v1"
-                elif not base_url.endswith("/v1"):
-                    base_url = f"{base_url}/v1"
-                request_url = f"{base_url}/messages"
+            protocol = _api_protocol(model)
+            if protocol == "anthropic":
+                request_url = _endpoint_url(base_url, "/v1/messages")
                 resp = await client.post(
                     request_url,
                     headers={
@@ -117,12 +131,27 @@ async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse
                     json={
                         "model": model.model_identifier,
                         "messages": [{"role": "user", "content": "Reply OK."}],
-                        "max_tokens": 16,
+                        "max_tokens": min(model.max_output or 4096, 64),
+                        "stream": False,
+                    },
+                )
+            elif protocol == "responses":
+                request_url = _endpoint_url(base_url, "/responses")
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                resp = await client.post(
+                    request_url,
+                    headers=headers,
+                    json={
+                        "model": model.model_identifier,
+                        "input": "Reply OK.",
+                        "max_output_tokens": min(model.max_output or 4096, 64),
                         "stream": False,
                     },
                 )
             else:
-                request_url = f"{base_url}/chat/completions"
+                request_url = _endpoint_url(base_url, "/chat/completions")
                 headers = {"Content-Type": "application/json"}
                 if api_key:
                     headers["Authorization"] = f"Bearer {api_key}"
@@ -132,7 +161,7 @@ async def test_model_connection(db: Session, model_id: int) -> ModelTestResponse
                     json={
                         "model": model.model_identifier,
                         "messages": [{"role": "user", "content": "Reply OK."}],
-                        "max_tokens": 16,
+                        "max_tokens": min(model.max_output or 4096, 64),
                         "stream": False,
                     },
                 )

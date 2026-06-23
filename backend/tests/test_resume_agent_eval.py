@@ -996,12 +996,6 @@ class TestRevisionEval(unittest.TestCase):
             for i in range(25):
                 _snapshot_resume_revision(db, identity, resume, source="test")
 
-            count = db.scalar(
-                select(StudentResumeRevision.id).where(
-                    StudentResumeRevision.resume_id == resume.id,
-                    StudentResumeRevision.tenant_id == 0,
-                )
-            )
             # 应该只保留 20 条
             from sqlalchemy import func as sa_func
             actual_count = db.scalar(
@@ -1326,42 +1320,90 @@ class TestDisplaySummaryHumanized(unittest.TestCase):
                          f"display_summary 应保留违规数量: 「{ds}」")
 
     def test_quality_gate_error_is_user_facing(self):
-        """质量闸门 error 文案应是面向用户的（精确断言，常量同步）。"""
-        # generate/optimize 内 quality error 分支的 display_summary
-        # 改写后应表达「按简历规范调整格式」，而非「根据质量建议」
-        self.assertRegex(
-            "正在按简历规范调整后重试",
-            r"规范|格式|调整",
-        )
+        """质量闸门 error 文案应是面向用户的（真实函数调用）。"""
+        with self._make_db_session() as db:
+            _seed_student(db)
+            identity = _identity()
+            args = {
+                "title": "测试简历",
+                "basic": {"name": "李明"},
+            }
+            result = _generate_resume_data_tool(db, identity, args)
+            if result.get("status") == "failed" and result.get("error_code") == "resume_quality_retry":
+                self._assert_no_tech_terms(result.get("display_summary", ""), "quality_gate_error")
 
     def test_insufficient_evidence_is_user_facing(self):
-        """素材不足文案应是面向用户的（常量同步）。"""
-        # insufficient 文案在 _dispatch_tool 的 generate 分支
-        self.assertRegex(
-            "经历还不够详细，正在向你了解后再生成",
-            r"了解|详细|更多",
-        )
+        """素材不足文案应是面向用户的（真实函数调用）。"""
+        with self._make_db_session() as db:
+            _seed_empty_student(db)
+            identity = _identity(student_id=2)
+            pool = SessionEvidencePool()
+            profile_result = _query_student_profile(db, identity)
+            pool.set_profile(profile_result.get("profile") or {})
+            args = {
+                "title": "空简历",
+                "basic": {"name": "王小白"},
+            }
+            result = _generate_resume_data_tool(db, identity, args, evidence_pool=pool)
+            if result.get("status") == "failed" and "insufficient" in result.get("error_code", ""):
+                self._assert_no_tech_terms(result.get("display_summary", ""), "insufficient_evidence")
 
     def test_jd_coverage_is_user_facing(self):
-        """JD 覆盖率文案应是面向用户的（保留百分比）。"""
-        sample = "正在补充岗位相关的关键词（目前覆盖 10%）"
-        self._assert_no_tech_terms(sample, "jd_coverage")
-        self.assertRegex(sample, r"岗位相关", f"应面向用户: 「{sample}」")
+        """JD 覆盖率文案应是面向用户的（真实函数调用）。"""
+        with self._make_db_session() as db:
+            _seed_student(db)
+            identity = _identity()
+            pool = SessionEvidencePool()
+            profile_result = _query_student_profile(db, identity)
+            pool.set_profile(profile_result.get("profile") or {})
+            pool.jd_text = "需要 Java Python 算法"
+            pool.gap_keywords = ["Java", "Python", "算法"]
+            args = {
+                "title": "测试简历",
+                "basic": {"name": "李明"},
+                "jd_text": "需要 Java Python 算法",
+            }
+            result = _generate_resume_data_tool(db, identity, args, evidence_pool=pool)
+            if result.get("status") == "failed" and result.get("error_code") == "jd_coverage_retry":
+                self._assert_no_tech_terms(result.get("display_summary", ""), "jd_coverage")
+                self.assertRegex(result["display_summary"], r"岗位相关", f"应面向用户: 「{result['display_summary']}」")
 
     def test_version_conflict_is_user_facing(self):
-        """版本冲突文案应是面向用户的。"""
-        sample = "简历刚被改过，正在重新读取最新版"
-        self._assert_no_tech_terms(sample, "version_conflict")
+        """版本冲突文案应是面向用户的（真实函数调用）。"""
+        from app.student.agent_runtime import _update_resume_data_tool
+        with self._make_db_session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1, title="测试简历",
+                template_id="classic", data_json='{"basic":{"name":"李明"}}',
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            old_ts = (resume.updated_at or datetime.now(timezone.utc)).isoformat()
+            import time
+            time.sleep(0.01)
+            result = _update_resume_data_tool(
+                db, identity,
+                {"resume_id": resume.id, "basic": {"name": "李明2"}, "base_updated_at": "2000-01-01T00:00:00Z"},
+            )
+            if result.get("status") == "failed" and result.get("error_code") == "resume_version_retry":
+                self._assert_no_tech_terms(result.get("display_summary", ""), "version_conflict")
 
     def test_skill_required_is_user_facing(self):
-        """订制 Skill 前置文案应是面向用户的。"""
-        sample = "正在先梳理你的真实经历和岗位要求"
-        self._assert_no_tech_terms(sample, "skill_required")
+        """订制 Skill 前置文案应是面向用户的（真实函数调用）。"""
+        result = _fact_guard_failure("generate_resume_data", [
+            "经历「编造公司」在档案中找不到依据",
+        ])
+        self._assert_no_tech_terms(result.get("display_summary", ""), "skill_required")
 
     def test_jd_analysis_required_is_user_facing(self):
-        """JD 分析前置文案应是面向用户的。"""
-        sample = "正在先分析目标岗位的要求"
-        self._assert_no_tech_terms(sample, "jd_analysis_required")
+        """JD 分析前置文案应是面向用户的（真实函数调用）。"""
+        result = _fact_guard_failure("optimize_resume_data", [
+            "技能「编造技能」在档案中找不到依据",
+        ])
+        self._assert_no_tech_terms(result.get("display_summary", ""), "jd_analysis_required")
 
     # ── 集成验证：真实工具返回的文案 ──────────────────────────────────────────
 

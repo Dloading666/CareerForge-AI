@@ -48,8 +48,8 @@ class EvidenceSourceIndex:
                 return cls()
             return cls(
                 has_profile=bool(data.get("has_profile")),
-                resume_ids_read=[int(x) for x in (data.get("resume_ids_read") or []) if str(x).isdigit()],
-                attachment_ids_analyzed=[int(x) for x in (data.get("attachment_ids_analyzed") or []) if str(x).isdigit()],
+                resume_ids_read=[int(x) for x in (data.get("resume_ids_read") or []) if str(x).lstrip("-").isdigit() and int(x) > 0],
+                attachment_ids_analyzed=[int(x) for x in (data.get("attachment_ids_analyzed") or []) if str(x).lstrip("-").isdigit() and int(x) > 0],
                 gap_keywords=[str(x) for x in (data.get("gap_keywords") or [])],
                 has_jd_analysis=bool(data.get("has_jd_analysis")),
             )

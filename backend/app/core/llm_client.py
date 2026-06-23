@@ -176,6 +176,9 @@ def chat_completion(
     presence_penalty=0.0,
 ) -> dict:
     sp = _apply_variables(system_prompt, variables)
+    model_max_output = getattr(model_config, 'max_output', None) or 4096
+    if max_tokens > model_max_output:
+        max_tokens = model_max_output
     if is_anthropic_model(model_config):
         return _anthropic_completion(
             model_config,
