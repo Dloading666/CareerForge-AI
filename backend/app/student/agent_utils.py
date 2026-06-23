@@ -115,9 +115,48 @@ class IntentClassification:
     is_directive: bool  # 是否构成「明确指令」（应直接动手，不再追问）
     recommended_effort: str  # low / medium / high / xhigh / max
     confidence: float = 0.7  # 0-1，规则匹配的把握度
+    plan_steps: list[str] = None  # type: ignore[assignment]  # 该意图的典型步骤预告（P2.2）
 
     def __str__(self) -> str:  # pragma: no cover - 调试用
         return f"Intent(mode={self.mode}, directive={self.is_directive}, effort={self.recommended_effort})"
+
+
+# 意图 → 典型步骤预告（P2.2 runtime.steps_plan）
+# 用人话描述每一步，让用户在 AI 动手前知道整体计划。
+# chat 意图无步骤（只是对话）。
+_INTENT_PLAN_STEPS: dict[str, list[str]] = {
+    "create": [
+        "读取你的个人档案",
+        "根据岗位要求生成简历",
+    ],
+    "refine": [
+        "读取当前简历",
+        "分析岗位匹配度",
+        "优化并保存新版本",
+    ],
+    "patch": [
+        "读取当前简历",
+        "修改指定内容并保存",
+    ],
+    "style": [
+        "读取当前简历",
+        "调整措辞和表达后保存",
+    ],
+    "enrich": [
+        "读取当前简历",
+        "补充量化成果后保存",
+    ],
+    "export": [
+        "读取当前简历",
+        "生成 PDF",
+    ],
+    "chat": [],  # 纯对话无步骤预告
+}
+
+
+def intent_plan_steps(mode: str) -> list[str]:
+    """返回某意图模式的典型步骤预告（用于 runtime.steps_plan 事件）。"""
+    return list(_INTENT_PLAN_STEPS.get(mode, []))
 
 
 def _text_has_any(text: str, text_lower: str, keywords: set[str]) -> bool:
@@ -235,6 +274,7 @@ def classify_intent(
         is_directive=is_directive,
         recommended_effort=recommended_effort,
         confidence=confidence,
+        plan_steps=intent_plan_steps(mode),
     )
 
 

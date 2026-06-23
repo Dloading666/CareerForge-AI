@@ -104,7 +104,7 @@ docker compose up -d --build          # MySQL(3307) · Redis(6380) · backend(80
 - **上下文**：分层组装（system + 工作简历状态 + 记忆 + 滚动摘要 + 最近 K 轮全文 + 更早截断）；`session.summary` / `summarized_until_message_id` 支撑滚动摘要。
 - **RunManager**（`run_manager.py`）：`POST /student/master/sessions/{id}/runs` 启动后台运行 → `GET /student/master/runs/{id}/events?after_seq=N` 订阅 SSE（断线重连按 seq 续传）。
 
-SSE 事件名：`message.saved` / `activity.started|completed|failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.completed`。
+SSE 事件名：`message.saved` / `activity.started|completed|failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.steps_plan`（AI 动手前的步骤进度预告，意图驱动） / `runtime.completed`。
 
 面试官 SSE 事件（`interview/run_events.py`，Redis 优先 + 内存降级）：`interview.started` / `interview.stage.started|completed|delta` / `interview.question.created` / `interview.turn.scored|completed` / `interview.voice.transcribed` / `interview.report.created` / `interviewer.delta|snapshot|completed` / `runtime.status|error`。
 

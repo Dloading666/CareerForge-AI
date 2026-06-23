@@ -788,6 +788,7 @@ function RuntimeStatusline({
   runtimeInfo,
   activities,
   streamStartMs,
+  stepsPlan,
 }: {
   pending: boolean
   heartbeat?: { output_chars: number; phase: string }
@@ -795,6 +796,7 @@ function RuntimeStatusline({
   runtimeInfo?: RuntimeInfo
   activities: AgentActivity[]
   streamStartMs: number | null
+  stepsPlan?: { steps: string[] } | null
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -837,14 +839,35 @@ function RuntimeStatusline({
     label = label.replace(/…$/, '（内容较多，请稍候）…')
   }
 
+  // P2.2: 步骤进度预告——根据已完成的工具数推断当前步骤
+  const completedCount = activities.filter((a) => a.status === 'completed').length
+  const planSteps = stepsPlan?.steps ?? []
+  const showSteps = planSteps.length > 1 && completedCount < planSteps.length
+
   return (
-    <div className="runtime-statusline">
-      <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
-      <span>{formatElapsed(elapsed)}</span>
-      <span className="rs-dot">·</span>
-      <span>{formatTokens(outputChars)} tokens</span>
-      <span className="rs-dot">·</span>
-      <span className="rs-label">{label}</span>
+    <div>
+      <div className="runtime-statusline">
+        <span className="status-logo-wrap"><img className="status-logo" src="/baidi.png" alt="" /></span>
+        <span>{formatElapsed(elapsed)}</span>
+        <span className="rs-dot">·</span>
+        <span>{formatTokens(outputChars)} tokens</span>
+        <span className="rs-dot">·</span>
+        <span className="rs-label">{label}</span>
+      </div>
+      {showSteps && (
+        <div className="runtime-steps-plan">
+          {planSteps.map((step, i) => {
+            const done = i < completedCount
+            const current = i === completedCount
+            return (
+              <span key={step} className={`plan-step${done ? ' done' : ''}${current ? ' current' : ''}`}>
+                <span className="plan-step-dot">{done ? '✓' : current ? '●' : '○'}</span>
+                <span className="plan-step-label">{step}</span>
+              </span>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -989,7 +1012,7 @@ function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
 }
 
 function AssistantMessage({
-  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, segments,
+  message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, segments, stepsPlan,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
@@ -1000,6 +1023,7 @@ function AssistantMessage({
   heartbeat?: { output_chars: number; phase: string }
   streamStartMs?: number | null
   segments?: TimelineSegment[]
+  stepsPlan?: { steps: string[] } | null
 }) {
   // 流式阶段使用 store 时间线；历史消息依据持久化 activity 的
   // content_offset 重建，保证工具轨迹不会随临时流式组件卸载而消失。
@@ -1052,6 +1076,7 @@ function AssistantMessage({
             runtimeInfo={runtimeInfo}
             activities={activities}
             streamStartMs={streamStartMs ?? null}
+            stepsPlan={stepsPlan}
           />
         )}
       </div>
@@ -1135,6 +1160,7 @@ export function AgentChatView({
   const [runtimeInfo, setRuntimeInfo] = useState<Record<number, RuntimeInfo>>({})
   const [heartbeats, setHeartbeats] = useState<Record<number, { output_chars: number; phase: string }>>({})
   const [storeSegments, setStoreSegments] = useState<TimelineSegment[]>([])
+  const [stepsPlan, setStepsPlan] = useState<{ steps: string[] } | null>(null)
   const streamStartRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
@@ -1704,6 +1730,9 @@ export function AgentChatView({
       setHeartbeats((prev) => ({ ...prev, [storeState.heartbeat!.message_id]: { output_chars: storeState.heartbeat!.output_chars, phase: storeState.heartbeat!.phase } }))
     }
 
+    // Sync steps plan (P2.2: 进度预告，随 run 生命周期存在)
+    setStepsPlan(storeState.stepsPlan ?? null)
+
     // Sync runtime info
     if (storeState.runtimeInfo) {
       setRuntimeInfo((prev) => ({ ...prev, [storeState.runtimeInfo!.message_id]: storeState.runtimeInfo! }))
@@ -1889,6 +1918,7 @@ export function AgentChatView({
               heartbeat={heartbeats[message.id]}
               streamStartMs={streamStartRef.current}
               segments={index === messages.length - 1 ? storeSegments : undefined}
+              stepsPlan={index === messages.length - 1 ? stepsPlan : undefined}
             />
           ),
         )}
@@ -1900,6 +1930,7 @@ export function AgentChatView({
             runtimeStatus={Object.values(runtimeStatuses).at(-1)}
             heartbeat={Object.values(heartbeats).at(-1)}
             streamStartMs={streamStartRef.current}
+            stepsPlan={stepsPlan}
             pending
             segments={storeSegments}
           />

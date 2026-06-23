@@ -6054,6 +6054,55 @@ textarea {
   opacity: 0.6;
 }
 
+/* P2.2: 步骤进度预告 */
+.runtime-steps-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 2px 2px;
+  font-size: 13px;
+  color: #a0a4ab;
+  user-select: none;
+}
+
+.runtime-steps-plan .plan-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.runtime-steps-plan .plan-step-dot {
+  font-size: 12px;
+  line-height: 1;
+  color: #c4c8cf;
+}
+
+.runtime-steps-plan .plan-step.done .plan-step-dot {
+  color: #16a34a;
+}
+
+.runtime-steps-plan .plan-step.done .plan-step-label {
+  color: #6b7280;
+  text-decoration: line-through;
+  text-decoration-color: rgba(107, 114, 128, 0.4);
+}
+
+.runtime-steps-plan .plan-step.current .plan-step-dot {
+  color: #4f46e5;
+  animation: plan-pulse 1.4s ease-in-out infinite;
+}
+
+.runtime-steps-plan .plan-step.current .plan-step-label {
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+@keyframes plan-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .status-logo {
     animation: none !important;

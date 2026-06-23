@@ -106,7 +106,7 @@ docker compose up -d --build     # MySQL(3307) · Redis(6380) · backend(8000) �
 
 6. **session 区分**：`StudentAgentSession.agent_type VARCHAR(32) DEFAULT 'resume'`，迁移 `20260610_0016`。`POST /student/master/sessions` 从 `AgentSessionCreate.agent_type` 读取并写入。
 
-SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.completed`。
+SSE 事件名：`message.saved` / `activity.started` / `activity.completed` / `activity.failed` / `message.delta` / `message.snapshot` / `message.completed` / `done` / `attachment.created` / `runtime.status` / `runtime.heartbeat` / `runtime.steps_plan`（AI 动手前的步骤进度预告，意图驱动） / `runtime.completed`。
 
 
 ### 简历工具

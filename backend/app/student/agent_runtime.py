@@ -90,6 +90,7 @@ from app.student.agent_utils import (  # noqa: E402
     _supports_image_input,
     _supports_reasoning_effort,
     auto_classify_effort,
+    classify_intent,
     get_model_default_temperature,
     get_model_effort_config,
 )
@@ -941,6 +942,20 @@ async def stream_master_reply(
         has_jd = bool(session.jd_text and session.jd_text.strip())
         reasoning_effort = auto_classify_effort(content, has_jd=has_jd, has_attachments=bool(attachments))
         logger.info("auto effort classified", extra=_log_ctx(request_id=req_id, session_id=session.id, effort=reasoning_effort))
+
+    # P2.2: 步骤进度预告——用意图分类推断本次操作的典型步骤，
+    # 在 AI 动手前告诉用户整体计划（如「读取简历→分析岗位→优化保存」）。
+    # chat 意图无步骤（纯对话），不发射事件。
+    _plan_has_resume = bool(getattr(session, "active_resume_id", None))
+    _plan_intent = classify_intent(
+        content, has_resume=_plan_has_resume, has_jd=has_jd, has_attachments=bool(attachments),
+    )
+    if _plan_intent.plan_steps:
+        yield dumps_event("runtime.steps_plan", {
+            "session_id": session.id,
+            "intent": _plan_intent.mode,
+            "steps": _plan_intent.plan_steps,
+        })
 
     # Curated, safe tool registry. Only tools the Harness can honestly fulfil
     # are exposed — fabricating stubs are intentionally excluded.

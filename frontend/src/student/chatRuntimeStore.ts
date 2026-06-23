@@ -19,6 +19,12 @@ export type HeartbeatEvent = {
   iteration?: number
 }
 
+export type StepsPlanEvent = {
+  session_id: number
+  intent: string
+  steps: string[]
+}
+
 export type RuntimeInfoEvent = {
   message_id: number
   model_name: string
@@ -126,6 +132,7 @@ export type RunState = {
   runtimeStatus: RuntimeStatusEvent | null
   heartbeat: HeartbeatEvent | null
   runtimeInfo: RuntimeInfoEvent | null
+  stepsPlan: StepsPlanEvent | null
 
   // 活动
   activities: AgentActivity[]
@@ -276,6 +283,7 @@ class ChatRuntimeStore {
       runtimeStatus: null,
       heartbeat: null,
       runtimeInfo: null,
+      stepsPlan: null,
       activities: [],
       segments: [],
       generatedFiles: new Map(),
@@ -319,6 +327,7 @@ class ChatRuntimeStore {
     state.activities = []
     state.runtimeStatus = null
     state.heartbeat = null
+    state.stepsPlan = null
     state.runtimeInfo = null
     state.error = null
     this.state.set(sessionId, state)
@@ -485,6 +494,20 @@ class ChatRuntimeStore {
     }
   }
 
+  /** Cancel the backend run as well as the local SSE subscription. */
+  async cancelSessionRun(sessionId: number): Promise<void> {
+    const s = this.state.get(sessionId)
+    const runId = s?.runId
+    this.abortSession(sessionId)
+    if (!runId) return
+    try {
+      const { authenticatedFetch } = await import('../shared/api')
+      await authenticatedFetch(`/api/v1/student/master/runs/${runId}/cancel`, { method: 'POST' })
+    } catch {
+      // Local cancellation has already happened; backend cancellation failure should not block the next user message.
+    }
+  }
+
   /** Clear session state (useful when switching away from a session) */
   clearSession(sessionId: number): void {
     this.state.delete(sessionId)
@@ -630,6 +653,14 @@ class ChatRuntimeStore {
       this.updateState(sessionId, (s) => ({
         ...s,
         heartbeat: data as unknown as HeartbeatEvent,
+      }))
+      return
+    }
+
+    if (event === 'runtime.steps_plan') {
+      this.updateState(sessionId, (s) => ({
+        ...s,
+        stepsPlan: data as unknown as StepsPlanEvent,
       }))
       return
     }
