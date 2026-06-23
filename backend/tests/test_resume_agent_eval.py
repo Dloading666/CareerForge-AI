@@ -44,6 +44,7 @@ from app.student.agent_runtime import (
 from app.student.agent_utils import classify_intent, auto_classify_effort
 from app.student.agent_fact_guard import (
     SessionEvidencePool,
+    EvidenceSourceIndex,
     FactWhitelist,
     _extract_fact_whitelist,
     ITEM_ATTRIBUTION_SHADOW_MODE,
@@ -776,19 +777,91 @@ class TestEvidencePoolEval(unittest.TestCase):
         pool.set_profile({"name": "张三"})
         pool.add_resume_texts([{"source": "在线简历", "name": "简历1", "excerpt": "内容"}])
 
-        # 模拟序列化索引（当前还没有 source_index 属性，这里测试概念）
-        index = {
-            "has_profile": pool.profile_snapshot is not None,
-            "resume_ids_read": [1],
-            "attachment_ids_analyzed": [],
-            "has_jd_analysis": False,
-        }
-        index_json = json.dumps(index, ensure_ascii=False)
+        # 从证据池快照生成索引
+        index = pool.build_source_index(resume_ids_read=[1])
+        index_json = index.to_json()
 
-        # 模拟恢复
-        restored = json.loads(index_json)
-        self.assertTrue(restored["has_profile"])
-        self.assertEqual(restored["resume_ids_read"], [1])
+        # 模拟跨轮恢复
+        restored = EvidenceSourceIndex.from_json(index_json)
+        self.assertTrue(restored.has_profile)
+        self.assertEqual(restored.resume_ids_read, [1])
+
+
+class TestEvidenceSourceIndex(unittest.TestCase):
+    """证据来源索引评测（P1.1）。
+
+    核心诉求：证据池 per-run，跨轮（read_resume → chat → optimize）时
+    上一轮读到的简历内容会丢失。EvidenceSourceIndex 把「读过哪些 resume、
+    分析过哪些附件、是否有 profile、GAP 关键词」这类元数据索引化并持久化
+    到 session，下一轮恢复后能懒重读，避免事实校验误拦。
+    """
+
+    def test_index_serializes_round_trip(self):
+        """索引应能 JSON 序列化和反序列化。"""
+        index = EvidenceSourceIndex(
+            has_profile=True,
+            resume_ids_read=[12, 15],
+            attachment_ids_analyzed=[3],
+            gap_keywords=["Kubernetes", "Elasticsearch"],
+            has_jd_analysis=True,
+        )
+        restored = EvidenceSourceIndex.from_json(index.to_json())
+        self.assertTrue(restored.has_profile)
+        self.assertEqual(restored.resume_ids_read, [12, 15])
+        self.assertEqual(restored.attachment_ids_analyzed, [3])
+        self.assertEqual(restored.gap_keywords, ["Kubernetes", "Elasticsearch"])
+        self.assertTrue(restored.has_jd_analysis)
+
+    def test_index_from_empty_json_is_safe(self):
+        """空/损坏 JSON 应安全降级为空索引。"""
+        restored = EvidenceSourceIndex.from_json("")
+        self.assertFalse(restored.has_profile)
+        self.assertEqual(restored.resume_ids_read, [])
+
+        restored2 = EvidenceSourceIndex.from_json(None)
+        self.assertFalse(restored2.has_profile)
+
+    def test_pool_builds_index_from_snapshot(self):
+        """证据池应能从当前快照构建索引。"""
+        pool = SessionEvidencePool()
+        pool.set_profile({"name": "张三"})
+        pool.add_resume_texts([{"source": "在线简历", "name": "简历1", "excerpt": "内容"}])
+        pool.set_gap_keywords(["Docker"])
+
+        index = pool.build_source_index(resume_ids_read=[8])
+        self.assertTrue(index.has_profile)
+        self.assertEqual(index.resume_ids_read, [8])
+        self.assertEqual(index.gap_keywords, ["Docker"])
+
+    def test_pool_merges_restored_index(self):
+        """恢复的索引应合并进证据池，后续 collect 不丢已恢复的 GAP 关键词。"""
+        # 第一轮：分析 JD 得到 GAP 关键词
+        pool1 = SessionEvidencePool()
+        pool1.set_gap_keywords(["Kubernetes"])
+
+        # 持久化索引
+        persisted = pool1.build_source_index(resume_ids_read=[]).to_json()
+
+        # 第二轮：新证据池，恢复索引
+        pool2 = SessionEvidencePool()
+        pool2.restore_source_index(EvidenceSourceIndex.from_json(persisted))
+        # GAP 关键词应被恢复（跨轮 JD 分析结果不丢）
+        self.assertEqual(pool2.gap_keywords, ["Kubernetes"])
+
+    def test_cross_turn_resume_lazy_restore(self):
+        """跨轮懒重读：索引记录已读 resume_id，新轮可据此判断是否需要重读。"""
+        # 第一轮读了 resume 5
+        pool1 = SessionEvidencePool()
+        idx1 = pool1.build_source_index(resume_ids_read=[5])
+
+        # 第二轮新池子（per-run，内容为空）
+        pool2 = SessionEvidencePool()
+        pool2.restore_source_index(EvidenceSourceIndex.from_json(idx1.to_json()))
+
+        # 索引仍知道 resume 5 被读过，但本轮 pool 里没有它的全文
+        # → 调用方应据此触发懒重读（这里验证索引信息可被查询）
+        restored_idx = pool2.build_source_index()  # 不传 resume_ids，沿用恢复的
+        self.assertIn(5, restored_idx.resume_ids_read)
 
 
 # ══════════════════════════════════════════════════════════════════════════

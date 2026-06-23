@@ -24,6 +24,9 @@ class StudentAgentSession(Base):
     summarized_until_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     jd_analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 跨轮证据来源索引：记录已读 resume_id / 已分析附件 / GAP 关键词等元数据，
+    # 让 per-run 的证据池在换轮后能懒重读、不丢 JD 分析结果。
+    evidence_index_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

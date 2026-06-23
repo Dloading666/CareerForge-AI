@@ -4,12 +4,58 @@ Extracted from agent_runtime.py for focused responsibility.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re as _re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ── Evidence source index ───────────────────────────────────────────────────
+#
+# 证据池（SessionEvidencePool）绑定到单次 run_agent_loop，跨轮时会丢失上一轮
+# 读到的简历全文、附件文本和 GAP 关键词。EvidenceSourceIndex 是一份轻量元数据
+# 索引（不含全文），持久化到 session.evidence_index_json，下一轮恢复后用于：
+#   1) 懒重读——索引记录已读 resume_id，调用方据此决定是否重新 read_resume；
+#   2) GAP 关键词跨轮——JD 分析的 GAP 结果不因换轮而丢，避免下轮误放回简历；
+#   3) 避免重复分析——附件已分析的标记防止重复 OCR。
+
+
+@dataclass
+class EvidenceSourceIndex:
+    """跨轮持久化的证据来源元数据索引。"""
+
+    has_profile: bool = False
+    resume_ids_read: list[int] = field(default_factory=list)
+    attachment_ids_analyzed: list[int] = field(default_factory=list)
+    gap_keywords: list[str] = field(default_factory=list)
+    has_jd_analysis: bool = False
+
+    def to_json(self) -> str:
+        """序列化为 JSON 字符串（用于持久化到 session）。"""
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: Optional[str]) -> "EvidenceSourceIndex":
+        """从 JSON 字符串恢复；空或损坏输入安全降级为空索引。"""
+        if not raw:
+            return cls()
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                return cls()
+            return cls(
+                has_profile=bool(data.get("has_profile")),
+                resume_ids_read=[int(x) for x in (data.get("resume_ids_read") or []) if str(x).isdigit()],
+                attachment_ids_analyzed=[int(x) for x in (data.get("attachment_ids_analyzed") or []) if str(x).isdigit()],
+                gap_keywords=[str(x) for x in (data.get("gap_keywords") or [])],
+                has_jd_analysis=bool(data.get("has_jd_analysis")),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("evidence_index_json corrupt, falling back to empty index")
+            return cls()
 
 
 # ── Evidence pool ───────────────────────────────────────────────────────────
@@ -25,6 +71,8 @@ class SessionEvidencePool:
         self.jd_text: Optional[str] = None
         self.jd_keywords: list[str] = []
         self.gap_keywords: list[str] = []
+        # 已恢复的来源索引（跨轮懒重读依据）
+        self.restored_index: Optional[EvidenceSourceIndex] = None
 
     def set_profile(self, profile: dict[str, Any]) -> None:
         self.profile_snapshot = profile
@@ -59,6 +107,49 @@ class SessionEvidencePool:
         for j in self.source_resume_jsons:
             sources.append(j.get("data_json", {}))
         return sources
+
+    # ── 跨轮索引：持久化 / 恢复 ──────────────────────────────────────────────
+
+    def build_source_index(self, *, resume_ids_read: Optional[list[int]] = None) -> EvidenceSourceIndex:
+        """从当前证据快照构建可持久化的来源索引。
+
+        resume_ids_read 由调用方传入（工具执行时记录），因为本池只存文本
+        摘要、不存 resume_id。若不传且已恢复过索引，则沿用恢复值。
+        """
+        if resume_ids_read is None:
+            resume_ids_read = list(self.restored_index.resume_ids_read) if self.restored_index else []
+        else:
+            if self.restored_index:
+                # 合并历史已读 id，去重保序
+                seen = set(resume_ids_read)
+                for rid in self.restored_index.resume_ids_read:
+                    if rid not in seen:
+                        resume_ids_read.append(rid)
+                        seen.add(rid)
+        gap = list(self.gap_keywords)
+        if self.restored_index:
+            for kw in self.restored_index.gap_keywords:
+                if kw not in gap:
+                    gap.append(kw)
+        return EvidenceSourceIndex(
+            has_profile=self.profile_snapshot is not None or (self.restored_index.has_profile if self.restored_index else False),
+            resume_ids_read=resume_ids_read,
+            attachment_ids_analyzed=list(self.restored_index.attachment_ids_analyzed) if self.restored_index else [],
+            gap_keywords=gap,
+            has_jd_analysis=bool(self.jd_text) or (self.restored_index.has_jd_analysis if self.restored_index else False),
+        )
+
+    def restore_source_index(self, index: EvidenceSourceIndex) -> None:
+        """恢复跨轮索引：主要恢复 GAP 关键词（防止下轮误把 GAP 项写回简历）。
+
+        注意：本方法只恢复元数据，不恢复全文——全文需调用方按 resume_ids_read
+        触发懒重读（read_resume），这样既避免无谓地把 8000 字简历灌进上下文，
+        又保证事实校验在真正改简历时拿得到最新版本（配合版本检查更安全）。
+        """
+        self.restored_index = index
+        # GAP 关键词跨轮恢复：JD 分析结果不应因换轮丢失
+        if index.gap_keywords and not self.gap_keywords:
+            self.gap_keywords = list(index.gap_keywords)
 
 
 # ── Fact whitelist ──────────────────────────────────────────────────────────

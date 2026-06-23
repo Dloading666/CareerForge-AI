@@ -51,6 +51,7 @@ from app.student.tool_validation import parse_tool_arguments
 from app.student.agent_fact_guard import (  # noqa: E402
     FACT_GUARD_SHADOW_MODE,
     ITEM_ATTRIBUTION_SHADOW_MODE,
+    EvidenceSourceIndex,
     FactWhitelist,
     SessionEvidencePool,
     _EMPTY_PHRASES,
@@ -2325,6 +2326,11 @@ async def run_agent_loop(
 
     completed_tools: set[str] = set()
     evidence_pool = SessionEvidencePool()
+    # P1.1: 跨轮恢复证据来源索引——让 per-run 的证据池换轮后能懒重读、
+    # 不丢 JD 分析的 GAP 关键词（防止下轮误把 GAP 项写回简历）。
+    _persisted_index_json = getattr(session, "evidence_index_json", None)
+    if _persisted_index_json:
+        evidence_pool.restore_source_index(EvidenceSourceIndex.from_json(_persisted_index_json))
     # Phase 2.3: 将用户消息自动写入证据池（对话内容天然是合法事实来源）
     if user_message.content:
         evidence_pool.add_attachment_text("对话内容", user_message.content)
@@ -2599,6 +2605,16 @@ async def run_agent_loop(
         elif kind == "final":
             add_usage(value)
             cumulative_output_chars += len(value.get("content") or "") + sum(len(tc.get("arguments", "")) for tc in (value.get("tool_calls") or []))
+
+    # P1.1: 持久化证据来源索引到 session，供下一轮跨轮恢复。
+    # GAP 关键词、已读 resume_id 等元数据换轮后不丢（避免事实校验误拦、
+    # 避免 GAP 项被误写回简历）。轻量 JSON 写入，不阻塞 SSE 收尾。
+    try:
+        session.evidence_index_json = evidence_pool.build_source_index().to_json()  # type: ignore[attr-defined]
+        db.commit()
+    except Exception as _idx_err:  # pragma: no cover - 持久化失败不应影响回复
+        logger.warning("evidence_index persist failed session=%s err=%s", session.id, _idx_err)
+
     yield "runtime.completed", runtime_payload()
 
 
@@ -2861,6 +2877,24 @@ async def _dispatch_tool(
         result = _read_resume_tool(db, identity, session, attachments, active_resume_id=active_id)
         if result.get("status") == "completed" and evidence_pool:
             evidence_pool.add_resume_texts(result.get("resumes") or [])
+            # P1.1: 记录已读 resume_id 到索引，供跨轮懒重读判断
+            read_ids: list[int] = []
+            if active_id:
+                read_ids.append(int(active_id))
+            for r in (result.get("resumes") or []):
+                rid = r.get("resume_id")
+                if rid and int(rid) not in read_ids:
+                    read_ids.append(int(rid))
+            if read_ids:
+                existing = evidence_pool.build_source_index().resume_ids_read
+                merged = list(dict.fromkeys(existing + read_ids))
+                evidence_pool.restored_index = EvidenceSourceIndex(
+                    has_profile=evidence_pool.profile_snapshot is not None,
+                    resume_ids_read=merged,
+                    attachment_ids_analyzed=(evidence_pool.restored_index.attachment_ids_analyzed if evidence_pool.restored_index else []),
+                    gap_keywords=evidence_pool.gap_keywords,
+                    has_jd_analysis=bool(evidence_pool.jd_text),
+                )
         return result
 
     if name == "read_resume_ai":

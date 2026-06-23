@@ -34,16 +34,22 @@ if [ -n "$STAMP_REVISION" ]; then
 fi
 
 echo "Running database migrations..."
-# Use `upgrade heads` (plural) so that branching migration histories (multiple
-# heads) still reach every branch's tip. After merges are introduced the
-# preferred single-head form `upgrade head` will resume working.
+# 迁移链已于 20260623_0001 合并成单 head。优先用单 head 形式 `upgrade head`；
+# 若历史上又出现分叉，复数 `upgrade heads` 仍能兜底到达每条分支末端。
 set +e
-alembic upgrade heads
+alembic upgrade head
 alembic_rc=$?
 set -e
 if [ $alembic_rc -ne 0 ]; then
-  echo "alembic upgrade heads failed (rc=$alembic_rc); falling back to stamp heads" >&2
-  alembic stamp heads || alembic upgrade head
+  echo "alembic upgrade head failed (rc=$alembic_rc); retrying with plural heads" >&2
+  set +e
+  alembic upgrade heads
+  alembic_rc=$?
+  set -e
+  if [ $alembic_rc -ne 0 ]; then
+    echo "alembic upgrade heads also failed (rc=$alembic_rc); falling back to stamp heads" >&2
+    alembic stamp heads
+  fi
 fi
 
 # High-concurrency: multiple workers with tuned timeouts
