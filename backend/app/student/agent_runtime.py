@@ -74,8 +74,10 @@ from app.student.agent_fact_guard import (  # noqa: E402
     _fact_guard_failure,
     _fact_values_from_args,
     _flatten_dict_values,
+    _is_chinese_noun,
     _norm_time_token,
     _norm_token,
+    _noun_has_source,
     _validate_resume_facts,
 )
 from app.student.agent_utils import (  # noqa: E402
@@ -4059,169 +4061,9 @@ def _collect_evidence_values(value: Any) -> list[str]:
     return values
 
 
-def _fact_values_from_args(args: dict[str, Any]) -> list[tuple[str, str]]:
-    """从 args 中提取所有文本值用于事实校验。自动规范化字面转义。"""
-    args = _normalize_literal_escapes(args)
-    facts: list[tuple[str, str]] = []
-    basic = args.get("basic")
-    if isinstance(basic, dict):
-        for key in ("name", "email", "phone", "location", "birth_date", "birthDate"):
-            if basic.get(key):
-                facts.append((f"基本信息.{key}", str(basic[key])))
-    for section in ("education", "experience", "projects"):
-        items = args.get(section)
-        if not isinstance(items, list):
-            continue
-        for index, item in enumerate(items, start=1):
-            if not isinstance(item, dict):
-                continue
-            for key, value in item.items():
-                if key in {"id", "visible", "link", "linkLabel"} or value in (None, "", False):
-                    continue
-                lines = str(value).splitlines() if key in {"description", "details"} else [str(value)]
-                facts.extend((f"{section}[{index}].{key}", line.strip()) for line in lines if line.strip())
-    for key in ("skills", "self_evaluation"):
-        value = args.get(key)
-        if value:
-            facts.extend((key, line.strip()) for line in str(value).splitlines() if line.strip())
-    return facts
-
-
-def _norm_token(s: str) -> str:
-    """归一化实体 token：casefold + 去除所有内部空白。
-    用于白名单与候选事实的比对，避免 Python/python、30%/30 %、
-    2022.06-2024.12/2022.06 - 2024.12 等形式差异导致误报。
-    """
-    return s.casefold().replace(" ", "").replace("\u3000", "")
-
-
-# 子串匹配容差（P1.3）：与 agent_fact_guard._noun_has_source 保持同步。
-# 档案写「腾讯科技」、模型输出「腾讯」不应误拦；仅对中文专名（≥2 汉字）
-# 启用双向子串匹配，英文仍走精确（短词做子串误放面太大）。
-_SUBSTR_MIN_CN_LEN = 2
-_CN_CHAR_RE = _re.compile(r"[一-鿿]")
-
-
-def _is_chinese_noun(norm: str) -> bool:
-    return bool(_CN_CHAR_RE.search(norm))
-
-
-def _noun_has_source(candidate_norm: str, whitelist_norms: set[str]) -> bool:
-    """候选专名是否有证据来源（精确或双向子串匹配）。"""
-    if not candidate_norm:
-        return True
-    if candidate_norm in whitelist_norms:
-        return True
-    if not _is_chinese_noun(candidate_norm) or len(candidate_norm) < _SUBSTR_MIN_CN_LEN:
-        return False
-    for wn in whitelist_norms:
-        if not _is_chinese_noun(wn) or len(wn) < _SUBSTR_MIN_CN_LEN:
-            continue
-        if candidate_norm in wn or wn in candidate_norm:
-            return True
-    return False
-
-
-def _validate_resume_facts(args: dict[str, Any], evidence_sources: list[Any]) -> tuple[list[str], FactWhitelist]:
-    """事实/表达分离的实体级核验（Phase 1 重构）。
-
-    校验策略：
-    - 事实层：数字指标、英文技术词、专名、时间段必须在证据白名单中。
-    - 表达层：句式、动词、STAR 结构、详略完全不校验。
-    - 白名单从证据侧预提取（结构化字段 + 正则），候选事实从输出中提取。
-    """
-    whitelist = _extract_fact_whitelist(evidence_sources)
-    candidate = _extract_candidate_facts(args)
-
-    # ── 用户直接提供的基本信息豁免（改进：须在证据文本中真实出现）──
-    # basic 中的 name/email/phone/location/birth_date 只有在对话或附件中实际出现过
-    # 才加入白名单，避免模型编造后无条件信任。
-    # 时间字段（birth_date/birthDate）直接匹配时间格式即可，无需子串匹配。
-    _evidence_text_blob = " ".join(
-        str(s) for s in evidence_sources
-        if isinstance(s, str)
-    )
-    # 也把证据 dict 里的文本值拼进去
-    for _src in evidence_sources:
-        if isinstance(_src, dict):
-            _evidence_text_blob += " " + " ".join(str(v) for v in _collect_evidence_values(_src))
-
-    basic = args.get("basic") or {}
-    if isinstance(basic, dict):
-        _BASIC_EXEMPT_KEYS = {"name", "email", "phone", "location", "birth_date", "birthDate"}
-        for key in _BASIC_EXEMPT_KEYS:
-            val = str(basic.get(key) or "").strip()
-            if not val:
-                continue
-            # 时间字段：匹配时间格式即可（birth_date = "2001-03"）
-            if key in ("birth_date", "birthDate"):
-                for m in _TIME_RANGE_RE.finditer(val):
-                    whitelist.time_ranges.add(m.group().strip())
-                for m in _SINGLE_DATE_RE.findall(val):
-                    whitelist.time_ranges.add(m)
-                continue
-            # 身份字段：须在证据文本（对话内容/附件/档案）中真实出现
-            if val in _evidence_text_blob:
-                whitelist.proper_nouns.add(val)
-            # 否则不加入白名单——模型编造的名字/邮箱/电话将被校验拦截
-
-    # 归一化白名单用于比对
-    norm_nouns = {_norm_token(n) for n in whitelist.proper_nouns}
-    # 时间段同时收录整段和端点：证据里可能是 "2021.09 - 2025.06" 整段（duration），
-    # 也可能是 start_date/end_date 两个单点，两种形态都要能命中；
-    # 比对用 _norm_time_token，对分隔符（. - / 全角句号）不敏感
-    norm_times: set[str] = set()
-    for t in whitelist.time_ranges:
-        norm_times.add(_norm_time_token(t))
-        for endpoint in _SINGLE_DATE_RE.findall(t):
-            norm_times.add(_norm_time_token(endpoint))
-
-    violations: list[str] = []
-
-    # 数字指标：不再校验。
-    # AI 生成的是建议草稿，用户还会在编辑器里修改。
-    # 数字属于表达层——模型根据上下文合理推断的量化描述（"响应时间降低 50%"）
-    # 不应被拦截，用户会自行核实和修改。
-    # 事实校验只管：经历实体（公司/学校/项目名）、时间段——这些造假就是硬伤。
-
-    # 英文技术词：不再校验。
-    # 技术词是主观技能声明（"熟悉 Python"），不属于可验证的个人事实，
-    # 学生有权在简历中声明自己会什么技术，不需要档案背书。
-
-    # 专名：输出中的专名必须 ⊆ 证据中的专名
-    # P1.3: 中文专名启用双向子串匹配容差（腾讯 ↔ 腾讯科技），英文仍精确。
-    for noun in candidate.proper_nouns:
-        if not _noun_has_source(_norm_token(noun), norm_nouns):
-            violations.append(f"无来源专名「{noun}」")
-
-    # 时间段：整段命中，或拆成端点后逐个命中（schema 要求模型输出
-    # "2022.06 - 2024.12" 区间，而 profile 存的是独立 start_date/end_date 单点）
-    for tr in candidate.time_ranges:
-        if _norm_time_token(tr) in norm_times:
-            continue
-        endpoints = _SINGLE_DATE_RE.findall(tr)
-        if endpoints and all(_norm_time_token(p) in norm_times for p in endpoints):
-            continue
-        violations.append(f"无来源时间段「{tr}」")
-
-    # ── description 自由文本专名 warning（不拦截，回灌提醒模型自查）──
-    _desc_suspicious: list[str] = []
-    for path, raw_value in _fact_values_from_args(args):
-        if ".description" not in path and ".details" not in path:
-            continue
-        # 从 description/details 中提取疑似专名（≥3字中文连续片段，不在白名单中）
-        for m in _re.finditer(r"[一-鿿]{3,8}", raw_value):
-            word = m.group()
-            # P1.3: 子串容差同样适用于描述正文里的疑似专名
-            if not _noun_has_source(_norm_token(word), norm_nouns) and len(word) >= 4:
-                # 只报常见的疑似学校/公司名模式
-                if any(word.endswith(s) for s in ("大学", "学院", "公司", "集团", "科技", "有限")):
-                    _desc_suspicious.append(word)
-    if _desc_suspicious:
-        # 去重后作为 warning 附加到白名单中（不计入 violations）
-        whitelist._desc_suspicious = list(set(_desc_suspicious))[:10]  # type: ignore[attr-defined]
-
-    return violations[:20], whitelist  # 最多报 20 条
+# P4: _fact_values_from_args / _norm_token / _is_chinese_noun /
+# _noun_has_source / _validate_resume_facts 原在此处本地重复定义，现已统一
+# 收敛到 app.student.agent_fact_guard（见文件顶部 import），消除 DRY 违规。
 
 
 # Shadow mode 开关：开启时违规只写日志不拦截，用于收集真实误报率。

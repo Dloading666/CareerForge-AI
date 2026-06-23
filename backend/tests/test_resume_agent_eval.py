@@ -1235,6 +1235,36 @@ def auto_classify_effort_to_level(effort: str) -> int:
 # ══════════════════════════════════════════════════════════════════════════
 
 
+class TestNoDuplicateFactGuardDefinitions(unittest.TestCase):
+    """架构约束回归（P4）：事实校验函数不得在 agent_runtime 本地重复定义。
+
+    agent_runtime 曾有自己的 _validate_resume_facts / _norm_token / _noun_has_source
+    副本，覆盖了从 agent_fact_guard 的 import，导致改一处要同步改两处（P1.3 踩过）。
+    此测试固化「runtime 与 fact_guard 用同一函数对象」的约束，防止回退。
+    """
+
+    def test_validate_resume_facts_is_shared(self):
+        import app.student.agent_runtime as ar
+        import app.student.agent_fact_guard as fg
+        self.assertIs(ar._validate_resume_facts, fg._validate_resume_facts,
+                      "_validate_resume_facts 应从 agent_fact_guard 复用，不得在 runtime 本地重复定义")
+
+    def test_norm_token_is_shared(self):
+        import app.student.agent_runtime as ar
+        import app.student.agent_fact_guard as fg
+        self.assertIs(ar._norm_token, fg._norm_token)
+
+    def test_noun_has_source_is_shared(self):
+        import app.student.agent_runtime as ar
+        import app.student.agent_fact_guard as fg
+        self.assertIs(ar._noun_has_source, fg._noun_has_source)
+
+    def test_fact_values_from_args_is_shared(self):
+        import app.student.agent_runtime as ar
+        import app.student.agent_fact_guard as fg
+        self.assertIs(ar._fact_values_from_args, fg._fact_values_from_args)
+
+
 class TestDisplaySummaryHumanized(unittest.TestCase):
     """失败胶囊 display_summary 人话化回归评测。
 
