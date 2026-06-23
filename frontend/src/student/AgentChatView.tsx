@@ -707,6 +707,7 @@ function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
 /** 工具动作像普通消息一样嵌入对话时间线，不再呈现为面板或列表。 */
 function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; collapsed: boolean } }) {
   const toolActivities = segment.activities
+  const [expanded, setExpanded] = useState(false)
 
   const isRecoveredFailure = (activity: AgentActivity) => (
     activity.status === 'failed'
@@ -724,14 +725,25 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
   const { icon: ActivityIcon, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
   const isRunning = visibleActivities.some((activity) => activity.status === 'started')
 
+  // P2.3: 胶囊可展开详情——只对已结束（非 running）且有结构化 detail 的胶囊启用。
+  const hasDetail = !isRunning && visibleActivities.some((a) => {
+    const d = a.detail || {}
+    return d.changes || d.arguments || d.fact_validation || d.quality_check || d.jd_coverage
+  })
+
   return (
-    <div className={`activity-trace${isRunning ? ' is-running' : ''}`}>
+    <div className={`activity-trace${isRunning ? ' is-running' : ''}${hasDetail ? ' expandable' : ''}`}>
       <Tooltip content={activityDisplayName(primaryActivity)} mini>
         <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
           <ActivityIcon className="activity-trace-symbol" />
         </span>
       </Tooltip>
-      <span className="activity-trace-copy">
+      <span
+        className="activity-trace-copy"
+        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+        role={hasDetail ? 'button' : undefined}
+        tabIndex={hasDetail ? 0 : undefined}
+      >
         {visibleActivities.map((activity, index) => (
           <span key={activity.id}>
             {index > 0 && <span className="activity-trace-separator"> · </span>}
@@ -740,7 +752,52 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
             </span>
           </span>
         ))}
+        {hasDetail && (
+          <span className={`activity-trace-toggle${expanded ? ' open' : ''}`} aria-hidden="true">
+            {expanded ? '收起' : '详情'}
+          </span>
+        )}
       </span>
+      {expanded && hasDetail && (
+        <div className="activity-trace-detail">
+          {visibleActivities.map((activity) => (
+            <ActivityDetailRow key={activity.id} activity={activity} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 胶囊展开后的单条工具详情（P2.3）。 */
+function ActivityDetailRow({ activity }: { activity: AgentActivity }) {
+  const d = (activity.detail || {}) as Record<string, unknown>
+  const name = activityDisplayName(activity)
+  const changes = d.changes as { summary?: string; field_changes?: string[] } | undefined
+  const args = d.arguments as Record<string, unknown> | undefined
+  const factVal = d.fact_validation as { passed?: boolean; violations?: string[] } | undefined
+
+  const parts: string[] = []
+  if (changes?.summary) parts.push(`改动：${changes.summary}`)
+  if (Array.isArray(factVal?.violations) && factVal!.violations!.length > 0) {
+    parts.push(`已校验修正 ${factVal!.violations!.length} 处`)
+  }
+  // 参数预览：只展示有信息量的字段，避免噪音
+  if (args) {
+    const argKeys = Object.keys(args).filter(
+      (k) => !['resume_id', 'base_updated_at'].includes(k) && args[k] != null && args[k] !== '',
+    )
+    if (argKeys.length > 0) {
+      const preview = argKeys.slice(0, 3).map((k) => `${k}`).join('、')
+      parts.push(`涉及：${preview}${argKeys.length > 3 ? ' 等' : ''}`)
+    }
+  }
+
+  if (parts.length === 0) return null
+  return (
+    <div className="activity-detail-row">
+      <span className="activity-detail-name">{name}</span>
+      <span className="activity-detail-body">{parts.join('；')}</span>
     </div>
   )
 }

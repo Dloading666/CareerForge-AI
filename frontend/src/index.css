@@ -6182,6 +6182,73 @@ textarea {
   animation: activity-trace-breathe 1.8s ease-in-out infinite;
 }
 
+/* P2.3: 胶囊可展开详情 */
+.activity-trace.expandable {
+  flex-wrap: wrap;
+}
+
+.activity-trace.expandable .activity-trace-copy {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.12s;
+}
+
+.activity-trace.expandable .activity-trace-copy:hover {
+  background: rgba(79, 70, 229, 0.06);
+}
+
+.activity-trace-toggle {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #4f46e5;
+  background: rgba(79, 70, 229, 0.08);
+  border-radius: 8px;
+}
+
+.activity-trace-toggle.open {
+  background: rgba(79, 70, 229, 0.14);
+}
+
+.activity-trace-detail {
+  flex-basis: 100%;
+  margin: 6px 0 2px 33px;
+  padding: 8px 12px;
+  background: #f8f9fb;
+  border: 1px solid #eceef2;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #6b7280;
+  animation: activity-trace-enter 0.15s ease-out both;
+}
+
+.activity-detail-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  line-height: 1.6;
+}
+
+.activity-detail-row + .activity-detail-row {
+  border-top: 1px dashed #e5e7eb;
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.activity-detail-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.activity-detail-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .activity-trace-icon.tone-profile,
 .activity-trace-icon.tone-resume,
 .activity-trace-icon.tone-web,
