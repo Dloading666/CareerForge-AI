@@ -25,8 +25,8 @@ from app.infra.redis_client import ping_redis
 from app.infra.rate_limit import IPRateLimitMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from app.mcp import models as mcp_models  # noqa: F401
-from app.mcp.router import router as mcp_router
+from app.admin.vision_models import VisionModelConfig  # noqa: F401
+from app.admin.vision_router import router as vision_router
 from app.skills import models as skill_models  # noqa: F401
 from app.skills.router import router as skills_router
 from app.student import agent_models as student_agent_models  # noqa: F401
@@ -91,7 +91,7 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         ensure_admin_bootstrap(db)
-        seed_default_models(db)   # 鍏堢瀛愭ā鍨嬶紙鏅鸿兘浣撲緷璧栨ā鍨嬶級
+        seed_default_models(db)   # 鍏堢鐨勬ā鍨嬶紙鏅鸿兘浣撲緷璧栨ā鍨嬶級
         seed_default_agents(db)
     finally:
         db.close()
@@ -146,7 +146,7 @@ app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
 app.include_router(agent_router, prefix=settings.api_v1_prefix)
 app.include_router(public_agent_router, prefix=settings.api_v1_prefix)
-app.include_router(mcp_router, prefix=settings.api_v1_prefix)
+app.include_router(vision_router, prefix=settings.api_v1_prefix)
 app.include_router(skills_router, prefix=settings.api_v1_prefix)
 app.include_router(event_router, prefix=settings.api_v1_prefix)
 app.include_router(announcement_router, prefix=settings.api_v1_prefix)

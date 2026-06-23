@@ -5,7 +5,7 @@ Extracted from agent_runtime.py for focused responsibility.
 from __future__ import annotations
 
 import re as _re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.admin.models import ModelConfig
@@ -115,7 +115,7 @@ class IntentClassification:
     is_directive: bool  # 是否构成「明确指令」（应直接动手，不再追问）
     recommended_effort: str  # low / medium / high / xhigh / max
     confidence: float = 0.7  # 0-1，规则匹配的把握度
-    plan_steps: list[str] = None  # type: ignore[assignment]  # 该意图的典型步骤预告（P2.2）
+    plan_steps: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:  # pragma: no cover - 调试用
         return f"Intent(mode={self.mode}, directive={self.is_directive}, effort={self.recommended_effort})"
@@ -183,6 +183,13 @@ def classify_intent(
         has_attachments: 是否带附件（附件本身不改变意图，但会提升 effort）。
     """
     text = (content or "").strip()
+
+    # 空文本 + 有附件（如纯图片）→ 视为明确的分析/操作指令，不是闲聊
+    if not text and has_attachments:
+        if has_resume:
+            return IntentClassification(mode="refine", is_directive=True, recommended_effort="medium", confidence=0.7)
+        return IntentClassification(mode="create", is_directive=True, recommended_effort="medium", confidence=0.7)
+
     if not text:
         return IntentClassification(mode="chat", is_directive=False, recommended_effort="low", confidence=0.4)
 
@@ -194,7 +201,7 @@ def classify_intent(
 
     # 2. 明确指令确认短语（短但强指令）—— 但需要结合 has_resume，否则"改吧"没有对象
     is_confirmation = text in _DIRECTIVE_CONFIRMATIONS or any(
-        text.startswith(c) and len(text) <= 12 for c in _DIRECTIVE_CONFIRMATIONS
+        text.startswith(c) and len(text) <= len(c) + 2 for c in _DIRECTIVE_CONFIRMATIONS
     )
 
     # 3. 动作关键词命中扫描（按优先级：export > create > refine > enrich > patch > style）
@@ -294,9 +301,10 @@ def _derive_effort_from_intent(
     """
     text_lower = text.lower()
 
-    # 极重：全面改写/系统性优化
+    # 极重：全面改写/系统性优化（但聊天上下文里不触发 xhigh）
     if any(kw in text_lower for kw in _AUTO_XHIGH_KEYWORDS):
-        return "xhigh"
+        if mode != "chat":
+            return "xhigh"
 
     # 重：refine（尤其带 JD 的订制）+ 复杂上下文
     if mode == "refine":
@@ -343,11 +351,12 @@ def auto_classify_effort(content: str, has_jd: bool = False, has_attachments: bo
     等模式能成立——这与历史上的纯 effort 行为一致。
     """
     text = (content or "").strip()
-    if not text:
+    if not text and not has_attachments:
         return "medium"
 
     # 短文本快速路径：无动作词的极短输入直接 low（保留原行为）
-    if len(text) < 8 and not any(kw in text for kw in _AUTO_ACTION_KEYWORDS):
+    # 但有附件时不走此路径——纯图片等场景需要走 classify_intent 推导
+    if len(text) < 8 and not has_attachments and not any(kw in text for kw in _AUTO_ACTION_KEYWORDS):
         return "low"
 
     intent = classify_intent(
@@ -478,14 +487,6 @@ def get_model_default_temperature(model: ModelConfig) -> float:
 
 def _supports_reasoning_effort(model: ModelConfig) -> bool:
     return get_model_effort_config(model).get("supports_api_effort", False)
-
-
-def _supports_image_input(model: ModelConfig) -> bool:
-    """Assume chat models are multimodal by default."""
-    capability = (model.capability or "").lower()
-    if capability in ("embedding", "rerank", "speech"):
-        return False
-    return True
 
 
 # ── Fallback answers ───────────────────────────────────────────────────────

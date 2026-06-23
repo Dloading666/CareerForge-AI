@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.service import AuthIdentity
 from app.core.security import utcnow
 from app.infra.db import SessionLocal
+from app.student.agent_runtime import _humanize_llm_error
 from app.student.agent_models import (
     StudentAgentActivity,
     StudentAgentAttachment,
@@ -427,6 +428,8 @@ class RunManager:
             _looks_like_jd,
             _select_chat_model,
             _assemble_tools,
+            _silent_understand_images,
+            _has_image_attachments,
             dumps_event,
             get_session_or_404,
             run_agent_loop,
@@ -453,7 +456,7 @@ class RunManager:
                     len(session.jd_text),
                 )
             if (
-                content.strip() == AUTO_ATTACHMENT_PROMPT
+                (content.strip() == AUTO_ATTACHMENT_PROMPT or not content.strip())
                 and attachments
                 and all(a.content_type.startswith("image/") for a in attachments)
                 and session.title == AUTO_ATTACHMENT_PROMPT
@@ -520,12 +523,19 @@ class RunManager:
             async def _emit_compress_event(event: str, data: dict) -> None:
                 await self._emit_event(run_id, identity.tenant_id, event, data)
 
+            # 视觉静默预理解：学生发图时，后台调用视觉模型把图片描述作为隐藏
+            # 上下文喂给主模型（无论主模型是否 multimodal）。整个过程不发射活动事件。
+            image_descriptions: dict[int, str] = {}
+            if _has_image_attachments(attachments):
+                image_descriptions = await _silent_understand_images(db, identity, attachments)
+
             messages, _compressed = await _compress_context(
                 db, identity, session, model, config,
                 user_text=content, reasoning_effort=reasoning_effort,
                 attachments=attachments, agent_type=agent_type,
                 openai_tools=openai_tools,
                 emit_event=_emit_compress_event,
+                image_descriptions=image_descriptions,
             )
 
             # ── 创建 assistant 消息 ──
@@ -624,7 +634,7 @@ class RunManager:
                 run.finished_at = datetime.now(timezone.utc)
                 db.commit()
             try:
-                await self._emit_event(run_id, identity.tenant_id, "error", {"message": str(exc)[:500]})
+                await self._emit_event(run_id, identity.tenant_id, "error", {"message": _humanize_llm_error(exc)})
             except Exception:
                 pass
 

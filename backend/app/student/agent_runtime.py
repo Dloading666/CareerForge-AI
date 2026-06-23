@@ -20,7 +20,7 @@ import re as _re
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.admin.master_service import DEFAULT_SYSTEM_PROMPT, get_or_create_master_config
+from app.admin.master_service import get_or_create_master_config
 from app.admin.model_service import decrypt_api_key
 from app.admin.models import ModelConfig
 from app.auth.models import StudentUser
@@ -89,7 +89,6 @@ from app.student.agent_utils import (  # noqa: E402
     _effort_instruction,
     _fallback_answer,
     _looks_like_jd,
-    _supports_image_input,
     _supports_reasoning_effort,
     auto_classify_effort,
     classify_intent,
@@ -98,6 +97,22 @@ from app.student.agent_utils import (  # noqa: E402
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _humanize_llm_error(exc: Exception | str) -> str:
+    """将 LLM 调用异常翻译为面向用户的中文提示。"""
+    msg = str(exc)
+    if "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower() or "too many requests" in msg.lower():
+        return "模型当前使用人数较多，请稍后再试"
+    if "401" in msg or "403" in msg or "authentication" in msg.lower() or "invalid api key" in msg.lower() or "permission" in msg.lower():
+        return "模型密钥配置有误，请联系管理员"
+    if "408" in msg or "timeout" in msg.lower() or "timed out" in msg.lower():
+        return "模型响应超时，请稍后重试"
+    if any(code in msg for code in ("500", "502", "503", "504")) or "overloaded" in msg.lower() or "server error" in msg.lower():
+        return "模型服务暂时不可用，请稍后再试"
+    if "connection" in msg.lower() or "refused" in msg.lower() or "eof" in msg.lower():
+        return "无法连接模型服务，请稍后重试"
+    return "模型暂时无法回复，请稍后重试"
 
 
 # ── Structured logging helpers ──────────────────────────────────────────────
@@ -269,6 +284,9 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         input_schema={"type": "object", "properties": {"attachment_ids": {"type": "array"}}, "required": []},
         metadata={"kind": "file"},
     ),
+    # 注：understand_image 不再作为独立工具注册。视觉理解改为 Harness 静默预理解
+    # （_silent_understand_images 在组装上下文时后台调用视觉模型），主模型不再能
+    # 主动调用此工具，避免双重调用。_understand_image_tool 函数仍保留供静默路径复用。
     ToolDefinition(
         name="send_notification",
         description="发送邮件或站内通知，用于面试提醒、报告推送等需要学生确认的动作。",
@@ -905,7 +923,7 @@ async def stream_master_reply(
     user_message = _save_message(db, session, "user", content.strip())
     attachments = _claim_message_attachments(db, identity, session, user_message, attachment_ids)
     if (
-        content.strip() == AUTO_ATTACHMENT_PROMPT
+        (content.strip() == AUTO_ATTACHMENT_PROMPT or not content.strip())
         and attachments
         and all(attachment.content_type.startswith("image/") for attachment in attachments)
         and session.title == AUTO_ATTACHMENT_PROMPT
@@ -963,17 +981,30 @@ async def stream_master_reply(
     # are exposed — fabricating stubs are intentionally excluded.
     agent_type = getattr(session, "agent_type", "resume") or "resume"
     tool_defs = _assemble_tools(db, identity, agent_type)
+
+    # 设计决策（2026-06）：视觉理解改为「Harness 静默预理解」——不再向主模型
+    # 暴露 understand_image 工具，而是在组装上下文时后台调用视觉模型，把图片
+    # 描述作为隐藏文本喂给主模型。无论主模型是否 multimodal 都统一走这条路。
+    # 见 _build_user_text_with_vision / 消息组装处的实现。
+
     registry = {tool.name: tool for tool in tool_defs}
     openai_tools = _build_openai_tools(tool_defs)
 
     # Build initial messages BEFORE creating the empty assistant row, so the
     # history loader does not pick up a blank assistant turn.
     # D2: 上下文压缩 — 组装后估算 token，超阈值则压缩并重新组装
+    # 视觉静默预理解：对图片附件调用视觉模型，把描述作为隐藏上下文喂给主模型。
+    # 无论主模型是否 multimodal 都统一走这条路；整个过程后台运行，前端无活动胶囊。
+    image_descriptions: dict[int, str] = {}
+    if _has_image_attachments(attachments):
+        image_descriptions = await _silent_understand_images(db, identity, attachments)
+
     messages, _compressed = await _compress_context(
         db, identity, session, model, config,
         user_text=content, reasoning_effort=reasoning_effort,
         attachments=attachments, agent_type=agent_type,
         openai_tools=openai_tools,
+        image_descriptions=image_descriptions,
     )
 
     assistant_message = StudentAgentMessage(session_id=session.id, role="assistant", content="")
@@ -1288,6 +1319,232 @@ def _analyze_uploaded_files(attachments: list[StudentAgentAttachment]) -> dict[s
     }
 
 
+# ── Vision tool (understand_image) ────────────────────────────────────────────
+
+
+def _get_vision_config(db: Session, tenant_id: int) -> Optional[dict[str, Any]]:
+    """读取管理端「视觉配置」页配好的视觉模型运行时配置（含解密后的 api_key）。
+
+    多租户隔离：按 tenant_id 过滤。任一关键字段缺失、总开关关闭或密钥解密失败
+    时返回 None，调用方据此判定「视觉模型未配置」并给出引导提示。
+    """
+    from app.admin.vision_service import get_vision_runtime_config
+
+    return get_vision_runtime_config(db, tenant_id)
+
+
+async def _understand_image_tool(
+    db: Session,
+    identity: AuthIdentity,
+    args: dict[str, Any],
+    attachments: list[StudentAgentAttachment],
+) -> dict[str, Any]:
+    """调用视觉模型理解图片内容，返回文字描述。"""
+    attachment_id = args.get("attachment_id")
+    if not attachment_id:
+        return {"status": "failed", "tool": "understand_image", "summary": "缺少 attachment_id 参数。"}
+    try:
+        attachment_id = int(attachment_id)
+    except (TypeError, ValueError):
+        return {"status": "failed", "tool": "understand_image", "summary": f"attachment_id 格式错误：{attachment_id}"}
+
+    # 查找附件（优先从当前轮附件列表，兜底从数据库加载，但必须按 tenant/student 校验）
+    attachment = next((a for a in attachments if a.id == attachment_id), None)
+    if not attachment:
+        # 多租户隔离：兜底查询必须带 tenant_id + student_id，防止 LLM 编造 ID 跨租户读取
+        attachment = db.scalar(
+            select(StudentAgentAttachment).where(
+                StudentAgentAttachment.id == attachment_id,
+                StudentAgentAttachment.tenant_id == identity.tenant_id,
+                StudentAgentAttachment.student_id == identity.user_id,
+                StudentAgentAttachment.status != "deleted",
+            )
+        )
+        if not attachment:
+            return {"status": "failed", "tool": "understand_image", "summary": f"附件 {attachment_id} 不存在。"}
+
+    if not (attachment.content_type or "").startswith("image/"):
+        return {"status": "failed", "tool": "understand_image", "summary": f"附件 {attachment.original_name} 不是图片。"}
+
+    # 读取图片
+    img_path = Path(attachment.stored_path)
+    if not img_path.exists():
+        return {"status": "failed", "tool": "understand_image", "summary": "图片文件已丢失。"}
+
+    try:
+        img_bytes = img_path.read_bytes()
+        if len(img_bytes) > 8_000_000:
+            return {"status": "failed", "tool": "understand_image", "summary": "图片超过 8MB 限制。"}
+        img_base64 = base64.b64encode(img_bytes).decode("ascii")
+    except Exception as exc:
+        return {"status": "failed", "tool": "understand_image", "summary": f"读取图片失败：{exc}"}
+
+    # 读取视觉模型配置（来自管理端「视觉配置」页）
+    vision_cfg = _get_vision_config(db, identity.tenant_id)
+    if not vision_cfg:
+        return {
+            "status": "failed",
+            "tool": "understand_image",
+            "summary": "没有可用的视觉模型。请管理员在「视觉配置」中配置视觉模型（Base URL / API Key / 模型名 / 协议）并启用。",
+        }
+
+    # 调用视觉模型（直接构建 multimodal 请求，不走 chat_completion 因为它不支持 image_url content）
+    system_prompt = (
+        "你是一个图片内容理解助手。请详细描述用户发送的图片内容，包括：\n"
+        "- 图片中的所有文字（原样提取，不要遗漏）\n"
+        "- 表格、图表的数据和结构\n"
+        "- 布局和排版信息\n"
+        "- 如果是简历、证件、成绩单等文档，请完整提取所有字段和内容\n"
+        "请用中文回答，尽量详尽准确。"
+    )
+    data_url = f"data:{attachment.content_type};base64,{img_base64}"
+    user_message = f"请描述这张图片的内容。图片信息：{attachment.original_name}"
+
+    # max_tokens：直接用视觉配置页填的值，代码不额外设限。
+    # 注意不同模型的接口上限不同（如 GLM-4V-Flash 限 [1,1024]），
+    # 配置值超出模型能力时模型会返回 400，届时按模型实际限制调整配置即可。
+    vision_max_tokens = vision_cfg["max_tokens"]
+
+    try:
+        is_anthropic = vision_cfg["protocol"] == "anthropic"
+        api_key = vision_cfg["api_key"]
+        base = (vision_cfg["base_url"] or "").rstrip("/")
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
+            if is_anthropic:
+                # ── Anthropic 协议：/v1/messages，图片用 source.base64 ──
+                api_base = base
+                if api_base.endswith("/anthropic"):
+                    api_base = f"{api_base}/v1"
+                elif not api_base.endswith("/v1"):
+                    api_base = f"{api_base}/v1"
+                body = {
+                    "model": vision_cfg["model_name"],
+                    "system": system_prompt,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": user_message},
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": attachment.content_type or "image/png",
+                                        "data": img_base64,
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    "max_tokens": vision_max_tokens,
+                    "stream": False,
+                }
+                headers = {
+                    "x-api-key": api_key,
+                    "api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                }
+                resp = await client.post(f"{api_base}/messages", json=body, headers=headers)
+                if resp.status_code != 200:
+                    logger.error("Vision(anthropic) model error: %s %s", resp.status_code, resp.text[:300])
+                    return {"status": "failed", "tool": "understand_image", "summary": f"视觉模型调用失败（{resp.status_code}）。"}
+                data = resp.json()
+                # Anthropic 响应：content[].text
+                reply_parts: list[str] = []
+                for block in (data.get("content") or []):
+                    if block.get("type") == "text":
+                        reply_parts.append(block.get("text") or "")
+                description = "".join(reply_parts)
+            else:
+                # ── OpenAI 协议：/chat/completions，图片用 image_url ──
+                messages_for_vision = [
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_message},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    },
+                ]
+                body = {
+                    "model": vision_cfg["model_name"],
+                    "messages": messages_for_vision,
+                    "max_tokens": vision_max_tokens,
+                    "stream": False,
+                }
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                resp = await client.post(f"{base}/chat/completions", json=body, headers=headers)
+                if resp.status_code != 200:
+                    logger.error("Vision(openai) model error: %s %s", resp.status_code, resp.text[:300])
+                    return {"status": "failed", "tool": "understand_image", "summary": f"视觉模型调用失败（{resp.status_code}）。"}
+                data = resp.json()
+                description = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if not description:
+            return {"status": "failed", "tool": "understand_image", "summary": "视觉模型未返回内容。"}
+
+        return {
+            "status": "completed",
+            "tool": "understand_image",
+            "summary": f"已理解图片「{attachment.original_name}」的内容。",
+            "description": description,
+            "image_info": {
+                "id": attachment.id,
+                "name": attachment.original_name,
+                "content_type": attachment.content_type,
+                "file_size": attachment.file_size,
+            },
+        }
+    except Exception as exc:
+        logger.exception("understand_image failed")
+        return {"status": "failed", "tool": "understand_image", "summary": f"图片理解失败：{str(exc)[:200]}"}
+
+
+async def _silent_understand_images(
+    db: Session,
+    identity: AuthIdentity,
+    attachments: list[StudentAgentAttachment],
+) -> dict[int, str]:
+    """静默预理解：对当前轮的所有图片附件调用视觉模型，返回 {attachment_id: 描述}。
+
+    设计：不再依赖主模型自主调用 understand_image 工具（会显示活动胶囊且依赖模型自觉），
+    而是由 Harness 在组装上下文前预先、静默地调用视觉模型，把描述文本作为隐藏
+    上下文喂给主模型。整个过程不发射任何 SSE 活动事件，前端不可见。
+
+    - 视觉模型未配置 → 返回空 dict，主模型按无视觉能力处理（不阻断）。
+    - 单张图失败 → 该图描述为空，跳过，不影响其它图。
+    """
+    image_attachments = [a for a in attachments if (a.content_type or "").startswith("image/")]
+    if not image_attachments:
+        return {}
+
+    # 视觉模型未配置时直接放弃，避免每张图都走一遍「未配置」分支
+    if not _get_vision_config(db, identity.tenant_id):
+        logger.info("silent vision skipped: vision model not configured (tenant=%s)", identity.tenant_id)
+        return {}
+
+    descriptions: dict[int, str] = {}
+    for attachment in image_attachments:
+        try:
+            result = await _understand_image_tool(db, identity, {"attachment_id": attachment.id}, attachments)
+            if result.get("status") == "completed" and result.get("description"):
+                descriptions[attachment.id] = result["description"]
+                logger.info(
+                    "silent vision OK attachment=%s (%s), desc_len=%d",
+                    attachment.id, attachment.original_name, len(result["description"]),
+                )
+            else:
+                logger.warning(
+                    "silent vision failed attachment=%s: %s",
+                    attachment.id, result.get("summary", "unknown"),
+                )
+        except Exception as exc:  # noqa: BLE001 — 静默预理解不能让单张图异常中断整轮
+            logger.exception("silent vision exception attachment=%s: %s", attachment.id, exc)
+    return descriptions
+
 
 # ── Web tools (Jina Reader) ───────────────────────────────────────────────────
 
@@ -1601,17 +1858,16 @@ def _select_chat_model(
 
 def _attachment_prompt_text(
     attachments: list[StudentAgentAttachment],
-    inline_images: bool = False,
 ) -> str:
     if not attachments:
         return "无附件。"
     chunks: list[str] = []
     for attachment in attachments:
         is_image = attachment.content_type.startswith("image/")
-        if is_image and inline_images:
-            # The raw image is attached inline to this same message — tell the
-            # model to look at it directly instead of relying on metadata.
-            body = "（图片已随本条消息一并传入，请直接观察图片内容进行分析，不要回答“只能看到元数据”。）"
+        if is_image:
+            # 图片内容不再内联给主模型；视觉模型已在 Harness 层静默识别，
+            # 这里只标记存在性，实际描述见 image_descriptions 拼接。
+            body = "（图片，内容见上方视觉模型识别结果；若未提供则表示视觉模型未识别到内容。）"
         else:
             extracted = (attachment.extracted_text or "").strip()[:20000]
             body = f"提取内容:\n{extracted or '未提取到文本内容。'}"
@@ -1625,21 +1881,6 @@ def _attachment_prompt_text(
             )
         )
     return "\n\n".join(chunks)
-
-
-def _attachment_image_parts(attachments: list[StudentAgentAttachment]) -> list[dict[str, Any]]:
-    parts: list[dict[str, Any]] = []
-    for attachment in attachments:
-        if not attachment.content_type.startswith("image/"):
-            continue
-        if attachment.file_size > 8_000_000:
-            continue
-        path = Path(attachment.stored_path)
-        if not path.exists():
-            continue
-        data_url = f"data:{attachment.content_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
-        parts.append({"type": "image_url", "image_url": {"url": data_url}})
-    return parts[:4]
 
 
 def _has_image_attachments(attachments: list[StudentAgentAttachment]) -> bool:
@@ -1832,10 +2073,24 @@ def _build_openai_tools(tool_defs: list[ToolDefinition]) -> list[dict[str, Any]]
     ]
 
 
+RESUME_DEFAULT_SYSTEM_PROMPT = (
+    "你是 CareerForge 的 AI 简历助手，负责协助学生规划求职和优化简历。\n\n"
+    "你的工作方式（ReAct 范式）：\n"
+    "1. Reason：分析学生意图，判断需要调用哪个工具\n"
+    "2. Act：调用对应工具，传递清晰的参数\n"
+    "3. Observe：接收工具返回的结果\n"
+    "4. 重复或综合：继续调用工具或直接向学生输出最终回答\n\n"
+    "原则：\n"
+    "- 自我介绍时请说你是「AI简历助手」，不要提及任何技术架构或内部角色名称\n"
+    "- 简历是唯一事实来源，禁止编造任何经历、项目或数据\n"
+    "- 无合适工具时，直接以友好方式回答学生"
+)
+
+
 def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str = "resume") -> str:
     if agent_type == "interviewer":
         return INTERVIEWER_SYSTEM_PROMPT
-    persona = (getattr(config, "system_prompt", None) or DEFAULT_SYSTEM_PROMPT).strip()
+    persona = (getattr(config, "system_prompt", None) or RESUME_DEFAULT_SYSTEM_PROMPT).strip()
     effort = _effort_instruction(reasoning_effort)
     rules = (
         "\n\n## 运行机制（Harness 管控，必须遵守）\n"
@@ -1875,6 +2130,10 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "- 软引导：用户在对话中上传疑似简历的 PDF/DOCX 时：可以用 analyze_uploaded_file 读取并即时点评，\n"
         "  但不要基于它调用 optimize/generate 生成新简历；同时告知用户把简历导入简历中心（路径：简历制作 → 导入简历），\n"
         "  导入后选为工作简历即可持续优化。\n"
+        "- 图片分析：用户发送图片（如截图、拍照、扫描件）时，先仔细观察图片内容，再根据内容决定下一步——\n"
+        "  · 简历图片：点评内容、指出可优化的点，若学生想优化则引导导入简历中心；\n"
+        "  · JD 截图：提取岗位要求并据此订制简历；\n"
+        "  · 其他图片：描述内容后主动询问学生想做什么，不要只回复「收到图片」就结束。\n"
         "- 简历写作标准（generate/optimize/update/export 均适用，四者共享同一套事实来源契约）：\n"
         "  · 经历/项目每条描述尽量以真实强动词开头。优先使用「实现、完成、优化、搭建、设计、开发、整理、分析、封装」；"
         "不要为了显得更强把「参与」升级成「主导/独立负责/从0到1」，强动词不等于角色升级；\n"
@@ -1963,6 +2222,7 @@ async def _compress_context(
     agent_type: str = "resume",
     openai_tools: Optional[list[dict[str, Any]]] = None,
     emit_event: Any = None,
+    image_descriptions: Optional[dict[int, str]] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """上下文压缩：组装 → 估算 → 超阈值则压缩 → 重新组装。
 
@@ -1972,7 +2232,7 @@ async def _compress_context(
     # 第一次组装，估算 token
     messages = _build_initial_messages(
         db, identity, session, user_text, reasoning_effort, model, attachments or [], config,
-        agent_type=agent_type,
+        agent_type=agent_type, image_descriptions=image_descriptions,
     )
     estimated = _estimate_message_tokens(messages, openai_tools)
     budget = _context_budget(model)
@@ -2107,7 +2367,7 @@ async def _compress_context(
     # 重新组装消息（水位已推进，旧消息会被过滤掉）
     rebuilt = _build_initial_messages(
         db, identity, session, user_text, reasoning_effort, model, attachments or [], config,
-        agent_type=agent_type,
+        agent_type=agent_type, image_descriptions=image_descriptions,
     )
     return rebuilt, True
 
@@ -2122,6 +2382,7 @@ def _build_initial_messages(
     attachments: list[StudentAgentAttachment],
     config: Any,
     agent_type: str = "resume",
+    image_descriptions: Optional[dict[int, str]] = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _harness_system_prompt(config, reasoning_effort, agent_type)}
@@ -2269,10 +2530,21 @@ def _build_initial_messages(
                 text = text[:msg_char_cap] + "\n…[已截断]"
         messages.append({"role": msg.role, "content": text})
 
-    inline_images = _has_image_attachments(attachments) and _supports_image_input(model)
+    # 设计决策（2026-06）：视觉理解改为「Harness 静默预理解」。
+    # 不再向主模型内联图片二进制，也不再提示它调用 understand_image 工具——
+    # 主模型统一只读视觉模型返回的文字描述（见下方 image_descriptions 拼接）。
+    image_desc_map = image_descriptions or {}
+    has_image_desc = bool(image_desc_map)
     parts = [user_text]
     if attachments:
-        parts.append("\n---\n**本轮附件**\n" + _attachment_prompt_text(attachments, inline_images))
+        parts.append("\n---\n**本轮附件**\n" + _attachment_prompt_text(attachments))
+    # 把视觉模型对图片的描述拼进上下文（若有），让主模型直接基于描述回复。
+    if has_image_desc:
+        desc_lines = ["", "**图片内容（视觉模型识别结果，可直接引用）**"]
+        for att in attachments:
+            if (att.content_type or "").startswith("image/") and att.id in image_desc_map:
+                desc_lines.append(f"- 图片「{att.original_name}」：{image_desc_map[att.id]}")
+        parts.append("\n".join(desc_lines))
     current_text = "\n".join(parts)
 
     # 长消息转存：当前轮消息超长时，识别为 JD 存入 session.jd_text，
@@ -2291,12 +2563,9 @@ def _build_initial_messages(
             current_text = current_text[:_LONG_MSG_THRESHOLD] + "\n\n…[内容过长已截断，请分段发送或上传为附件]"
             logger.info("极端长消息截断 session=%s original_len=%d", session.id, len(parts[0]))
 
-    if inline_images:
-        messages.append(
-            {"role": "user", "content": [{"type": "text", "text": current_text}, *_attachment_image_parts(attachments)]}
-        )
-    else:
-        messages.append({"role": "user", "content": current_text})
+    # 主模型只读文字描述（视觉模型已在 Harness 层静默完成识别），
+    # 因此当前轮始终以纯文本 user 消息发送，不再内联图片或提示调用工具。
+    messages.append({"role": "user", "content": current_text})
     return messages
 
 
@@ -2370,7 +2639,7 @@ async def run_agent_loop(
     for iteration in range(max_iterations):
         if time.monotonic() > deadline:
             logger.warning("agent_loop timeout", extra=_log_ctx(request_id=req_id, session_id=session.id, iteration=iteration))
-            yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[回复超时，请重试]"}
+            yield "message.delta", {"message_id": assistant_id, "delta": "回复超时，请重试"}
             yield "runtime.completed", runtime_payload()
             return
         turn_content = ""
@@ -2385,25 +2654,32 @@ async def run_agent_loop(
             "label": "正在理解你的需求…" if iteration == 0 else "正在结合已有信息继续分析…",
             "iteration": iteration + 1,
         }
-        # 实时 yield delta，让用户看到模型思考过程。
-        # 有 tool_calls 时，思考文本会在工具执行前展示给用户；
-        # 最终回复轮次的 delta 会追加到 assistant 消息中。
+        # 缓冲 delta：工具轮次的推理过程不展示给用户，只在最终回复轮次实时 yield。
+        # 部分模型（如 DeepSeek）会在 tool_calls 旁输出 Reason/Act/Observe 文本，
+        # 这些是内部推理过程，不应泄露到前端。
         turn_delta_parts: list[str] = []
+        turn_has_tool_calls_so_far = False
         async for kind, value in _stream_llm_turn(
             model, messages, openai_tools, reasoning_effort, temperature, max_tokens
         ):
             if kind == "delta":
                 streamed_any = True
                 turn_delta_parts.append(value)
-                if not first_delta_emitted:
-                    first_delta_emitted = True
-                    yield "runtime.status", {
-                        "message_id": assistant_id,
-                        "phase": "writing",
-                        "label": "正在撰写回复…",
-                        "iteration": iteration + 1,
-                    }
-                yield "message.delta", {"message_id": assistant_id, "delta": value}
+                if not turn_has_tool_calls_so_far:
+                    if not first_delta_emitted:
+                        first_delta_emitted = True
+                        yield "runtime.status", {
+                            "message_id": assistant_id,
+                            "phase": "writing",
+                            "label": "正在撰写回复…",
+                            "iteration": iteration + 1,
+                        }
+                    yield "message.delta", {"message_id": assistant_id, "delta": value}
+            elif kind == "tool_call_start":
+                if not turn_has_tool_calls_so_far:
+                    turn_has_tool_calls_so_far = True
+                    if turn_delta_parts and first_delta_emitted:
+                        yield "message.snapshot", {"message_id": assistant_id, "content": ""}
             elif kind == "error":
                 turn_error = True
             elif kind == "progress":
@@ -2431,7 +2707,7 @@ async def run_agent_loop(
         if turn_error and not turn_tool_calls:
             if first_delta_emitted:
                 # 已经向客户端输出过部分内容，直接结束，避免重复
-                yield "message.delta", {"message_id": assistant_id, "delta": "\n\n[模型响应中断，请重试]"}
+                yield "message.delta", {"message_id": assistant_id, "delta": "\n\n模型响应中断，请稍后重试"}
                 yield "runtime.completed", runtime_payload()
                 return
             async for kind, value in _stream_llm_turn(
@@ -2459,11 +2735,10 @@ async def run_agent_loop(
             yield "runtime.completed", runtime_payload()
             return
 
-        # ── delta 处理：工具轮次清空思考文本，最终轮次已完成实时推送 ──
+        # ── delta 处理：工具轮次的推理文本已被 snapshot 清空，最终轮次已完成实时推送 ──
         if turn_tool_calls:
-            # 中间轮次：已实时展示思考文本，现在清空为下一轮做准备
             if turn_delta_parts:
-                logger.info("agent_loop iteration=%d: tool-call round, %d delta chars streamed as thinking",
+                logger.info("agent_loop iteration=%d: tool-call round, %d delta chars suppressed (model reasoning)",
                             iteration, sum(len(p) for p in turn_delta_parts))
         else:
             # "writing" 状态已在首个 delta 之前 yield 过，这里不再重复
@@ -2660,9 +2935,16 @@ async def _stream_llm_turn(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
-    """Single streaming turn. Yields ("delta", text) / ("error", msg) / ("final", dict)."""
+    """Single streaming turn. Yields ("delta", text) / ("tool_call_start", name) / ("error", msg) / ("progress", dict) / ("final", dict)."""
     effort_config = get_model_effort_config(model)
     api_params = effort_config.get("effort_api_params", {}).get(reasoning_effort, {})
+
+    # max_tokens 上限：不超过模型配置的 max_output
+    model_max_output = model.max_output or 4096
+    if max_tokens is None:
+        max_tokens = model_max_output
+    elif max_tokens > model_max_output:
+        max_tokens = model_max_output
 
     # 温度：先看调用方显式传入，再看 effort 配置的 reasoning_temp，最后用模型默认值
     effective_temp = temperature
@@ -2674,6 +2956,8 @@ async def _stream_llm_turn(
             yield item
         return
 
+    # 平台策略：只搭配支持 function calling 的模型，不再为不支持工具的模型做降级。
+
     try:
         api_key = decrypt_api_key(model.api_key_cipher or "")
         llm_start = time.monotonic()
@@ -2681,7 +2965,7 @@ async def _stream_llm_turn(
             "model": model.model_identifier,
             "messages": messages,
             "temperature": effective_temp if effective_temp is not None else get_model_default_temperature(model),
-            "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
+            "max_tokens": max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -2708,7 +2992,11 @@ async def _stream_llm_turn(
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:512]
+                    logger.error("LLM stream rejected status=%s body=%s model=%s", response.status_code, error_text, model.model_identifier)
+                    raise RuntimeError(f"LLM call failed ({response.status_code}): {error_text}")
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -2729,6 +3017,8 @@ async def _stream_llm_turn(
                     delta = choice.get("delta") or {}
                     piece = delta.get("content")
                     if piece:
+                        if not isinstance(piece, str):
+                            piece = str(piece)
                         content_acc += piece
                         turn_output_chars += len(piece)
                         yield "delta", piece
@@ -2739,6 +3029,8 @@ async def _stream_llm_turn(
                             slot["id"] = tc["id"]
                         fn = tc.get("function") or {}
                         if fn.get("name"):
+                            if not slot["name"]:
+                                yield "tool_call_start", fn["name"]
                             slot["name"] = fn["name"]
                         if fn.get("arguments"):
                             slot["arguments"] += fn["arguments"]
@@ -2758,7 +3050,7 @@ async def _stream_llm_turn(
     except Exception as exc:  # noqa: BLE001 — surfaced to caller for graceful fallback
         llm_latency_ms = int((time.monotonic() - llm_start) * 1000)
         logger.exception("LLM stream failed", extra=_log_ctx(model=model.model_identifier, latency_ms=llm_latency_ms))
-        yield "error", str(exc)[:200]
+        yield "error", _humanize_llm_error(exc)
         return
 
     llm_latency_ms = int((time.monotonic() - llm_start) * 1000)
@@ -2814,6 +3106,12 @@ async def _stream_anthropic_turn(
     max_tokens: Optional[int] = None,
     effort_api_params: Optional[dict] = None,
 ) -> AsyncIterator[tuple[str, Any]]:
+    # max_tokens 上限：不超过模型配置的 max_output
+    model_max_output = model.max_output or 4096
+    if max_tokens is None:
+        max_tokens = model_max_output
+    elif max_tokens > model_max_output:
+        max_tokens = model_max_output
     try:
         api_key = decrypt_api_key(model.api_key_cipher or "")
         system_prompt, payload_messages = _anthropic_payload_messages(messages)
@@ -2821,7 +3119,7 @@ async def _stream_anthropic_turn(
             "model": model.model_identifier,
             "messages": payload_messages,
             "temperature": temperature if temperature is not None else get_model_default_temperature(model),
-            "max_tokens": max_tokens if max_tokens is not None else (model.max_output or 4096),
+            "max_tokens": max_tokens,
             "stream": True,
         }
         if system_prompt:
@@ -2845,7 +3143,11 @@ async def _stream_anthropic_turn(
                 },
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:512]
+                    logger.error("Anthropic stream rejected status=%s body=%s model=%s", response.status_code, error_text, model.model_identifier)
+                    raise RuntimeError(f"Anthropic call failed ({response.status_code}): {error_text}")
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -2868,7 +3170,7 @@ async def _stream_anthropic_turn(
                         finish = delta.get("stop_reason") or finish
     except Exception as exc:  # noqa: BLE001
         logger.exception("Anthropic stream call failed", extra=_log_ctx(model=model.model_identifier))
-        yield "error", str(exc)[:300]
+        yield "error", _humanize_llm_error(exc)
         return
 
     yield "final", {"content": content_acc, "tool_calls": [], "finish_reason": finish}
@@ -4310,10 +4612,12 @@ def _optimize_resume_data_tool(
     # 此时 evidence_pool 为空（per-run），必须兜底查 profile。
     # P3: profile 去重——若 evidence_pool 已有 profile_snapshot 则复用。
     if evidence_pool and evidence_pool.profile_snapshot:
-        evidence_sources.append(evidence_pool.profile_snapshot)
+        profile = evidence_pool.profile_snapshot
+        evidence_sources.append(profile)
     else:
         profile_result = _query_student_profile(db, identity)
-        evidence_sources.append(profile_result.get("profile") or {})
+        profile = profile_result.get("profile") or {}
+        evidence_sources.append(profile)
     if evidence_pool:
         for source in evidence_pool.collect_evidence_sources():
             evidence_sources.append(source)
@@ -4410,7 +4714,6 @@ def _optimize_resume_data_tool(
         else:
             template_id = "classic"
     # 身份字段服务端强制覆盖（与 generate 对齐）：姓名/邮箱/电话以 profile 为准
-    profile = profile_result.get("profile") or {}
     safe_args = dict(args)
     basic_in = safe_args.get("basic") or {}
     for key in ("name", "email", "phone"):
