@@ -2360,6 +2360,11 @@ async def run_agent_loop(
         logger.info("JD auto-detected and saved", extra=_log_ctx(request_id=req_id, session_id=session.id, jd_len=len(session.jd_text)))
     # 工具结果字符预算跟踪（本轮所有工具结果总和）
     tool_result_budget_used = 0
+    # P3: 心跳节流——同 phase 的心跳至少间隔 1.5s，phase 切换立即发送，
+    # 避免 LLM 流式输出时 progress 事件洪流压垮 SSE 通道。
+    _HEARTBEAT_MIN_INTERVAL = 1.5
+    last_heartbeat_phase: str = ""
+    last_heartbeat_ts: float = 0.0
     for iteration in range(max_iterations):
         if time.monotonic() > deadline:
             logger.warning("agent_loop timeout", extra=_log_ctx(request_id=req_id, session_id=session.id, iteration=iteration))
@@ -2400,13 +2405,19 @@ async def run_agent_loop(
             elif kind == "error":
                 turn_error = True
             elif kind == "progress":
-                yield "runtime.heartbeat", {
-                    "message_id": assistant_id,
-                    "elapsed_ms": int((time.monotonic() - run_started) * 1000),
-                    "output_chars": cumulative_output_chars + value["turn_output_chars"],
-                    "phase": value["phase"],
-                    "iteration": iteration + 1,
-                }
+                # P3: 心跳节流——phase 切换立即发，同 phase 至少间隔 _HEARTBEAT_MIN_INTERVAL。
+                _hb_phase = value["phase"]
+                _now = time.monotonic()
+                if _hb_phase != last_heartbeat_phase or _now - last_heartbeat_ts >= _HEARTBEAT_MIN_INTERVAL:
+                    last_heartbeat_phase = _hb_phase
+                    last_heartbeat_ts = _now
+                    yield "runtime.heartbeat", {
+                        "message_id": assistant_id,
+                        "elapsed_ms": int((_now - run_started) * 1000),
+                        "output_chars": cumulative_output_chars + value["turn_output_chars"],
+                        "phase": _hb_phase,
+                        "iteration": iteration + 1,
+                    }
             elif kind == "final":
                 turn_content = value.get("content") or ""
                 turn_tool_calls = value.get("tool_calls") or []
@@ -2427,13 +2438,19 @@ async def run_agent_loop(
                 if kind == "delta":
                     yield "message.delta", {"message_id": assistant_id, "delta": value}
                 elif kind == "progress":
-                    yield "runtime.heartbeat", {
-                        "message_id": assistant_id,
-                        "elapsed_ms": int((time.monotonic() - run_started) * 1000),
-                        "output_chars": cumulative_output_chars + value["turn_output_chars"],
-                        "phase": value["phase"],
-                        "iteration": iteration + 1,
-                    }
+                    # P3: 心跳节流（与主路径一致）
+                    _hb_phase = value["phase"]
+                    _now = time.monotonic()
+                    if _hb_phase != last_heartbeat_phase or _now - last_heartbeat_ts >= _HEARTBEAT_MIN_INTERVAL:
+                        last_heartbeat_phase = _hb_phase
+                        last_heartbeat_ts = _now
+                        yield "runtime.heartbeat", {
+                            "message_id": assistant_id,
+                            "elapsed_ms": int((_now - run_started) * 1000),
+                            "output_chars": cumulative_output_chars + value["turn_output_chars"],
+                            "phase": _hb_phase,
+                            "iteration": iteration + 1,
+                        }
                 elif kind == "final":
                     add_usage(value)
                     cumulative_output_chars += len(value.get("content") or "") + sum(len(tc.get("arguments", "")) for tc in (value.get("tool_calls") or []))
@@ -4294,9 +4311,17 @@ def _generate_resume_data_tool(
     # 规范化字面转义（\n → 真换行），避免 nAI 等误提取
     args = _normalize_literal_escapes(args)
 
-    # 收集证据源用于事实校验
-    profile_result = _query_student_profile(db, identity)
-    profile = profile_result.get("profile") or {}
+    # 收集证据源用于事实校验。
+    # P3: profile 去重——若 evidence_pool 已有 profile_snapshot（dispatch 兜底时查过），
+    # 直接复用，避免单次 run 内重复查 6+ 张明细表。snapshot 不含 profile_completeness，
+    # 该字段只影响非关键展示，缺失时回退空。
+    profile_completeness: dict[str, Any] = {}
+    if evidence_pool and evidence_pool.profile_snapshot:
+        profile = evidence_pool.profile_snapshot
+    else:
+        profile_result = _query_student_profile(db, identity)
+        profile = profile_result.get("profile") or {}
+        profile_completeness = profile_result.get("profile_completeness") or {}
     evidence_sources: list[Any] = [profile]
     if evidence_pool:
         for source in evidence_pool.collect_evidence_sources():
@@ -4368,7 +4393,7 @@ def _generate_resume_data_tool(
     basic_in["phone"] = profile.get("phone") or basic_in.get("phone") or ""
     safe_args["basic"] = basic_in
 
-    completeness = profile_result.get("profile_completeness") or {}
+    completeness = profile_completeness
     doc = _build_resume_doc(safe_args, student, title, template_id)
     row = StudentResume(
         tenant_id=identity.tenant_id,
@@ -4441,8 +4466,12 @@ def _optimize_resume_data_tool(
     # 统一证据来源：无论 evidence_pool 是否可用，都保证 profile 一定在证据中。
     # 典型跨轮场景：上一轮 read_resume + 建议，本轮用户确认后直接 optimize——
     # 此时 evidence_pool 为空（per-run），必须兜底查 profile。
-    profile_result = _query_student_profile(db, identity)
-    evidence_sources.append(profile_result.get("profile") or {})
+    # P3: profile 去重——若 evidence_pool 已有 profile_snapshot 则复用。
+    if evidence_pool and evidence_pool.profile_snapshot:
+        evidence_sources.append(evidence_pool.profile_snapshot)
+    else:
+        profile_result = _query_student_profile(db, identity)
+        evidence_sources.append(profile_result.get("profile") or {})
     if evidence_pool:
         for source in evidence_pool.collect_evidence_sources():
             evidence_sources.append(source)
