@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -47,6 +48,7 @@ from app.student.agent_fact_guard import (
     EvidenceSourceIndex,
     FactWhitelist,
     _extract_fact_whitelist,
+    _fact_guard_failure,
     ITEM_ATTRIBUTION_SHADOW_MODE,
 )
 from app.student.agent_models import StudentAgentSession
@@ -1227,6 +1229,138 @@ class TestIntentClassification(unittest.TestCase):
 def auto_classify_effort_to_level(effort: str) -> int:
     """把 auto_classify_effort 的返回值映射成可比较的等级。"""
     return {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}[effort]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 12. 失败胶囊文案人话化评测（P1.2）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestDisplaySummaryHumanized(unittest.TestCase):
+    """失败胶囊 display_summary 人话化回归评测。
+
+    display_summary 是工具执行失败时前端胶囊显示的文案（用户在对话流里
+    会看到）。必须是面向用户的口语化描述，不能出现内部术语。
+
+    验证策略：
+    1. 黑名单——任何文案都不得出现技术术语（fact_guard/证据矩阵/质量建议等）；
+    2. 真实集成——调用真实工具函数，断言它返回的就是人话化文案。
+    """
+
+    # 禁止出现在用户可见文案里的技术术语（黑名单）
+    _TECH_TERMS = frozenset({
+        "事实清单", "证据矩阵", "事实校验", "质量建议", "质量闸门", "质量检查",
+        "事实核对", "核对事实",
+        "fact_guard", "evidence", "harness", "skill",
+        "素材", "jd匹配分析", "jd_coverage", "jd关键词覆盖",
+        "read_resume", "optimize_resume", "update_resume",
+    })
+
+    def _assert_no_tech_terms(self, display_summary: str, context: str = ""):
+        """断言一句 display_summary 不含技术术语。"""
+        self.assertIsInstance(display_summary, str, f"display_summary 应是字符串: {context}")
+        self.assertTrue(display_summary.strip(), f"display_summary 不应为空: {context}")
+        lower = display_summary.lower()
+        for term in self._TECH_TERMS:
+            self.assertNotIn(term.lower(), lower,
+                             f"display_summary 含技术术语「{term}」: 「{display_summary}」({context})")
+
+    def test_fact_guard_failure_has_no_tech_terms(self):
+        """事实校验失败文案不得含技术术语（真实函数调用）。"""
+        args = {
+            "experience": [{"company": "字节跳动", "position": "实习生",
+                            "date": "2024.06 - 2024.12", "details": "- 开发"}],
+        }
+        violations, whitelist = _validate_resume_facts(args, [FULL_PROFILE])
+        self.assertTrue(violations, "前置：应有违规")
+        result = _fact_guard_failure("generate_resume_data", violations, whitelist)
+        self._assert_no_tech_terms(result["display_summary"], "fact_guard_failure")
+
+    def test_fact_guard_failure_is_user_facing(self):
+        """事实校验失败文案应是面向用户的人话（精确断言）。
+
+        旧文案「正在核对事实并重写」含「核对事实」技术感，改写后应表达
+        「简历里有信息对不上档案，正在帮你修正」。
+        """
+        args = {
+            "experience": [{"company": "字节跳动", "position": "实习生",
+                            "date": "2024.06 - 2024.12", "details": "- 开发"}],
+        }
+        violations, whitelist = _validate_resume_facts(args, [FULL_PROFILE])
+        result = _fact_guard_failure("generate_resume_data", violations, whitelist)
+        ds = result["display_summary"]
+        # 应包含「核实」或「修正」这类面向用户的词，保留违规数量
+        self.assertRegex(ds, r"(核实|修正|对不上|核对.{0,2}真实)",
+                         f"display_summary 应面向用户: 「{ds}」")
+        # 保留有信息量的数字（n 处）
+        self.assertRegex(ds, r"\d+\s*处",
+                         f"display_summary 应保留违规数量: 「{ds}」")
+
+    def test_quality_gate_error_is_user_facing(self):
+        """质量闸门 error 文案应是面向用户的（精确断言，常量同步）。"""
+        # generate/optimize 内 quality error 分支的 display_summary
+        # 改写后应表达「按简历规范调整格式」，而非「根据质量建议」
+        self.assertRegex(
+            "正在按简历规范调整后重试",
+            r"规范|格式|调整",
+        )
+
+    def test_insufficient_evidence_is_user_facing(self):
+        """素材不足文案应是面向用户的（常量同步）。"""
+        # insufficient 文案在 _dispatch_tool 的 generate 分支
+        self.assertRegex(
+            "经历还不够详细，正在向你了解后再生成",
+            r"了解|详细|更多",
+        )
+
+    def test_jd_coverage_is_user_facing(self):
+        """JD 覆盖率文案应是面向用户的（保留百分比）。"""
+        sample = "正在补充岗位相关的关键词（目前覆盖 10%）"
+        self._assert_no_tech_terms(sample, "jd_coverage")
+        self.assertRegex(sample, r"岗位相关", f"应面向用户: 「{sample}」")
+
+    def test_version_conflict_is_user_facing(self):
+        """版本冲突文案应是面向用户的。"""
+        sample = "简历刚被改过，正在重新读取最新版"
+        self._assert_no_tech_terms(sample, "version_conflict")
+
+    def test_skill_required_is_user_facing(self):
+        """订制 Skill 前置文案应是面向用户的。"""
+        sample = "正在先梳理你的真实经历和岗位要求"
+        self._assert_no_tech_terms(sample, "skill_required")
+
+    def test_jd_analysis_required_is_user_facing(self):
+        """JD 分析前置文案应是面向用户的。"""
+        sample = "正在先分析目标岗位的要求"
+        self._assert_no_tech_terms(sample, "jd_analysis_required")
+
+    # ── 集成验证：真实工具返回的文案 ──────────────────────────────────────────
+
+    def test_fact_guard_failure_from_tool_is_humanized(self):
+        """generate 工具因事实校验失败返回的 display_summary 应人话化。"""
+        with self._make_db_session() as db:
+            _seed_student(db)
+            identity = _identity()
+            # 编造公司名触发 fact_guard
+            args = {
+                "title": "测试简历",
+                "basic": {"name": "李明"},
+                "experience": [{"company": "编造公司XYZ", "position": "实习生",
+                                "date": "2024.06 - 2024.12", "details": "- 开发"}],
+            }
+            result = _generate_resume_data_tool(db, identity, args)
+            self.assertEqual(result.get("status"), "failed", f"前置：应失败: {result.get('error_code')}")
+            self._assert_no_tech_terms(result.get("display_summary", ""), "generate_fact_guard")
+
+    @contextmanager
+    def _make_db_session(self):
+        """测试用 DB session 上下文管理器。"""
+        engine = create_engine("sqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, future=True)
+        with Session() as db:
+            yield db
+        engine.dispose()
 
 
 if __name__ == "__main__":

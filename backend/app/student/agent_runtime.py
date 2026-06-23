@@ -1773,7 +1773,7 @@ def _resume_skill_prerequisite_failure(
                 "Harness 已阻止写入：订制或优化简历前必须先调用「证据约束订制简历」Skill，"
                 "完成事实清单、JD 优先级和证据匹配矩阵后再保存。"
             ),
-            "display_summary": "正在准备事实清单与证据矩阵",
+            "display_summary": "正在先梳理你的真实经历和岗位要求",
         }
     # optimize 场景额外要求：必须已提交 JD 分析
     if name == "optimize_resume_data" and session and not getattr(session, "jd_text", None):
@@ -1786,7 +1786,7 @@ def _resume_skill_prerequisite_failure(
                 "Harness 已阻止保存：请先调用 analyze_jd_match 提交目标岗位 JD 的结构化分析"
                 "（P0/P1 需求、证据匹配矩阵），再调用 optimize_resume_data 生成优化版简历。"
             ),
-            "display_summary": "正在补齐 JD 匹配分析",
+            "display_summary": "正在先分析目标岗位的要求",
         }
     return None
 
@@ -2941,7 +2941,7 @@ async def _dispatch_tool(
                 "error_code": "insufficient_evidence",
                 "recoverable": True,
                 "summary": "素材不足，无法生成高质量简历。" + quality_report["suggestions"][0],
-                "display_summary": "需要补充素材后继续生成",
+                "display_summary": "经历还不够详细，正在向你了解后再生成",
                 "evidence_quality": quality_report,
             }
         return _generate_resume_data_tool(db, identity, args, evidence_pool=evidence_pool)
@@ -4221,7 +4221,7 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
             "时间比对对分隔符不敏感（2026-03 与 2026.03 等价），请统一输出为 YYYY-MM 格式，不要保留具体日期，也不要照抄档案中的全角句号等笔误。"
             + whitelist_hint
         ),
-        "display_summary": f"正在核对事实并重写（{n} 处需调整）",
+        "display_summary": f"简历里有 {n} 处对不上档案，正在帮你核实修正",
         "fact_validation": {"passed": False, "violations": violations[:20]},
     }
 
@@ -4301,7 +4301,7 @@ def _generate_resume_data_tool(
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "正在根据质量建议调整简历",
+            "display_summary": "正在按简历规范调整后重试",
             "quality_check": quality,
         }
     if quality.get("warnings"):
@@ -4452,7 +4452,7 @@ def _optimize_resume_data_tool(
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "正在根据质量建议调整简历",
+            "display_summary": "正在按简历规范调整后重试",
             "quality_check": quality,
         }
     if quality.get("warnings"):
@@ -4476,7 +4476,7 @@ def _optimize_resume_data_tool(
                     f"未覆盖关键词：{missing_preview}。"
                     f"请调整 skills 和经历描述以覆盖岗位核心要求，或在差距分析中明确说明缺口。"
                 ),
-                "display_summary": f"正在补充岗位关键词（当前 {coverage['coverage_ratio']:.0%}）",
+                "display_summary": f"正在补充岗位相关的关键词（目前覆盖 {coverage['coverage_ratio']:.0%}）",
                 "jd_coverage": coverage,
             }
         if coverage.get("severity") == "warning":
@@ -4560,7 +4560,7 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
                     "error_code": "resume_version_retry",
                     "recoverable": True,
                     "summary": "这份简历在你读取之后被修改过（可能是用户手动编辑），请重新 read_resume 获取最新内容后再做最小修改。",
-                    "display_summary": "简历刚更新，正在重新读取最新版",
+                    "display_summary": "简历刚被改过，正在重新读取最新版",
                 }
         except (ValueError, TypeError):
             pass  # 解析失败不阻塞
@@ -4616,7 +4616,7 @@ def _update_resume_data_tool(db: Session, identity: AuthIdentity, args: dict[str
             "summary": "简历质量未达标，请修正以下问题后重试：" + "；".join(
                 f"{e['section']}: {e['issue']}" for e in quality["errors"][:3]
             ),
-            "display_summary": "正在根据质量建议调整简历",
+            "display_summary": "正在按简历规范调整后重试",
             "quality_check": quality,
         }
     if quality.get("warnings"):

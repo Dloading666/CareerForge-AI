@@ -442,7 +442,7 @@ def _fact_guard_failure(tool: str, violations: list[str], whitelist: Optional[Fa
         "error_code": "fact_guard_retry",
         "recoverable": True,
         "summary": f"事实校验未通过{suffix}：{preview}。请基于个人档案和已有简历中的真实信息修改，不要编造新的公司名、学校名、项目名或时间段。{whitelist_hint}",
-        "display_summary": f"正在核对事实并重写（{n} 处需调整）",
+        "display_summary": f"简历里有 {n} 处对不上档案，正在帮你核实修正",
         "fact_validation": {"passed": False, "violations": violations[:20]},
     }
 
