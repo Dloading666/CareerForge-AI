@@ -1,23 +1,28 @@
-frontend/node_modules/
-frontend/dist/
+# 全局：所有位置的敏感/生成物一律不进库
+*.env
+*.env.*
+.env
+.env.*
+__pycache__/
+*.pyc
+*.db
+*.sqlite3
+*.sqlite
+.DS_Store
+node_modules/
+dist/
 .venv/
 tmp/local/
-backend/.venv/
-backend/__pycache__/
+
+# 项目特定
 backend/.pytest_cache/
 backend/.mypy_cache/
-backend/zhipei_auth.db
-backend/*.db
-backend/.env.docker
-backend/.env
 .stack/
 docker-compose.override.yml
-*.pyc
-.DS_Store
 .claude/
 .idea/
 
-# Chroma vector DB persistence (generated at runtime, must not be committed)
+# 运行时生成的数据目录（含用户上传、向量库、头像等，绝不可入库）
 backend/data/chroma/
 backend/data/avatars/
 backend/data/banners/

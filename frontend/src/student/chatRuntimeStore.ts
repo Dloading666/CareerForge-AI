@@ -307,10 +307,6 @@ class ChatRuntimeStore {
       optimisticUserMessageId: number
       sendingAttachments?: unknown[]
     },
-    callbacks?: {
-      onSessionUpdated?: (session: unknown) => void
-      onResumeNav?: (resumeId: number) => void
-    },
   ): Promise<void> {
     // 如果已有运行中，不重复启动
     if (this.isRunning(sessionId)) return
@@ -418,7 +414,7 @@ class ChatRuntimeStore {
               }
               const parsed = parseSseBlock(block)
               if (parsed) {
-                this.handleStreamEvent(sessionId, parsed, callbacks)
+                this.handleStreamEvent(sessionId, parsed)
                 if (parsed.event === 'done') gotDone = true
               }
             }
@@ -426,7 +422,7 @@ class ChatRuntimeStore {
           if (buffer.trim()) {
             const parsed = parseSseBlock(buffer)
             if (parsed) {
-              this.handleStreamEvent(sessionId, parsed, callbacks)
+              this.handleStreamEvent(sessionId, parsed)
               if (parsed.event === 'done') gotDone = true
             }
           }
@@ -609,7 +605,6 @@ class ChatRuntimeStore {
   private handleStreamEvent(
     sessionId: number,
     evt: StreamEvent,
-    callbacks?: { onResumeNav?: (resumeId: number) => void },
   ): void {
     const { event, data } = evt
 
@@ -637,13 +632,6 @@ class ChatRuntimeStore {
 
         const segments = buildTimelineSegments(s.assistantContent, activities)
 
-        // 检查是否需要跳转简历编辑器
-        if (event === 'activity.completed') {
-          const detail = activity.detail
-          if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
-            callbacks?.onResumeNav?.(detail.resume_id as number)
-          }
-        }
         return { ...s, activities, segments }
       })
       return
@@ -658,10 +646,13 @@ class ChatRuntimeStore {
     }
 
     if (event === 'runtime.steps_plan') {
-      this.updateState(sessionId, (s) => ({
-        ...s,
-        stepsPlan: data as unknown as StepsPlanEvent,
-      }))
+      const raw = data as Record<string, unknown>
+      if (Array.isArray(raw?.steps)) {
+        this.updateState(sessionId, (s) => ({
+          ...s,
+          stepsPlan: { session_id: Number(raw.session_id) || 0, intent: String(raw.intent || ''), steps: raw.steps as string[] },
+        }))
+      }
       return
     }
 
@@ -680,13 +671,15 @@ class ChatRuntimeStore {
         runtimeInfo: info,
         runtimeStatus: null,
         heartbeat: null,
+        stepsPlan: null,
       }))
       return
     }
 
     if (event === 'message.snapshot') {
       // 快照：替换正文（不是追加），用于断线重连后幂等恢复
-      const content = String(data.content ?? '')
+      const rawContent = data.content ?? ''
+      const content = typeof rawContent === 'string' ? rawContent : ''
       const messageId = Number(data.message_id)
       this.updateState(sessionId, (s) => {
         // 按 content_offset 重建 segments
@@ -702,7 +695,8 @@ class ChatRuntimeStore {
     }
 
     if (event === 'message.delta') {
-      const delta = String(data.delta ?? '')
+      const rawDelta = data.delta ?? ''
+      const delta = typeof rawDelta === 'string' ? rawDelta : ''
       const messageId = Number(data.message_id)
       this.updateState(sessionId, (s) => {
         const segments = s.segments.map((segment) => (

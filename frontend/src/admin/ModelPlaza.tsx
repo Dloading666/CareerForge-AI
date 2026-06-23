@@ -7,11 +7,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '../shared/api'
 
 interface ModelItem { id: number; display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key_cipher: string | null; model_identifier: string; context_length: number | null; default_temp: number | null; max_output: number | null; timeout_sec: number | null; open_to_student: boolean; status: string }
-interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: string; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
-const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: '', base_url: '', api_key: '', model_identifier: '', open_to_student: false }
+type ApiProtocol = 'anthropic' | 'openai' | 'responses'
+interface ModelFormData { display_name: string; provider: string; deploy_type: string; capability: string; protocols: ApiProtocol; base_url: string; api_key: string; model_identifier: string; context_length?: number; default_temp?: number; max_output?: number; timeout_sec?: number; open_to_student: boolean }
+const EMPTY_MODEL: ModelFormData = { display_name: '', provider: '', deploy_type: 'cloud', capability: 'text', protocols: 'openai', base_url: '', api_key: '', model_identifier: '', open_to_student: false }
 
 const DEPLOY_LABELS: Record<string, { text: string; color: string }> = { cloud: { text: '云端', color: 'arcoblue' }, local: { text: '本地', color: 'green' }, third_party: { text: '第三方', color: 'orange' } }
 const CAPABILITY_LABELS: Record<string, { text: string; color: string }> = { multimodal: { text: '多模态', color: 'purple' }, text: { text: '纯文本', color: 'blue' }, tts: { text: 'TTS 语音', color: 'orange' } }
+const API_PROTOCOL_OPTIONS: { value: ApiProtocol; label: string; tag: string }[] = [
+  { value: 'anthropic', label: 'Anthropic Messages (/v1/messages)', tag: 'Anthropic Messages' },
+  { value: 'openai', label: 'Chat Completions (/chat/completions)', tag: 'Chat Completions' },
+  { value: 'responses', label: 'Responses (/responses)', tag: 'Responses' },
+]
+const normalizeApiProtocol = (raw?: string | null): ApiProtocol => {
+  const value = (raw || '').toLowerCase()
+  if (value.includes('anthropic') || value.includes('messages')) return 'anthropic'
+  if (value.includes('responses')) return 'responses'
+  return 'openai'
+}
+const apiProtocolLabel = (raw?: string | null) => API_PROTOCOL_OPTIONS.find((option) => option.value === normalizeApiProtocol(raw))?.tag || 'Chat Completions'
 
 export function ModelPlaza() {
   const [models, setModels] = useState<ModelItem[]>([])
@@ -75,7 +88,7 @@ export function ModelPlaza() {
       setForm({
         display_name: model.display_name, provider: model.provider, deploy_type: model.deploy_type,
         capability: model.capability,
-        protocols: model.protocols || '',
+        protocols: normalizeApiProtocol(model.protocols),
         base_url: model.base_url, api_key: '', model_identifier: model.model_identifier,
         context_length: model.context_length ?? undefined,
         default_temp: model.default_temp ?? undefined,
@@ -91,6 +104,7 @@ export function ModelPlaza() {
 
   const handleSubmit = async () => {
     if (!form.model_identifier.trim()) { showNotify('error', '请填写模型名称'); return }
+    if (!form.provider.trim()) { showNotify('error', '请填写供应商'); return }
     if (!form.base_url.trim()) { showNotify('error', '请填写 Base URL'); return }
     setSubmitting(true)
     try {
@@ -98,8 +112,10 @@ export function ModelPlaza() {
         const p: Record<string, unknown> = {
           model_identifier: form.model_identifier.trim(),
           display_name: form.model_identifier.trim(),
+          provider: form.provider.trim(),
           base_url: form.base_url.trim(),
           capability: form.capability,
+          protocols: form.protocols,
         }
         if (form.api_key) p.api_key = form.api_key
         await apiRequest(`/api/v1/admin/models/${editingModel.id}`, { method: 'PUT', body: JSON.stringify(p) })
@@ -108,10 +124,10 @@ export function ModelPlaza() {
         // 新建模式
         const p: Record<string, unknown> = {
           display_name: form.model_identifier.trim(),
-          provider: '',
-          deploy_type: 'cloud',
-          capability: 'text',
-          protocols: 'openai',
+          provider: form.provider.trim(),
+          deploy_type: form.deploy_type,
+          capability: form.capability,
+          protocols: form.protocols,
           base_url: form.base_url.trim(),
           model_identifier: form.model_identifier.trim(),
           open_to_student: false,
@@ -222,7 +238,7 @@ export function ModelPlaza() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>状态：{lat ? (lat.ok ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600, background: '#e8f5e9', color: '#00b42a', border: '1px solid #b7eb8f' }}><span style={{ fontSize: 14, fontWeight: 700 }}>✓</span>已验证 {lat.ms}ms</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600, background: '#ffece8', color: '#f53f3f', border: '1px solid #ffccc7' }}><span style={{ fontSize: 14, fontWeight: 700 }}>✗</span>失败</span>) : <span style={{ color: '#5e6475' }}>未测试</span>}</span>
             </div>
             <div className="admin-card-footer">
-              <Space size={6}>{m.protocols.split(',').filter(Boolean).map(p => <Tag key={p}>{p.trim()}</Tag>)}<Tag>{m.provider}</Tag></Space>
+              <Space size={6}><Tag>{apiProtocolLabel(m.protocols)}</Tag><Tag>{m.provider}</Tag></Space>
               <div style={{ display: 'flex', gap: 6 }}>
                 <Button type="text" size="small" icon={<IconPlayArrow />} loading={testingIds.has(m.id)} onClick={() => handleTest(m.id)} />
                 <Button type="text" size="small" icon={<IconEdit />} onClick={() => openForm(m)} />
@@ -238,7 +254,15 @@ export function ModelPlaza() {
         footer={<Space><Button onClick={() => setDrawerOpen(false)}>取消</Button><Button type="primary" loading={submitting} onClick={handleSubmit}>{editingModel ? '保存' : '创建'}</Button></Space>}>
         <Form layout="vertical" style={{ paddingRight: 8 }}>
           <Form.Item label="模型名称" required><Input value={form.model_identifier} onChange={v => setForm(p => ({...p, model_identifier: v}))} placeholder="deepseek-chat" /></Form.Item>
+          <Form.Item label="供应商" required><Input value={form.provider} onChange={v => setForm(p => ({...p, provider: v}))} placeholder="DeepSeek" /></Form.Item>
           <Form.Item label="Base URL" required><Input value={form.base_url} onChange={v => setForm(p => ({...p, base_url: v}))} placeholder="https://api.deepseek.com/v1" /></Form.Item>
+          <Form.Item label="API 格式" required>
+            <Select value={form.protocols} onChange={v => setForm(p => ({...p, protocols: v as ApiProtocol}))}>
+              {API_PROTOCOL_OPTIONS.map((option) => (
+                <Select.Option key={option.value} value={option.value}>{option.label}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
           <Form.Item label="API Key" extra={editingModel?.api_key_cipher ? '已配置密钥，留空保留原值' : undefined}><Input.Password value={form.api_key} onChange={v => setForm(p => ({...p, api_key: v}))} placeholder={editingModel?.api_key_cipher ? '留空保留原值' : 'sk-xxx'} /></Form.Item>
           <Form.Item label="能力类型">
             <Select value={form.capability} onChange={v => setForm(p => ({...p, capability: v}))}>

@@ -16,6 +16,7 @@ import {
   IconFile,
   IconFilePdf,
   IconHistory,
+  IconImage,
   IconLink,
   IconLoading,
   IconMindMapping,
@@ -24,6 +25,7 @@ import {
   IconRobot,
   IconSearch,
   IconSend,
+  IconUndo,
   IconUser,
 } from '@arco-design/web-react/icon'
 import type { ChangeEvent, ComponentType, CSSProperties, KeyboardEvent } from 'react'
@@ -185,11 +187,24 @@ function ModelReasoningPicker({
 }) {
   const [popupVisible, setPopupVisible] = useState(false)
   const [modelMenuVisible, setModelMenuVisible] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   const selectedModel = modelOptions.find((model) => model.id === selectedModelId)
   const supportedEfforts = selectedModel?.supported_efforts ?? ['low', 'medium', 'high']
   // "auto" 始终可用（服务端处理），其他档位按模型支持过滤
   const filteredOptions = reasoningOptions.filter((opt) => opt.value === 'auto' || supportedEfforts.includes(opt.value))
   const selectedReasoning = reasoningOptions.find((option) => option.value === reasoningEffort)
+
+  useEffect(() => {
+    if (!popupVisible) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setPopupVisible(false)
+        setModelMenuVisible(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [popupVisible])
 
   const closePicker = () => {
     setPopupVisible(false)
@@ -198,6 +213,7 @@ function ModelReasoningPicker({
 
   return (
     <div
+      ref={containerRef}
       className={`composer-settings-wrapper${popupVisible ? ' active' : ''}`}
       style={{ position: 'relative' }}
     >
@@ -369,7 +385,7 @@ function ResumeSelector({
 
   if (activeResume) {
     return (
-      <div style={{ position: 'relative' }}>
+      <div ref={containerRef} style={{ position: 'relative' }}>
         <span
           className="attachment-chip"
           style={{ cursor: disabled ? 'default' : 'pointer', background: '#EEF2FF', borderColor: '#C7D2FE', color: '#4338CA' }}
@@ -488,6 +504,7 @@ const toolDisplayNames: Record<string, string> = {
   web_search: '搜索网络信息',
   analyze_jd_match: '分析 JD 匹配度',
   save_session_note: '记下要点',
+  understand_image: '理解图片',
 }
 
 const skillDisplayNames: Record<string, string> = {
@@ -567,6 +584,7 @@ const ACTIVITY_ICON_MAP: Record<string, ActivityIconSpec> = {
   web_search: { icon: IconSearch, tone: 'search' },
   analyze_jd_match: { icon: IconDashboard, tone: 'analysis' },
   save_session_note: { icon: IconCode, tone: 'note' },
+  understand_image: { icon: IconImage, tone: 'vision' },
 }
 
 const KIND_ICON_MAP: Record<string, ActivityIconSpec> = {
@@ -580,123 +598,6 @@ const KIND_ICON_MAP: Record<string, ActivityIconSpec> = {
   resume_skill: { icon: IconRobot, tone: 'skill' },
 }
 
-type SessionMemory = {
-  constraints?: string[]
-  facts?: string[]
-  preferences?: string[]
-}
-
-function MemoryPanel({
-  sessionId,
-  visible,
-}: {
-  sessionId: number | null
-  visible: boolean
-}) {
-  const [memory, setMemory] = useState<SessionMemory>({})
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (!visible || !sessionId) return
-    let cancelled = false
-    apiRequest<{ session: { memory_json?: string | null } }>(`/api/v1/student/master/sessions/${sessionId}/messages?limit=0`)
-      .then((data) => {
-        if (cancelled) return
-        setLoading(true)
-        try {
-          setMemory(JSON.parse(data.session.memory_json || '{}'))
-        } catch { setMemory({}) }
-      })
-      .catch(() => { if (!cancelled) setMemory({}) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [visible, sessionId])
-
-  const handleDelete = async (type: 'constraints' | 'facts' | 'preferences', index?: number) => {
-    const updated: SessionMemory = { ...memory, constraints: [...(memory.constraints || [])], facts: [...(memory.facts || [])], preferences: [...(memory.preferences || [])] }
-    if (type === 'preferences' && index !== undefined) {
-      updated.preferences = updated.preferences!.filter((_, i) => i !== index)
-    } else if (type === 'constraints' && index !== undefined) {
-      updated.constraints = updated.constraints!.filter((_, i) => i !== index)
-    } else if (type === 'facts' && index !== undefined) {
-      updated.facts = updated.facts!.filter((_, i) => i !== index)
-    }
-    setMemory(updated)
-    if (sessionId) {
-      try {
-        await authenticatedFetch(`/api/v1/student/master/sessions/${sessionId}/memory`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updated),
-        })
-      } catch { /* silent */ }
-    }
-  }
-
-  if (!visible) return null
-
-  const constraints = memory.constraints || []
-  const facts = memory.facts || []
-  const prefs = memory.preferences || []
-  const total = constraints.length + facts.length + prefs.length
-
-  return (
-    <div
-      className="composer-settings-menu"
-      style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 8, zIndex: 100, minWidth: 300, maxHeight: 360, overflow: 'auto' }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="composer-settings-heading">
-        <IconMindMapping />
-        <span>本次对话记住的内容</span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#86909C' }}>{total} 条</span>
-      </div>
-      {loading ? (
-        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>加载中…</div>
-      ) : total === 0 ? (
-        <div style={{ padding: '12px 16px', color: '#86909C', fontSize: 13 }}>暂无记忆内容</div>
-      ) : (
-        <div style={{ padding: '4px 0' }}>
-          {constraints.length > 0 && (
-            <div style={{ padding: '4px 16px' }}>
-              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>约束</div>
-              {constraints.map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
-                  <span style={{ flex: 1 }}>🚫 {c}</span>
-                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('constraints', i)}><IconClose style={{ fontSize: 12 }} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-          {facts.length > 0 && (
-            <div style={{ padding: '4px 16px' }}>
-              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>事实</div>
-              {facts.map((f, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
-                  <span style={{ flex: 1 }}>📝 {f}</span>
-                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('facts', i)}><IconClose style={{ fontSize: 12 }} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-          {prefs.length > 0 && (
-            <div style={{ padding: '4px 16px' }}>
-              <div style={{ fontSize: 11, color: '#86909C', marginBottom: 4 }}>偏好</div>
-              {prefs.map((p, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '2px 0' }}>
-                  <span style={{ flex: 1 }}>⚙️ {p}</span>
-                  <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#86909C' }} onClick={() => void handleDelete('preferences', i)}><IconClose style={{ fontSize: 12 }} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-
 function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
   if (name.startsWith('skill__')) return { icon: IconRobot, tone: 'skill' }
   return ACTIVITY_ICON_MAP[name]
@@ -707,7 +608,6 @@ function activityPhaseIcon(name: string, kind: string): ActivityIconSpec {
 /** 工具动作像普通消息一样嵌入对话时间线，不再呈现为面板或列表。 */
 function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; collapsed: boolean } }) {
   const toolActivities = segment.activities
-  const [expanded, setExpanded] = useState(false)
 
   const isRecoveredFailure = (activity: AgentActivity) => (
     activity.status === 'failed'
@@ -725,25 +625,14 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
   const { icon: ActivityIcon, tone } = activityPhaseIcon(primaryActivity.name, primaryActivity.kind)
   const isRunning = visibleActivities.some((activity) => activity.status === 'started')
 
-  // P2.3: 胶囊可展开详情——只对已结束（非 running）且有结构化 detail 的胶囊启用。
-  const hasDetail = !isRunning && visibleActivities.some((a) => {
-    const d = a.detail || {}
-    return d.changes || d.arguments || d.fact_validation || d.quality_check || d.jd_coverage
-  })
-
   return (
-    <div className={`activity-trace${isRunning ? ' is-running' : ''}${hasDetail ? ' expandable' : ''}`}>
+    <div className={`activity-trace${isRunning ? ' is-running' : ''}`}>
       <Tooltip content={activityDisplayName(primaryActivity)} mini>
         <span className={`activity-trace-icon tone-${tone}`} aria-hidden="true">
           <ActivityIcon className="activity-trace-symbol" />
         </span>
       </Tooltip>
-      <span
-        className="activity-trace-copy"
-        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
-        role={hasDetail ? 'button' : undefined}
-        tabIndex={hasDetail ? 0 : undefined}
-      >
+      <span className="activity-trace-copy">
         {visibleActivities.map((activity, index) => (
           <span key={activity.id}>
             {index > 0 && <span className="activity-trace-separator"> · </span>}
@@ -752,52 +641,7 @@ function ActivityTrace({ segment }: { segment: { activities: AgentActivity[]; co
             </span>
           </span>
         ))}
-        {hasDetail && (
-          <span className={`activity-trace-toggle${expanded ? ' open' : ''}`} aria-hidden="true">
-            {expanded ? '收起' : '详情'}
-          </span>
-        )}
       </span>
-      {expanded && hasDetail && (
-        <div className="activity-trace-detail">
-          {visibleActivities.map((activity) => (
-            <ActivityDetailRow key={activity.id} activity={activity} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** 胶囊展开后的单条工具详情（P2.3）。 */
-function ActivityDetailRow({ activity }: { activity: AgentActivity }) {
-  const d = (activity.detail || {}) as Record<string, unknown>
-  const name = activityDisplayName(activity)
-  const changes = d.changes as { summary?: string; field_changes?: string[] } | undefined
-  const args = d.arguments as Record<string, unknown> | undefined
-  const factVal = d.fact_validation as { passed?: boolean; violations?: string[] } | undefined
-
-  const parts: string[] = []
-  if (changes?.summary) parts.push(`改动：${changes.summary}`)
-  if (Array.isArray(factVal?.violations) && factVal!.violations!.length > 0) {
-    parts.push(`已校验修正 ${factVal!.violations!.length} 处`)
-  }
-  // 参数预览：只展示有信息量的字段，避免噪音
-  if (args) {
-    const argKeys = Object.keys(args).filter(
-      (k) => !['resume_id', 'base_updated_at'].includes(k) && args[k] != null && args[k] !== '',
-    )
-    if (argKeys.length > 0) {
-      const preview = argKeys.slice(0, 3).map((k) => `${k}`).join('、')
-      parts.push(`涉及：${preview}${argKeys.length > 3 ? ' 等' : ''}`)
-    }
-  }
-
-  if (parts.length === 0) return null
-  return (
-    <div className="activity-detail-row">
-      <span className="activity-detail-name">{name}</span>
-      <span className="activity-detail-body">{parts.join('；')}</span>
     </div>
   )
 }
@@ -896,10 +740,9 @@ function RuntimeStatusline({
     label = label.replace(/…$/, '（内容较多，请稍候）…')
   }
 
-  // P2.2: 步骤进度预告——根据已完成的工具数推断当前步骤
-  const completedCount = activities.filter((a) => a.status === 'completed').length
+  // P2.2: 步骤进度预告——纯静态列表，不做假进度追踪
   const planSteps = stepsPlan?.steps ?? []
-  const showSteps = planSteps.length > 1 && completedCount < planSteps.length
+  const showSteps = planSteps.length > 1
 
   return (
     <div>
@@ -913,16 +756,12 @@ function RuntimeStatusline({
       </div>
       {showSteps && (
         <div className="runtime-steps-plan">
-          {planSteps.map((step, i) => {
-            const done = i < completedCount
-            const current = i === completedCount
-            return (
-              <span key={step} className={`plan-step${done ? ' done' : ''}${current ? ' current' : ''}`}>
-                <span className="plan-step-dot">{done ? '✓' : current ? '●' : '○'}</span>
-                <span className="plan-step-label">{step}</span>
-              </span>
-            )
-          })}
+          {planSteps.map((step) => (
+            <span key={step} className="plan-step current">
+              <span className="plan-step-dot">●</span>
+              <span className="plan-step-label">{step}</span>
+            </span>
+          ))}
         </div>
       )}
     </div>
@@ -956,10 +795,14 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
 
   const handleRevert = (resumeId: number, revisionId: number | undefined) => {
     Modal.confirm({
+      className: 'resume-revert-confirm',
       title: '撤销本次修改？',
       content: '简历会恢复到这次 AI 修改之前的状态。',
       okText: '撤销修改',
       cancelText: '再想想',
+      icon: <IconUndo />,
+      okButtonProps: { className: 'resume-revert-confirm-ok' },
+      cancelButtonProps: { className: 'resume-revert-confirm-cancel' },
       onOk: () => doRevert(resumeId, revisionId),
     })
   }
@@ -997,44 +840,71 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
     }
   }
 
+  const title = editorLinks.length > 1
+    ? `已更新 ${editorLinks.length} 份简历`
+    : editorLinks[0]?.activityName === 'generate_resume_data'
+      ? '已生成简历'
+      : editorLinks[0]?.activityName === 'optimize_resume_data'
+        ? '已优化简历'
+        : '已修改简历'
+
   if (editorLinks.length === 0) return null
   return (
-    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-      {editorLinks.map((link) => (
-        <span key={link.resumeId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <a
-            href={`/student/resumes/${link.resumeId}`}
-            onClick={(e) => { e.preventDefault(); navigate(`/student/resumes/${link.resumeId}`) }}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '8px 14px', borderRadius: 10,
-              border: '1px solid #C7D2FE', background: '#EEF2FF',
-              color: '#4338CA', fontSize: 13, fontWeight: 600, textDecoration: 'none',
-            }}
-          >
-            <IconFile />
-            <span>{link.label}</span>
-            <IconCaretRight />
-          </a>
-          {link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId) && (
+    <div className="resume-result-card">
+      <div className="resume-result-card-head">
+        <button
+          type="button"
+          className="resume-result-card-main"
+          onClick={() => navigate(`/student/resumes/${editorLinks[0].resumeId}`)}
+        >
+          <span className="resume-result-card-icon" aria-hidden="true">
+            <IconEdit />
+          </span>
+          <span className="resume-result-card-copy">
+            <span className="resume-result-card-title">{title}</span>
+            <span className="resume-result-card-link">
+              查看简历 <IconCaretRight />
+            </span>
+          </span>
+        </button>
+        <div className="resume-result-card-actions">
+          {editorLinks.some((link) => link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId)) && (
             <button
               type="button"
-              onClick={() => handleRevert(link.resumeId, link.revisionId)}
-              disabled={reverting === link.resumeId}
-              style={{
-                padding: '6px 10px', borderRadius: 8,
-                border: '1px solid #FCA5A5', background: '#FEF2F2',
-                color: '#DC2626', fontSize: 12, cursor: 'pointer',
+              className="resume-result-card-revert"
+              onClick={() => {
+                const target = editorLinks.find((link) => link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId))
+                if (target) handleRevert(target.resumeId, target.revisionId)
               }}
+              disabled={reverting !== null}
             >
-              {reverting === link.resumeId ? '撤销中…' : '撤销本次修改'}
+              {reverting !== null ? '撤销中…' : '撤销'}
             </button>
           )}
-          {link.activityName === 'update_resume_data' && revertedResumeIds.has(link.resumeId) && (
-            <span style={{ fontSize: 12, color: '#16A34A' }}>✓ 已撤销</span>
+          {editorLinks.some((link) => link.activityName === 'update_resume_data' && revertedResumeIds.has(link.resumeId)) && (
+            <span className="resume-result-card-reverted">
+              <IconCheck /> 已撤销
+            </span>
           )}
-        </span>
-      ))}
+        </div>
+      </div>
+      {editorLinks.length > 1 && (
+        <div className="resume-result-card-list">
+          {editorLinks.map((link) => (
+            <button
+              type="button"
+              key={link.resumeId}
+              className="resume-result-card-row"
+              onClick={() => navigate(`/student/resumes/${link.resumeId}`)}
+            >
+              <span>{link.label}</span>
+              <span className="resume-result-card-row-action">
+                打开 <IconCaretRight />
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1154,22 +1024,26 @@ function activitiesForAssistant(
 }
 
 function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
-  const handleCopy = async () => {
-    try {
-      const resp = await fetch(src)
-      const blob = await resp.blob()
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
-    } catch {
-      window.open(src, '_blank')
-    }
+  const [scale, setScale] = useState(1)
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = src
+    a.download = 'image'
+    a.click()
   }
   return (
     <div className="image-lightbox-overlay" onClick={onClose}>
       <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
-        <img src={src} alt="preview" />
-        <div className="image-lightbox-actions">
-          <button onClick={handleCopy} title="复制"><IconCopy /></button>
+        <div className="image-lightbox-toolbar">
+          <button onClick={() => setScale(s => Math.max(0.25, s - 0.25))} title="缩小"><span style={{fontSize:18}}>−</span></button>
+          <span style={{fontSize:13,color:'#fff',minWidth:40,textAlign:'center'}}>{Math.round(scale * 100)}%</span>
+          <button onClick={() => setScale(s => Math.min(5, s + 0.25))} title="放大"><span style={{fontSize:18}}>+</span></button>
+          <div style={{width:1,height:20,background:'rgba(255,255,255,0.3)',margin:'0 8px'}}/>
+          <button onClick={handleDownload} title="下载"><IconDownload /></button>
           <button onClick={onClose} title="关闭"><IconClose /></button>
+        </div>
+        <div className="image-lightbox-img-wrap">
+          <img src={src} alt="preview" style={{transform:`scale(${scale})`,transition:'transform 0.2s ease'}} />
         </div>
       </div>
     </div>
@@ -1187,6 +1061,7 @@ type SavedSessionState = {
   userMessageAttachments: Record<number, AgentAttachment[]>
   storeSegments: TimelineSegment[]
   heartbeats: Record<number, { output_chars: number; phase: string }>
+  stepsPlan: { steps: string[] } | null
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
@@ -1228,7 +1103,6 @@ export function AgentChatView({
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [activeResumeId, setActiveResumeId] = useState<number | null>(null)
-  const [memoryPanelVisible, setMemoryPanelVisible] = useState(false)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
@@ -1259,7 +1133,6 @@ export function AgentChatView({
 
 
   const sessionCache = useRef<Map<number, SavedSessionState>>(new Map())  // 并行对话：缓存各 session 的 UI 状态
-  const pendingResumeNavRef = useRef<number | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const optimisticIdRef = useRef(-1)
@@ -1323,6 +1196,7 @@ export function AgentChatView({
         userMessageAttachments,
         storeSegments,
         heartbeats,
+        stepsPlan,
       })
       // 限制缓存大小：最多保留 5 个 session
       if (sessionCache.current.size > 5) {
@@ -1356,6 +1230,7 @@ export function AgentChatView({
       setUserMessageAttachments(cached.userMessageAttachments)
       setStoreSegments(cached.storeSegments)
       setHeartbeats(cached.heartbeats)
+      setStepsPlan(cached.stepsPlan ?? null)
       return
     }
 
@@ -1420,7 +1295,7 @@ export function AgentChatView({
     if (agentSession?.id) {
       sessionCache.current.set(agentSession.id, {
         messages, activities, generatedFiles, runtimeStatuses,
-        runtimeInfo, userMessageAttachments, storeSegments, heartbeats,
+        runtimeInfo, userMessageAttachments, storeSegments, heartbeats, stepsPlan,
       })
     }
     setAgentSession(null)
@@ -1430,6 +1305,7 @@ export function AgentChatView({
     setRuntimeInfo({})
     setHeartbeats({})
     setStoreSegments([])
+    setStepsPlan(null)
     streamStartRef.current = null
     setPendingAttachments([])
     setGeneratedFiles({})
@@ -1546,7 +1422,7 @@ export function AgentChatView({
     const text = (preset ?? inputValue).trim()
     const hasAttachments = pendingAttachments.length > 0
     if (!text && !hasAttachments) return
-    const content = text || '请帮我分析上传的附件。'
+    const content = text || (hasAttachments ? '请帮我分析上传的附件。' : '')
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
       return
@@ -1609,25 +1485,12 @@ export function AgentChatView({
           optimisticUserMessageId: optimisticId,
           sendingAttachments,
         },
-        {
-          onSessionUpdated: (sess) => onSessionUpdated(sess as AgentChatSession),
-          onResumeNav: (resumeId) => {
-            pendingResumeNavRef.current = resumeId
-          },
-        },
       )
-      // After startRun resolves, check pending resume navigation
-      if (pendingResumeNavRef.current !== null) {
-        const resumeId = pendingResumeNavRef.current
-        pendingResumeNavRef.current = null
-        navigate(`/student/resumes/${resumeId}`)
-      }
       // Check store error
       const storeState = chatRuntimeStore.getState(currentSession.id)
       if (storeState?.error) {
         const message = storeState.error
         const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
-          : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
           : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
           : message
         setNotice(hint)
@@ -1636,7 +1499,6 @@ export function AgentChatView({
     } catch (error) {
       const message = error instanceof Error ? error.message : '回复失败'
       const hint = message.includes('上下文预算') ? '对话内容较长，建议新建对话继续。'
-        : message.includes('事实校验') ? '部分内容缺少事实依据，请补充材料后重试。'
         : message === 'Failed to fetch' ? '无法连接后端服务，请稍后重试'
         : message
       setNotice(hint)
@@ -1950,7 +1812,7 @@ export function AgentChatView({
               {userMessageAttachments[message.id]?.length > 0 && (
                 <div className="user-image-grid">
                   {userMessageAttachments[message.id].map((att) => {
-                    const src = att.download_url || ''
+                    const src = typeof att.download_url === 'string' ? att.download_url : ''
                     return (
                       <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
                         <img src={src} alt={att.original_name} />
@@ -2021,30 +1883,38 @@ export function AgentChatView({
           </div>
         )}
 
-        {(agentType === 'resume' || pendingAttachments.length > 0) && (
-          <div className="attachment-chip-row">
-            {agentType === 'resume' && (
-              <ResumeSelector
-                activeResumeId={activeResumeId}
-                onResumeChange={(id) => void handleResumeChange(id)}
-                disabled={streaming}
-              />
-            )}
+        {/* 照片预览 - 在输入框上方 */}
+        {pendingAttachments.filter(a => a.content_type?.startsWith('image/') && typeof a.download_url === 'string').length > 0 && (
+          <div className="composer-image-row">
             {pendingAttachments.map((a) =>
-              a.content_type?.startsWith('image/') && a.download_url ? (
-                <div key={a.id} className="composer-image-preview" title={a.original_name}>
+              a.content_type?.startsWith('image/') && typeof a.download_url === 'string' ? (
+                <div key={a.id} className="composer-image-preview" title={a.original_name}
+                  onClick={() => setLightboxImage(a.download_url!)}
+                  style={{ cursor: 'pointer' }}
+                >
                   <img src={a.download_url} alt={a.original_name} />
-                  <button type="button" className="composer-image-remove" aria-label="移除图片" onClick={() => removePendingAttachment(a.id)}>
+                  <button type="button" className="composer-image-remove" aria-label="移除图片" onClick={(e) => { e.stopPropagation(); removePendingAttachment(a.id) }}>
                     <IconClose />
                   </button>
                 </div>
-              ) : (
-                <span key={a.id} className="attachment-chip">
-                  <IconAttachment />
+              ) : null,
+            )}
+          </div>
+        )}
+
+        {/* 非图片文件预览 - 在输入框上方 */}
+        {pendingAttachments.filter(a => !a.content_type?.startsWith('image/')).length > 0 && (
+          <div className="composer-file-row">
+            {pendingAttachments.map((a) =>
+              !a.content_type?.startsWith('image/') ? (
+                <div key={a.id} className="composer-file-chip">
+                  <IconFilePdf style={{ fontSize: 16, color: '#86909C' }} />
                   <span>{a.original_name}</span>
-                  <button type="button" onClick={() => removePendingAttachment(a.id)}><IconClose /></button>
-                </span>
-              ),
+                  <button type="button" className="composer-file-remove" aria-label="移除文件" onClick={() => removePendingAttachment(a.id)}>
+                    <IconClose />
+                  </button>
+                </div>
+              ) : null,
             )}
           </div>
         )}
@@ -2076,24 +1946,6 @@ export function AgentChatView({
                 {uploadingAttachment ? <IconLoading /> : <IconPlus />}
               </button>
             </Tooltip>
-            {agentType === 'resume' && agentSession?.id && (
-              <div style={{ position: 'relative' }}>
-                <Tooltip content="查看本次对话记住的内容">
-                  <button
-                    type="button"
-                    className="composer-add-btn"
-                    onClick={() => setMemoryPanelVisible((v) => !v)}
-                    style={memoryPanelVisible ? { background: '#EEF2FF', color: '#4338CA' } : undefined}
-                  >
-                    <IconMindMapping />
-                  </button>
-                </Tooltip>
-                <MemoryPanel
-                  sessionId={agentSession.id}
-                  visible={memoryPanelVisible}
-                />
-              </div>
-            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -2102,6 +1954,13 @@ export function AgentChatView({
               accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.json"
               onChange={(e) => void handleFileInputChange(e)}
             />
+            {agentType === 'resume' && (
+              <ResumeSelector
+                activeResumeId={activeResumeId}
+                onResumeChange={(id) => void handleResumeChange(id)}
+                disabled={streaming}
+              />
+            )}
           </div>
 
           <div className="composer-right">
