@@ -1025,7 +1025,7 @@ textarea {
 /* 对话主区：包住 banner + 消息流 + 输入框，纵向布局，占据剩余宽度 */
 .student-chat-main {
   flex: 1;
-  min-width: 0;
+  min-width: 420px;   /* 防止被右侧预览窗压到输入框按钮错位 */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1037,9 +1037,16 @@ textarea {
   position: relative;
   flex-shrink: 0;
   height: 100%;
-  border-left: 1px solid var(--color-border-2, #e5e6eb);
+  width: 0;
+  overflow: hidden;
+  border-left: 1px solid transparent;
   background: #f7f8fa;
   display: flex;
+  transition: width 0.28s ease, border-left-color 0.28s ease;
+}
+/* 展开态：宽度由内联 style 注入，border 显现 */
+.resume-preview-wrap.open {
+  border-left-color: var(--color-border-2, #e5e6eb);
 }
 
 .resume-preview-resize-handle {
@@ -1058,7 +1065,7 @@ textarea {
 
 .resume-live-preview {
   flex: 1;
-  min-width: 0;
+  min-width: 280px;   /* 防止父容器收起动画期间内容被压扁 */
   height: 100%;
   display: flex;
   flex-direction: column;

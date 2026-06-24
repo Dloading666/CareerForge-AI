@@ -2290,11 +2290,12 @@ export function AgentChatView({
       </div>
       </div>
 
-      {/* 右侧简历实时预览：由标题栏右上角「简历预览」按钮控制开关，仅简历助手且有工作简历时生效 */}
-      {agentType === 'resume' && activeResumeId != null && resumePreviewVisible && (
+      {/* 右侧简历实时预览：由标题栏右上角「简历预览」按钮控制开关，仅简历助手且有工作简历时生效。
+          始终渲染 aside（有简历时），用 class 控制宽度过渡实现展开/收起动画 */}
+      {agentType === 'resume' && activeResumeId != null && (
         <aside
-          className="resume-preview-wrap"
-          style={{ width: resumePreviewWidth }}
+          className={`resume-preview-wrap${resumePreviewVisible ? ' open' : ''}`}
+          style={resumePreviewVisible ? { width: resumePreviewWidth } : undefined}
         >
           <div className="resume-preview-resize-handle" onMouseDown={handlePreviewResizeDown} />
           <ResumeLivePreviewPanel
