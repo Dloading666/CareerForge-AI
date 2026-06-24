@@ -1,5 +1,39 @@
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+/**
+ * 安全提取后端错误信息，兼容三种 detail 形态：
+ *  - 字符串："请输入内容"
+ *  - FastAPI 校验错误数组：[{type, loc, msg, input}, ...] → 取 msg 拼接
+ *  - 对象：{detail: {...}} → 递归
+ * 避免直接 String(对象) 产生 "[object Object]"。
+ */
+function extractBackendError(body: Record<string, unknown>, status: number): string {
+  const raw = body.detail ?? body.msg ?? body.message
+  if (typeof raw === 'string' && raw.trim()) return raw
+  if (Array.isArray(raw)) {
+    const msgs = raw
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object') {
+          const obj = item as Record<string, unknown>
+          const msg = obj.msg ?? obj.message
+          if (typeof msg === 'string') return String(msg)
+          const loc = Array.isArray(obj.loc) ? obj.loc.join('.') : ''
+          return loc ? `${loc} 参数有误` : ''
+        }
+        return ''
+      })
+      .filter(Boolean)
+    if (msgs.length) return msgs.join('；')
+  }
+  if (raw && typeof raw === 'object') {
+    const inner = (raw as Record<string, unknown>).detail ?? (raw as Record<string, unknown>).msg
+    if (typeof inner === 'string' && inner.trim()) return inner
+  }
+  return `请求失败（${status}）`
+}
+
+
 export type RunStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | 'disconnected'
 
 export type RuntimeStatusEvent = {
@@ -361,7 +395,7 @@ class ChatRuntimeStore {
 
       if (!startResp.ok) {
         const errBody = await startResp.json().catch(() => ({})) as Record<string, unknown>
-        const detail = String(errBody.detail || errBody.msg || `请求失败（${startResp.status}）`)
+        const detail = extractBackendError(errBody, startResp.status)
         throw new Error(detail)
       }
 

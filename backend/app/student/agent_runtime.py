@@ -926,7 +926,7 @@ async def stream_master_reply(
         (content.strip() == AUTO_ATTACHMENT_PROMPT or not content.strip())
         and attachments
         and all(attachment.content_type.startswith("image/") for attachment in attachments)
-        and session.title == AUTO_ATTACHMENT_PROMPT
+        and session.title in (AUTO_ATTACHMENT_PROMPT, "新对话")
     ):
         session.title = "图片分析"
         db.commit()
@@ -2535,7 +2535,12 @@ def _build_initial_messages(
     # 主模型统一只读视觉模型返回的文字描述（见下方 image_descriptions 拼接）。
     image_desc_map = image_descriptions or {}
     has_image_desc = bool(image_desc_map)
-    parts = [user_text]
+    # 用户只发图片/附件、未输入任何文字时，给模型一句内部引导让它主动分析
+    # （用户在气泡里看不到——气泡只渲染图片缩略图，见前端 image-only 分支）。
+    effective_user_text = user_text
+    if not user_text.strip() and attachments:
+        effective_user_text = "用户未输入文字，只上传了附件。请直接分析附件内容并给出有价值的总结与建议，不要反问用户「需要我做什么」。"
+    parts = [effective_user_text]
     if attachments:
         parts.append("\n---\n**本轮附件**\n" + _attachment_prompt_text(attachments))
     # 把视觉模型对图片的描述拼进上下文（若有），让主模型直接基于描述回复。

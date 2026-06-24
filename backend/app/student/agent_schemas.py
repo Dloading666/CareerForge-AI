@@ -13,7 +13,7 @@ class AgentSessionCreate(BaseModel):
 
 
 class AgentMessageRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=12000)
+    content: str = Field(default="", max_length=12000)
     model_id: Optional[int] = None
     reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
     attachment_ids: list[int] = Field(default_factory=list, max_length=12)

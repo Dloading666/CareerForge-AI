@@ -459,7 +459,7 @@ class RunManager:
                 (content.strip() == AUTO_ATTACHMENT_PROMPT or not content.strip())
                 and attachments
                 and all(a.content_type.startswith("image/") for a in attachments)
-                and session.title == AUTO_ATTACHMENT_PROMPT
+                and session.title in (AUTO_ATTACHMENT_PROMPT, "新对话")
             ):
                 session.title = "图片分析"
                 db.commit()

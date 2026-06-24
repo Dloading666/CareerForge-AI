@@ -422,6 +422,8 @@ async def stream_master_message(
     db: Session = Depends(get_db),
     current=Depends(require_role("student")),
 ):
+    if not payload.content.strip() and not payload.attachment_ids:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="请输入内容或上传附件。")
     identity, _ = current
     return StreamingResponse(
         stream_master_reply(
@@ -445,7 +447,7 @@ async def stream_master_message(
 
 
 class RunStartRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=12000)
+    content: str = Field(default="", max_length=12000)
     model_id: Optional[int] = None
     reasoning_effort: str = Field(default="medium", max_length=16)
     attachment_ids: list[int] = Field(default_factory=list, max_length=12)
@@ -460,6 +462,8 @@ async def start_run(
 ):
     """启动一次后台智能体运行。立即返回 run_id，不等待完成。"""
     identity, _ = current
+    if not payload.content.strip() and not payload.attachment_ids:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="请输入内容或上传附件。")
     # P2: 先校验 session 属主，防止锁住别人的 session
     get_session_or_404(db, identity, session_id)
     try:

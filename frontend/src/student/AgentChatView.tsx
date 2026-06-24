@@ -150,6 +150,7 @@ export interface AgentChatViewProps {
 
 
 const MAX_RESUMES = 6
+const AUTO_ATTACHMENT_PROMPT = '请帮我分析上传的附件。'
 
 const reasoningOptions: { value: ReasoningEffort; label: string; desc?: string }[] = [
   { value: 'auto', label: '自动', desc: '根据任务难度智能选择' },
@@ -1261,10 +1262,10 @@ export function AgentChatView({
         ))
         setPendingAttachments([])
         setGeneratedFiles({})
-        // Restore user image attachments
+        // Restore user attachments (images + files) for display in the user bubble
         const userMsgAttachments: Record<number, AgentAttachment[]> = {}
         for (const a of history.attachments) {
-          if (a.message_id && a.content_type?.startsWith('image/') && history.messages.some((m) => m.id === a.message_id && m.role === 'user')) {
+          if (a.message_id && history.messages.some((m) => m.id === a.message_id && m.role === 'user')) {
             ;(userMsgAttachments[a.message_id] ??= []).push(a)
           }
         }
@@ -1422,7 +1423,7 @@ export function AgentChatView({
     const text = (preset ?? inputValue).trim()
     const hasAttachments = pendingAttachments.length > 0
     if (!text && !hasAttachments) return
-    const content = text || (hasAttachments ? '请帮我分析上传的附件。' : '')
+    const content = text
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
       return
@@ -1451,18 +1452,22 @@ export function AgentChatView({
     setStoreSegments([])
     streamStartRef.current = Date.now()
     const sendingAttachments = [...pendingAttachments]
+    const imageAttachments = sendingAttachments.filter((a) => a.content_type?.startsWith('image/'))
     setPendingAttachments([])
     setMessages((prev) => [
       ...prev,
       { id: optimisticId, session_id: currentSession.id, role: 'user', content, created_at: new Date().toISOString() },
     ])
-    const imageAttachments = sendingAttachments.filter((a) => a.content_type?.startsWith('image/'))
-    if (imageAttachments.length > 0) {
-      setUserMessageAttachments((prev) => ({ ...prev, [optimisticId]: imageAttachments }))
+    if (sendingAttachments.length > 0) {
+      setUserMessageAttachments((prev) => ({ ...prev, [optimisticId]: sendingAttachments }))
     }
 
     // Inform parent about session (first time or timestamp update)
-    const optimisticTitle = content.replace(/\n/g, ' ').slice(0, 32) || '新对话'
+    const optimisticTitle = text
+      ? text.replace(/\n/g, ' ').slice(0, 32)
+      : imageAttachments.length > 0
+      ? '图片分析'
+      : '附件分析'
     const sess = currentSession
     const sessionForParent: AgentChatSession = {
       ...sess,
@@ -1807,25 +1812,52 @@ export function AgentChatView({
         {!historyLoading && messages.length === 0 && emptyState}
 
         {messages.map((message, index) =>
-          message.role === 'user' ? (
-            <div key={message.id} className="message-row user">
-              {userMessageAttachments[message.id]?.length > 0 && (
-                <div className="user-image-grid">
-                  {userMessageAttachments[message.id].map((att) => {
-                    const src = typeof att.download_url === 'string' ? att.download_url : ''
-                    return (
-                      <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
-                        <img src={src} alt={att.original_name} />
-                      </div>
-                    )
-                  })}
+          message.role === 'user' ? (() => {
+            const msgAttachments = userMessageAttachments[message.id] ?? []
+            const imageAttachmentsForMessage = msgAttachments.filter((a) => a.content_type?.startsWith('image/'))
+            const fileAttachmentsForMessage = msgAttachments.filter((a) => !a.content_type?.startsWith('image/'))
+            const displayContent = (
+              message.content.trim() === AUTO_ATTACHMENT_PROMPT && msgAttachments.length > 0
+            ) ? '' : message.content
+            return (
+              <div key={message.id} className="message-row user">
+                <div className={`user-message-content${displayContent ? '' : ' image-only'}`}>
+                  {imageAttachmentsForMessage.length > 0 && (
+                    <div className="user-image-grid">
+                      {imageAttachmentsForMessage.map((att) => {
+                        const src = typeof att.download_url === 'string' ? att.download_url : ''
+                        return (
+                          <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
+                            <img src={src} alt={att.original_name} />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {fileAttachmentsForMessage.length > 0 && (
+                    <div className="user-file-grid">
+                      {fileAttachmentsForMessage.map((att) => (
+                        <a
+                          key={att.id}
+                          className="user-file-chip"
+                          href={att.download_url ?? '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                          download={att.original_name}
+                        >
+                          <IconFilePdf style={{ fontSize: 16, color: '#165DFF', flexShrink: 0 }} />
+                          <span className="user-file-chip-name">{att.original_name}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {displayContent && (
+                    <div className="message-bubble user"><MarkdownMessage content={displayContent} /></div>
+                  )}
                 </div>
-              )}
-              {message.content && (
-                <div className="message-bubble user"><MarkdownMessage content={message.content} /></div>
-              )}
-            </div>
-          ) : (
+              </div>
+            )
+          })() : (
             <AssistantMessage
               key={message.id}
               message={message}
@@ -1929,7 +1961,7 @@ export function AgentChatView({
               ? '输入新要求，会打断当前回复并继续'
               : agentType === 'interviewer'
               ? '回答面试官的问题，或输入你想练习的岗位…'
-              : '直接说你的求职需求，例如：帮我优化简历中的项目经历'
+              : '直接说你的求职需求，也可以只发照片让我分析'
           }
           disabled={modelOptions.length === 0}
         />
