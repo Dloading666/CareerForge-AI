@@ -3273,7 +3273,6 @@ textarea {
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;       /* 允许收缩，避免把右侧发送按钮挤出边界 */
-  overflow: hidden;
 }
 
 .composer-right {
