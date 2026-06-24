@@ -303,7 +303,7 @@ function createEmptyVisionDraft(): VisionDraft {
     base_url: '',
     model_name: '',
     api_key: '',
-    max_tokens: 2000,
+    max_tokens: 1024,
   }
 }
 
@@ -940,7 +940,7 @@ function renderVisionPage({
               <label>最大输出 Tokens</label>
               <Input
                 value={String(draft.max_tokens)}
-                placeholder="2000"
+                placeholder="1024"
                 onChange={(value) => {
                   const num = Number.parseInt(value, 10)
                   if (!Number.isNaN(num)) onChange({ max_tokens: num })

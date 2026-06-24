@@ -33,7 +33,7 @@ class VisionModelConfig(Base):
     # Fernet 加密后的 API Key（从不存明文）
     api_key_cipher: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     # 视觉描述输出 token 上限（与各模型 max_output 取小）
-    max_tokens: Mapped[int] = mapped_column(Integer, default=2000, nullable=False)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
