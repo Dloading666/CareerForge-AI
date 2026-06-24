@@ -1025,7 +1025,7 @@ textarea {
 /* 对话主区：包住 banner + 消息流 + 输入框，纵向布局，占据剩余宽度 */
 .student-chat-main {
   flex: 1;
-  min-width: 420px;   /* 防止被右侧预览窗压到输入框按钮错位 */
+  min-width: 520px;   /* 防止被右侧预览窗压到输入框按钮错位：需容纳 composer 两栏 */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -3271,12 +3271,17 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;       /* 允许收缩，避免把右侧发送按钮挤出边界 */
+  overflow: hidden;
 }
 
 .composer-right {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;     /* 发送按钮区永不收缩，始终完整可见 */
+  max-width: 60%;     /* 但限制最大占比，模型名过长时省略而非撑爆 */
 }
 
 /* "+" attachment button */
