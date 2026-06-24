@@ -1032,6 +1032,14 @@ textarea {
   height: 100%;
 }
 
+/* 拖拽调整侧边栏宽度时，临时禁用所有 width 过渡，避免鼠标移动有延迟感 */
+body.is-resizing .side-nav,
+body.is-resizing .resume-preview-wrap,
+body.is-resizing .module-panel,
+body.is-resizing .global-rail {
+  transition: none !important;
+}
+
 /* ── 右侧简历实时预览面板 ── */
 .resume-preview-wrap {
   position: relative;

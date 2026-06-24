@@ -1431,6 +1431,7 @@ export function AgentChatView({
     previewStartWidthRef.current = resumePreviewWidth
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    document.body.classList.add('is-resizing')
   }, [resumePreviewWidth])
 
   useEffect(() => {
@@ -1445,6 +1446,7 @@ export function AgentChatView({
       previewResizeRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      document.body.classList.remove('is-resizing')
       // 宽度持久化由父组件负责（onResumePreviewWidthChange 会更新父 state 并存 localStorage）
     }
     document.addEventListener('mousemove', onMove)

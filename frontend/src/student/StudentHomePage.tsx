@@ -150,6 +150,7 @@ export function StudentHomePage() {
     dragStartWidthRef.current = panelWidth
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    document.body.classList.add('is-resizing')
   }
 
   const handleToggleResumePreview = useCallback(() => {
@@ -179,6 +180,7 @@ export function StudentHomePage() {
       isDraggingRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      document.body.classList.remove('is-resizing')
       setPanelWidth((w) => {
         localStorage.setItem('sideNavWidth', String(w))
         return w
