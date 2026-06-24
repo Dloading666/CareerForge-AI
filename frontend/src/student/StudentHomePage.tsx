@@ -134,6 +134,15 @@ export function StudentHomePage() {
   const dragStartXRef = useRef(0)
   const dragStartWidthRef = useRef(0)
 
+  // 简历助手右侧实时预览窗：由标题栏右上角按钮控制开/关（状态提升到首页，
+  // 因为按钮在 topbar，预览窗在 AgentChatView，两者需共享开关状态）
+  const [resumePreviewVisible, setResumePreviewVisible] = useState(false)
+  const [resumePreviewWidth, setResumePreviewWidth] = useState(() =>
+    Number(localStorage.getItem('zhipei-resume-preview-width') || 420),
+  )
+  // 当前简历助手选中的工作简历 id（用于决定「预览」按钮是否显示）
+  const [resumeActiveResumeId, setResumeActiveResumeId] = useState<number | null>(null)
+
   const handleResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     isDraggingRef.current = true
@@ -142,6 +151,16 @@ export function StudentHomePage() {
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
   }
+
+  const handleToggleResumePreview = useCallback(() => {
+    setResumePreviewVisible((v) => !v)
+  }, [])
+
+  // 预览窗宽度变化时更新并持久化
+  const handleResumePreviewWidthChange = useCallback((width: number) => {
+    setResumePreviewWidth(width)
+    localStorage.setItem('zhipei-resume-preview-width', String(width))
+  }, [])
 
   // 刷新后恢复活跃 run 的 SSE 订阅
   useEffect(() => {
@@ -463,6 +482,18 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
                 </button>
               </span>
             )}
+            {activeNav === 'resume-agent' && resumeActiveResumeId != null && (
+              <button
+                type="button"
+                className={`topbar-preview-btn${resumePreviewVisible ? ' active' : ''}`}
+                onClick={handleToggleResumePreview}
+                title={resumePreviewVisible ? '收起简历预览' : '打开简历预览'}
+                aria-label={resumePreviewVisible ? '收起简历预览' : '打开简历预览'}
+              >
+                <IconFile />
+                <span>{resumePreviewVisible ? '收起预览' : '简历预览'}</span>
+              </button>
+            )}
             <AnnouncementBellDropdown />
           </div>
         </header>
@@ -483,6 +514,11 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
                 remindersDismissed={remindersDismissed}
                 onDismissReminders={() => setRemindersDismissed(true)}
                 onOpenProfile={() => { setProfileTab('profile'); setProfileModalVisible(true) }}
+                resumePreviewVisible={resumePreviewVisible}
+                resumePreviewWidth={resumePreviewWidth}
+                onResumePreviewWidthChange={handleResumePreviewWidthChange}
+                onActiveResumeIdChange={setResumeActiveResumeId}
+                onResumePreviewClose={() => setResumePreviewVisible(false)}
               />
             }
           />

@@ -1,5 +1,6 @@
 import { Input, Message, Modal, Skeleton, Tooltip } from '@arco-design/web-react'
 import {
+  IconArrowRight,
   IconAttachment,
   IconBook,
   IconBulb,
@@ -10,6 +11,7 @@ import {
   IconCode,
   IconCopy,
   IconDashboard,
+  IconDelete,
   IconDownload,
   IconEdit,
   IconExport,
@@ -35,6 +37,9 @@ import { ApiError, apiRequest, authenticatedFetch } from '../shared/api'
 import { AnnouncementBanner } from './StudentAnnouncementBar'
 import { MarkdownMessage } from '../shared/MarkdownMessage'
 import { useAuth } from '../shared/auth'
+import { getResume } from '../resume/api'
+import type { ResumeData } from '../resume/types'
+import { ResumeLivePreviewPanel } from './ResumeLivePreviewPanel'
 import { buildTimelineSegments, chatRuntimeStore, type TimelineSegment } from './chatRuntimeStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -87,6 +92,12 @@ type AgentAttachment = {
   status: string
   created_at: string
   download_url?: string | null
+}
+
+type QueuedMessage = {
+  id: number
+  content: string
+  attachments: AgentAttachment[]
 }
 
 type GeneratedFile = { attachment_id: number; download_url: string; filename: string }
@@ -144,6 +155,13 @@ export interface AgentChatViewProps {
   remindersDismissed: boolean
   onDismissReminders: () => void
   onOpenProfile?: () => void
+  /** 右侧简历实时预览：受控开关，由标题栏右上角按钮驱动 */
+  resumePreviewVisible?: boolean
+  resumePreviewWidth?: number
+  onResumePreviewWidthChange?: (width: number) => void
+  onResumePreviewClose?: () => void
+  /** 当前工作简历变化时同步给父组件（用于决定预览按钮是否显示） */
+  onActiveResumeIdChange?: (id: number | null) => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -939,8 +957,35 @@ function GeneratedFileLinks({ files }: { files: GeneratedFile[] }) {
   )
 }
 
+function MessageSuggestions({
+  suggestions,
+  onSuggestionClick,
+}: {
+  suggestions: string[]
+  onSuggestionClick: (text: string) => void
+}) {
+  if (!suggestions.length) return null
+  return (
+    <div className="message-suggestions">
+      {suggestions.map((text, i) => (
+        <button
+          key={i}
+          type="button"
+          className="message-suggestion-chip"
+          onClick={() => onSuggestionClick(text)}
+        >
+          <span>{text}</span>
+          <IconArrowRight />
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function AssistantMessage({
   message, activities, files = [], pending = false, runtimeStatus, runtimeInfo, heartbeat, streamStartMs, segments, stepsPlan,
+  suggestions,
+  onSuggestionClick,
 }: {
   message: AgentMessage
   activities: AgentActivity[]
@@ -952,6 +997,8 @@ function AssistantMessage({
   streamStartMs?: number | null
   segments?: TimelineSegment[]
   stepsPlan?: { steps: string[] } | null
+  suggestions?: string[]
+  onSuggestionClick?: (text: string) => void
 }) {
   // 流式阶段使用 store 时间线；历史消息依据持久化 activity 的
   // content_offset 重建，保证工具轨迹不会随临时流式组件卸载而消失。
@@ -996,6 +1043,9 @@ function AssistantMessage({
         )}
         <ResumeEditorLinks activities={activities} />
         <GeneratedFileLinks files={files} />
+        {!pending && suggestions && suggestions.length > 0 && onSuggestionClick && (
+          <MessageSuggestions suggestions={suggestions} onSuggestionClick={onSuggestionClick} />
+        )}
         {(pending || runtimeInfo) && (
           <RuntimeStatusline
             pending={pending}
@@ -1063,6 +1113,7 @@ type SavedSessionState = {
   storeSegments: TimelineSegment[]
   heartbeats: Record<number, { output_chars: number; phase: string }>
   stepsPlan: { steps: string[] } | null
+  messageSuggestions: Record<number, string[]>
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
@@ -1079,6 +1130,11 @@ export function AgentChatView({
   remindersDismissed,
   onDismissReminders,
   onOpenProfile,
+  resumePreviewVisible = false,
+  resumePreviewWidth = 420,
+  onResumePreviewWidthChange,
+  onResumePreviewClose,
+  onActiveResumeIdChange,
 }: AgentChatViewProps) {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -1094,6 +1150,7 @@ export function AgentChatView({
   const [heartbeats, setHeartbeats] = useState<Record<number, { output_chars: number; phase: string }>>({})
   const [storeSegments, setStoreSegments] = useState<TimelineSegment[]>([])
   const [stepsPlan, setStepsPlan] = useState<{ steps: string[] } | null>(null)
+  const [messageSuggestions, setMessageSuggestions] = useState<Record<number, string[]>>({})
   const streamStartRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
@@ -1104,9 +1161,23 @@ export function AgentChatView({
   const [pendingAttachments, setPendingAttachments] = useState<AgentAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [activeResumeId, setActiveResumeId] = useState<number | null>(null)
+  // ── 右侧简历实时预览 ──
+  // 预览的开关/宽度由父组件（标题栏右上角按钮）受控；这里只保留简历内容、加载态、刷新信号
+  const [resumePreviewData, setResumePreviewData] = useState<ResumeData | null>(null)
+  const [resumePreviewLoading, setResumePreviewLoading] = useState(false)
+  const [resumePreviewTick, setResumePreviewTick] = useState(0)
+  const previewResizeRef = useRef(false)
+  const previewStartXRef = useRef(0)
+  const previewStartWidthRef = useRef(0)
+  const lastResumeTickRef = useRef(0)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [userMessageAttachments, setUserMessageAttachments] = useState<Record<number, AgentAttachment[]>>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
+  // 待发队列：模型流式回复时，用户继续输入的消息先堆在这里，不打断当前回复
+  const [queue, setQueue] = useState<QueuedMessage[]>([])
+  const queuedIdRef = useRef(-1000)
+  const drainingRef = useRef(false)        // 防止队列自动发送重入
+  const wasStreamingRef = useRef(false)    // 记录上一帧 streaming，用于检测 true→false 转换
 
   // 新用户提示：个人档案未填写完整时弹窗。档案完善后永不弹出。
   const [profilePromptVisible, setProfilePromptVisible] = useState(false)
@@ -1178,10 +1249,6 @@ export function AgentChatView({
     onActiveSessionChange(agentSession?.id ?? null)
   }, [agentSession?.id, onActiveSessionChange])
 
-  // ── 并行对话：计算当前 session 是否正在运行 ─────────────────────────────
-  const currentSessionId = agentSession?.id ?? null
-  const isCurrentStreaming = currentSessionId != null ? chatRuntimeStore.isRunning(currentSessionId) : false
-
   // Load session when loadTrigger increments — 并行对话：切换会话时保留状态、不中断运行
   useEffect(() => {
     if (loadTrigger === 0 || !sessionToLoad) return
@@ -1198,6 +1265,7 @@ export function AgentChatView({
         storeSegments,
         heartbeats,
         stepsPlan,
+        messageSuggestions,
       })
       // 限制缓存大小：最多保留 5 个 session
       if (sessionCache.current.size > 5) {
@@ -1211,6 +1279,7 @@ export function AgentChatView({
 
     setNotice(null)
     setPendingAttachments([])
+    setQueue([])
 
     // 2. 优先从缓存恢复
     const cached = sessionCache.current.get(sessionToLoad.id)
@@ -1232,6 +1301,7 @@ export function AgentChatView({
       setStoreSegments(cached.storeSegments)
       setHeartbeats(cached.heartbeats)
       setStepsPlan(cached.stepsPlan ?? null)
+      setMessageSuggestions(cached.messageSuggestions ?? {})
       return
     }
 
@@ -1297,6 +1367,7 @@ export function AgentChatView({
       sessionCache.current.set(agentSession.id, {
         messages, activities, generatedFiles, runtimeStatuses,
         runtimeInfo, userMessageAttachments, storeSegments, heartbeats, stepsPlan,
+        messageSuggestions,
       })
     }
     setAgentSession(null)
@@ -1307,12 +1378,14 @@ export function AgentChatView({
     setHeartbeats({})
     setStoreSegments([])
     setStepsPlan(null)
+    setMessageSuggestions({})
     streamStartRef.current = null
     setPendingAttachments([])
     setGeneratedFiles({})
     setInputValue('')
     setNotice(null)
     setActiveResumeId(null)
+    setQueue([])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newChatTrigger])
 
@@ -1350,6 +1423,38 @@ export function AgentChatView({
     }
   }, [agentSession?.id])
 
+  // 右侧预览面板：拖拽调宽（宽度提升到父组件受控，松手时持久化）
+  const handlePreviewResizeDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    previewResizeRef.current = true
+    previewStartXRef.current = e.clientX
+    previewStartWidthRef.current = resumePreviewWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [resumePreviewWidth])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!previewResizeRef.current) return
+      // 右侧面板：鼠标向左拖（delta 负）宽度变大
+      const next = Math.min(720, Math.max(280, previewStartWidthRef.current - (e.clientX - previewStartXRef.current)))
+      onResumePreviewWidthChange?.(next)
+    }
+    const onUp = () => {
+      if (!previewResizeRef.current) return
+      previewResizeRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      // 宽度持久化由父组件负责（onResumePreviewWidthChange 会更新父 state 并存 localStorage）
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [onResumePreviewWidthChange])
+
   // 从 activity.completed 事件同步 activeResumeId（AI 生成/优化简历后自动绑定）
   useEffect(() => {
     for (const a of activities) {
@@ -1361,6 +1466,33 @@ export function AgentChatView({
       }
     }
   }, [activities])
+
+  // 当前工作简历变化时同步给父组件（父组件据此决定右上角「简历预览」按钮是否显示）
+  useEffect(() => {
+    onActiveResumeIdChange?.(activeResumeId)
+  }, [activeResumeId, onActiveResumeIdChange])
+
+  // 右侧简历实时预览：选中工作简历时加载；AI 改完简历（resumePreviewTick 变化）后强制刷新最新内容。
+  // 仅简历助手显示预览面板，面试官不显示。
+  useEffect(() => {
+    if (agentType !== 'resume' || activeResumeId == null) {
+      setResumePreviewData(null)
+      return
+    }
+    let cancelled = false
+    setResumePreviewLoading(true)
+    getResume(activeResumeId)
+      .then((resume) => {
+        if (!cancelled) setResumePreviewData(resume)
+      })
+      .catch(() => {
+        if (!cancelled) setResumePreviewData(null)
+      })
+      .finally(() => {
+        if (!cancelled) setResumePreviewLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [agentType, activeResumeId, resumePreviewTick])
 
 
   const ensureResumeCapacity = async () => {
@@ -1419,11 +1551,11 @@ export function AgentChatView({
     })
   }
 
-  const submitMessage = async (preset?: string) => {
-    const text = (preset ?? inputValue).trim()
-    const hasAttachments = pendingAttachments.length > 0
-    if (!text && !hasAttachments) return
-    const content = text
+  // 核心发送逻辑：创建会话（若需）+ 乐观消息 + startRun。
+  // 既供直接发送使用，也供队列自动发送使用。不在内部判断流式/打断。
+  const runSend = async (text: string, attachments: AgentAttachment[]) => {
+    const content = text.trim()
+    if (!content && attachments.length === 0) return
     if (!selectedModelId) {
       setNotice('请先选择一个可用模型。若列表为空，请管理员在模型广场开启「对学生开放」。')
       return
@@ -1432,11 +1564,6 @@ export function AgentChatView({
     let currentSession = agentSession
     try {
       if (!currentSession) currentSession = await createAgentSession()
-      if (isCurrentStreaming && currentSession.id) {
-        markCurrentAssistantStopped()
-        await chatRuntimeStore.cancelSessionRun(currentSession.id)
-        setStreaming(false)
-      }
     } catch (error) {
       setNotice(error instanceof ApiError ? error.message : '创建对话失败')
       return
@@ -1444,16 +1571,14 @@ export function AgentChatView({
 
     const optimisticId = optimisticIdRef.current
     optimisticIdRef.current -= 1
-    setInputValue('')
     setNotice(null)
     setStreaming(true)
     setRuntimeStatuses({})
     setHeartbeats({})
     setStoreSegments([])
     streamStartRef.current = Date.now()
-    const sendingAttachments = [...pendingAttachments]
+    const sendingAttachments = [...attachments]
     const imageAttachments = sendingAttachments.filter((a) => a.content_type?.startsWith('image/'))
-    setPendingAttachments([])
     setMessages((prev) => [
       ...prev,
       { id: optimisticId, session_id: currentSession.id, role: 'user', content, created_at: new Date().toISOString() },
@@ -1463,8 +1588,8 @@ export function AgentChatView({
     }
 
     // Inform parent about session (first time or timestamp update)
-    const optimisticTitle = text
-      ? text.replace(/\n/g, ' ').slice(0, 32)
+    const optimisticTitle = content
+      ? content.replace(/\n/g, ' ').slice(0, 32)
       : imageAttachments.length > 0
       ? '图片分析'
       : '附件分析'
@@ -1513,6 +1638,27 @@ export function AgentChatView({
     }
   }
 
+  const submitMessage = async (preset?: string) => {
+    const text = (preset ?? inputValue).trim()
+    const hasAttachments = pendingAttachments.length > 0
+    if (!text && !hasAttachments) return
+
+    // 流式回复中：消息进入待发队列，不打断当前回复
+    if (streaming) {
+      const id = queuedIdRef.current
+      queuedIdRef.current -= 1
+      setQueue((prev) => [...prev, { id, content: text, attachments: [...pendingAttachments] }])
+      setInputValue('')
+      setPendingAttachments([])
+      return
+    }
+
+    // 非流式：直接发送
+    setInputValue('')
+    setPendingAttachments([])
+    await runSend(text, [...pendingAttachments])
+  }
+
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -1528,6 +1674,26 @@ export function AgentChatView({
   }
 
   const stopStreaming = () => {
+    if (agentSession?.id != null) void chatRuntimeStore.cancelSessionRun(agentSession.id)
+    setStreaming(false)
+    markCurrentAssistantStopped()
+  }
+
+  // ── 待发队列操作 ───────────────────────────────────────────────────────
+  // 删除队列中的某条待发消息
+  const removeQueued = (id: number) => {
+    setQueue((prev) => prev.filter((q) => q.id !== id))
+  }
+  // 撤回到输入框：把该条内容和附件载入输入框，并从队列移除
+  const editQueued = (id: number) => {
+    const item = queue.find((q) => q.id === id)
+    if (!item) return
+    setInputValue(item.content)
+    setPendingAttachments((prev) => [...item.attachments, ...prev])
+    setQueue((prev) => prev.filter((q) => q.id !== id))
+  }
+  // 立即打断当前回复，触发队列自动发送
+  const sendQueueNow = () => {
     if (agentSession?.id != null) void chatRuntimeStore.cancelSessionRun(agentSession.id)
     setStreaming(false)
     markCurrentAssistantStopped()
@@ -1657,6 +1823,17 @@ export function AgentChatView({
     // Sync steps plan (P2.2: 进度预告，随 run 生命周期存在)
     setStepsPlan(storeState.stepsPlan ?? null)
 
+    // Sync message suggestions
+    if (storeState.messageSuggestions.size > 0) {
+      setMessageSuggestions((prev) => {
+        const merged = { ...prev }
+        for (const [msgId, suggs] of storeState.messageSuggestions) {
+          merged[msgId] = suggs
+        }
+        return merged
+      })
+    }
+
     // Sync runtime info
     if (storeState.runtimeInfo) {
       setRuntimeInfo((prev) => ({ ...prev, [storeState.runtimeInfo!.message_id]: storeState.runtimeInfo! }))
@@ -1720,7 +1897,28 @@ export function AgentChatView({
     for (const [msgId, atts] of storeState.userAttachments) {
       setUserMessageAttachments((prev) => ({ ...prev, [msgId]: atts as AgentAttachment[] }))
     }
+
+    // Sync 简历实时刷新信号：AI 改完简历后 store.resumeSignal.tick 自增，转发到本地 state
+    if (storeState.resumeSignal && storeState.resumeSignal.tick !== lastResumeTickRef.current) {
+      lastResumeTickRef.current = storeState.resumeSignal.tick
+      setResumePreviewTick(storeState.resumeSignal.tick)
+    }
   }, [storeTick, agentSession?.id])
+
+  // ── 队列自动发送：当前回复结束（streaming true→false）且队列非空时，发送队首 ──
+  useEffect(() => {
+    // 检测 streaming 从 true→false 的下降沿
+    const wasStreaming = wasStreamingRef.current
+    wasStreamingRef.current = streaming
+    if (wasStreaming && !streaming && queue.length > 0 && !drainingRef.current) {
+      drainingRef.current = true
+      const [first, ...rest] = queue
+      setQueue(rest)
+      void runSend(first.content, first.attachments).finally(() => {
+        drainingRef.current = false
+      })
+    }
+  }, [streaming, queue])
 
   // ── Render ──
 
@@ -1776,6 +1974,7 @@ export function AgentChatView({
 
   return (
     <main className="page-content student-chat-page">
+      <div className="student-chat-main">
       {!remindersDismissed && todayEvents.length > 0 && (
         <div className="agent-reminder-banner">
           <IconNotification style={{ fontSize: 16, flexShrink: 0 }} />
@@ -1870,6 +2069,8 @@ export function AgentChatView({
               streamStartMs={streamStartRef.current}
               segments={index === messages.length - 1 ? storeSegments : undefined}
               stepsPlan={index === messages.length - 1 ? stepsPlan : undefined}
+              suggestions={messageSuggestions[message.id]}
+              onSuggestionClick={(text) => void submitMessage(text)}
             />
           ),
         )}
@@ -1884,6 +2085,8 @@ export function AgentChatView({
             stepsPlan={stepsPlan}
             pending
             segments={storeSegments}
+            suggestions={undefined}
+            onSuggestionClick={undefined}
           />
         )}
       </div>
@@ -1912,6 +2115,69 @@ export function AgentChatView({
           <div className="drop-overlay">
             <IconAttachment style={{ fontSize: 28 }} />
             <span>松开以上传附件</span>
+          </div>
+        )}
+
+        {/* 待发队列 - 流式回复时用户继续输入的消息堆在这里 */}
+        {queue.length > 0 && (
+          <div className="composer-queue">
+            <div className="composer-queue-list">
+              {queue.map((item) => (
+                <div key={item.id} className="queue-card">
+                  {/* 拖拽点 */}
+                  <div className="queue-card-drag">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <circle cx="2" cy="2" r="1.2" fill="currentColor" />
+                      <circle cx="6" cy="2" r="1.2" fill="currentColor" />
+                      <circle cx="10" cy="2" r="1.2" fill="currentColor" />
+                      <circle cx="2" cy="6" r="1.2" fill="currentColor" />
+                      <circle cx="6" cy="6" r="1.2" fill="currentColor" />
+                      <circle cx="10" cy="6" r="1.2" fill="currentColor" />
+                      <circle cx="2" cy="10" r="1.2" fill="currentColor" />
+                      <circle cx="6" cy="10" r="1.2" fill="currentColor" />
+                      <circle cx="10" cy="10" r="1.2" fill="currentColor" />
+                    </svg>
+                  </div>
+                  {/* 内容 */}
+                  <div className="queue-card-body">
+                    {item.content
+                      ? <span className="queue-card-text">{item.content}</span>
+                      : <span className="queue-card-text empty">（仅附件）</span>}
+                    {item.attachments.length > 0 && (
+                      <span className="queue-card-atts">
+                        {item.attachments.filter((a) => a.content_type?.startsWith('image/')).length > 0 && (
+                          <span className="queue-card-att-badge" title="含图片">
+                            <IconImage /> {item.attachments.filter((a) => a.content_type?.startsWith('image/')).length}
+                          </span>
+                        )}
+                        {item.attachments.filter((a) => !a.content_type?.startsWith('image/')).length > 0 && (
+                          <span className="queue-card-att-badge" title="含文件">
+                            <IconFile /> {item.attachments.filter((a) => !a.content_type?.startsWith('image/')).length}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {/* 操作按钮 - 右上角 */}
+                  <div className="queue-card-actions">
+                    <Tooltip content="立即发送" position="top">
+                      <button type="button" aria-label="立即发送" onClick={() => { sendQueueNow() }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="撤回编辑" position="top">
+                      <button type="button" aria-label="撤回编辑" onClick={() => editQueued(item.id)}><IconEdit /></button>
+                    </Tooltip>
+                    <Tooltip content="删除" position="top">
+                      <button type="button" aria-label="删除" onClick={() => removeQueued(item.id)}><IconDelete /></button>
+                    </Tooltip>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1958,7 +2224,7 @@ export function AgentChatView({
           autoSize={{ minRows: 1, maxRows: 8 }}
           placeholder={
             streaming
-              ? '输入新要求，会打断当前回复并继续'
+              ? '继续输入会排队，等当前回复后自动发送'
               : agentType === 'interviewer'
               ? '回答面试官的问题，或输入你想练习的岗位…'
               : '直接说你的求职需求，也可以只发照片让我分析'
@@ -2014,7 +2280,7 @@ export function AgentChatView({
                 className="composer-send-btn"
                 disabled={(!inputValue.trim() && pendingAttachments.length === 0) || !selectedModelId}
                 onClick={() => void submitMessage()}
-                title={streaming ? '打断当前回复并发送新要求' : undefined}
+                title={streaming ? '加入待发队列，等当前回复后自动发送' : undefined}
               >
                 <IconSend />
               </button>
@@ -2022,6 +2288,24 @@ export function AgentChatView({
           </div>
         </div>
       </div>
+      </div>
+
+      {/* 右侧简历实时预览：由标题栏右上角「简历预览」按钮控制开关，仅简历助手且有工作简历时生效 */}
+      {agentType === 'resume' && activeResumeId != null && resumePreviewVisible && (
+        <aside
+          className="resume-preview-wrap"
+          style={{ width: resumePreviewWidth }}
+        >
+          <div className="resume-preview-resize-handle" onMouseDown={handlePreviewResizeDown} />
+          <ResumeLivePreviewPanel
+            resume={resumePreviewData}
+            loading={resumePreviewLoading}
+            resumeTitle={resumePreviewData?.title ?? ''}
+            onOpenEditor={() => navigate(`/student/resumes/${activeResumeId}`)}
+            onClose={() => onResumePreviewClose?.()}
+          />
+        </aside>
+      )}
 
       {lightboxImage && <ImageLightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />}
 

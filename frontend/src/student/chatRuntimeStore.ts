@@ -174,6 +174,9 @@ export type RunState = {
   // 时间线分段
   segments: TimelineSegment[]
 
+  // 简历实时刷新信号：AI 改完简历后自增，驱动右侧预览窗重新拉取最新内容
+  resumeSignal: { resumeId: number; tick: number } | null
+
   // 附件/文件
   generatedFiles: Map<number, GeneratedFile[]>
   userAttachments: Map<number, unknown[]>
@@ -184,6 +187,9 @@ export type RunState = {
 
   // 错误
   error: string | null
+
+  // 对话建议：message_id -> suggestions
+  messageSuggestions: Map<number, string[]>
 }
 
 type Listener = () => void
@@ -320,11 +326,13 @@ class ChatRuntimeStore {
       stepsPlan: null,
       activities: [],
       segments: [],
+      resumeSignal: null,
       generatedFiles: new Map(),
       userAttachments: new Map(),
       streamStartMs: null,
       lastSeq: 0,
       error: null,
+      messageSuggestions: new Map(),
     }
   }
 
@@ -666,7 +674,22 @@ class ChatRuntimeStore {
 
         const segments = buildTimelineSegments(s.assistantContent, activities)
 
-        return { ...s, activities, segments }
+        // 简历实时刷新信号：AI 完成「生成/优化/更新简历」工具且携带 resume_id 时，
+        // 自增 tick 驱动右侧预览窗重新拉取最新简历内容（即使 resume_id 没变也能刷新）
+        let resumeSignal = s.resumeSignal
+        if (
+          activity.status === 'completed'
+          && (activity.name === 'generate_resume_data'
+            || activity.name === 'optimize_resume_data'
+            || activity.name === 'update_resume_data')
+        ) {
+          const rid = Number(activity.detail?.resume_id)
+          if (Number.isFinite(rid) && rid > 0) {
+            resumeSignal = { resumeId: rid, tick: (s.resumeSignal?.tick ?? 0) + 1 }
+          }
+        }
+
+        return { ...s, activities, segments, resumeSignal }
       })
       return
     }
@@ -766,6 +789,17 @@ class ChatRuntimeStore {
 
     if (event === 'message.completed') {
       this.updateState(sessionId, (s) => ({ ...s, runtimeStatus: null }))
+      return
+    }
+
+    if (event === 'message.suggestions') {
+      const messageId = Number(data.message_id)
+      const suggestions = Array.isArray(data.suggestions) ? data.suggestions : []
+      this.updateState(sessionId, (s) => {
+        const newMap = new Map(s.messageSuggestions)
+        newMap.set(messageId, suggestions)
+        return { ...s, messageSuggestions: newMap }
+      })
       return
     }
 
