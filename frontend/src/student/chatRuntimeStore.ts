@@ -145,7 +145,7 @@ function categorizeActivity(name: string, kind: string): string {
   if (name === 'web_search' || name === 'read_webpage' || name === 'analyze_jd_match'
       || kind === 'job' || kind === 'knowledge') return '搜索'
   if (name === 'generate_resume_data' || name === 'optimize_resume_data'
-      || name === 'update_resume_data' || name === 'export_resume_pdf') return '简历操作'
+      || name === 'update_resume_data' || name === 'apply_resume_patch' || name === 'export_resume_pdf') return '简历操作'
   if (name.startsWith('skill__') || kind === 'skill' || kind === 'resume_skill') return '调用技能'
   return '处理'
 }
@@ -681,7 +681,8 @@ class ChatRuntimeStore {
           activity.status === 'completed'
           && (activity.name === 'generate_resume_data'
             || activity.name === 'optimize_resume_data'
-            || activity.name === 'update_resume_data')
+            || activity.name === 'update_resume_data'
+            || activity.name === 'apply_resume_patch')
         ) {
           const rid = Number(activity.detail?.resume_id)
           if (Number.isFinite(rid) && rid > 0) {

@@ -11,6 +11,7 @@ import type {
 } from '../types'
 import { RESUME_PHOTO_HEIGHT, RESUME_PHOTO_WIDTH } from '../constants'
 import { richTextToInlineBlocks, type RichInlineBlock } from '../utils/content'
+import { formatResumeDateRange, formatResumeDateText } from '../utils/dateFormat'
 
 export const TEMPLATE_REGISTRY: ResumeTemplateConfig[] = [
   {
@@ -173,21 +174,21 @@ export function buildTemplateViewModel(resume: ResumeData): TemplateViewModel {
       itemId: item.id,
       title: item.school || '学校',
       subtitle: [item.major, item.degree, item.gpa ? `GPA ${item.gpa}` : ''].filter(Boolean).join(' · '),
-      meta: [item.startDate, item.endDate].filter(Boolean).join(' - '),
+      meta: formatResumeDateRange(item.startDate, item.endDate),
       blocks: richTextToInlineBlocks(item.description ?? ''),
     })),
     experience: mapItems(resume.experience, (item) => ({
       itemId: item.id,
       title: item.company || '公司',
       subtitle: item.position,
-      meta: item.date,
+      meta: formatResumeDateText(item.date),
       blocks: richTextToInlineBlocks(item.details),
     })),
     projects: mapItems(resume.projects, (item) => ({
       itemId: item.id,
       title: item.name || '项目',
       subtitle: item.role,
-      meta: item.date,
+      meta: formatResumeDateText(item.date),
       blocks: richTextToInlineBlocks(item.description),
     })),
     selfEvaluation: richTextToInlineBlocks(resume.selfEvaluationContent),

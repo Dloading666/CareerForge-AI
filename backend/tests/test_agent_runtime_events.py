@@ -11,6 +11,7 @@ from app.auth.models import StudentUser
 from app.auth.service import AuthIdentity
 from app.infra.db import Base
 from app.student import agent_runtime
+from app.student.agent_models import StudentAgentMessage, StudentAgentSession
 from app.student.profile_details_models import (
     StudentEducation,
     StudentProject,
@@ -150,6 +151,10 @@ class AgentRuntimeEventTests(unittest.IsolatedAsyncioTestCase):
             agent_runtime._tool_start_label(tools["update_resume_data"], {}),
             "正在更改简历…",
         )
+        self.assertEqual(
+            agent_runtime._tool_start_label(tools["apply_resume_patch"], {}),
+            "正在修改并检查简历…",
+        )
 
     def test_builtin_resume_tailor_skill_is_always_available_and_trusted(self):
         db = SimpleNamespace()
@@ -270,6 +275,151 @@ class AgentRuntimeEventTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result_bad["fact_validation"]["passed"])
             # 不应产生新简历行
             self.assertNotIn("resume_id", result_bad)
+
+        engine.dispose()
+
+    async def test_resume_patch_flow_reads_then_reviews_before_reply(self):
+        """体验评测：明确修改时应先读当前简历，再修改并 review，最后才回复用户。"""
+        engine = create_engine("sqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, future=True)
+        identity = AuthIdentity(user_id=1, role="student", tenant_id=0)
+
+        with session_local() as db:
+            db.add(
+                StudentUser(
+                    id=1,
+                    tenant_id=0,
+                    account="student@example.com",
+                    email="student@example.com",
+                    name="测试同学",
+                    phone="13800138000",
+                    college="测试大学",
+                    major="软件工程",
+                    personal_advantages="擅长前后端协作",
+                )
+            )
+            db.add(StudentSkill(tenant_id=0, student_id=1, name="Python", level=4))
+            resume = StudentResume(
+                tenant_id=0,
+                student_id=1,
+                title="测试简历",
+                template_id="classic",
+                data_json=json.dumps(
+                    {
+                        "basic": {"name": "测试同学"},
+                        "skillContent": "<ul><li>Python</li></ul>",
+                        "selfEvaluationContent": "<p>认真负责。</p>",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(
+                tenant_id=0,
+                student_id=1,
+                title="测试会话",
+                agent_type="resume",
+                active_resume_id=resume.id,
+            )
+            user_message = StudentAgentMessage(session_id=1, role="user", content="帮我把自我评价改得更专业一点")
+            assistant_message = StudentAgentMessage(session_id=1, role="assistant", content="")
+            db.add(session)
+            db.flush()
+            user_message.session_id = session.id
+            assistant_message.session_id = session.id
+            db.add_all([user_message, assistant_message])
+            db.commit()
+            db.refresh(session)
+            db.refresh(user_message)
+            db.refresh(assistant_message)
+
+            calls = []
+            patch_args = {
+                "resume_id": resume.id,
+                "base_updated_at": resume.updated_at.isoformat(),
+                "intent_summary": "把自我评价改得更专业",
+                "patches": [
+                    {
+                        "action": "rewrite",
+                        "section": "self_evaluation",
+                        "value": "具备软件工程基础和 Python 实践经验，能够理解需求并完成开发落地。\n重视协作沟通和代码质量，适合参与前后端协作项目。",
+                    }
+                ],
+            }
+
+            async def fake_stream(*_args, **_kwargs):
+                idx = len(calls)
+                calls.append(idx)
+                if idx == 0:
+                    yield "final", {
+                        "content": "",
+                        "tool_calls": [{"id": "read", "name": "read_resume", "arguments": "{}"}],
+                        "finish_reason": "tool_calls",
+                        "usage": {},
+                    }
+                elif idx == 1:
+                    yield "final", {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "patch",
+                                "name": "apply_resume_patch",
+                                "arguments": json.dumps(patch_args, ensure_ascii=False),
+                            }
+                        ],
+                        "finish_reason": "tool_calls",
+                        "usage": {},
+                    }
+                else:
+                    reply = "已帮你改好，并完成 review。主要调整了自我评价，点击下方按钮查看简历。"
+                    yield "delta", reply
+                    yield "final", {"content": reply, "tool_calls": [], "finish_reason": "stop", "usage": {}}
+
+            tools = agent_runtime.assemble_active_tools(db, identity)
+            registry = {tool.name: tool for tool in tools}
+            with patch.object(agent_runtime, "_stream_llm_turn", fake_stream):
+                events = [
+                    event
+                    async for event in agent_runtime.run_agent_loop(
+                        db,
+                        identity,
+                        session,
+                        user_message,
+                        assistant_message,
+                        SimpleNamespace(display_name="测试模型", model_identifier="test-model"),
+                        [{"role": "user", "content": user_message.content}],
+                        tools,
+                        registry,
+                        [],
+                        "medium",
+                        5,
+                    )
+                ]
+
+            completed_activities = [payload for name, payload in events if name == "activity.completed"]
+            self.assertEqual([a["name"] for a in completed_activities], ["read_resume", "apply_resume_patch"])
+            patch_activity = completed_activities[1]
+            self.assertTrue(patch_activity["detail"]["review_passed"])
+            self.assertIn("已重新读取修改后的简历", patch_activity["detail"]["review"]["checks"])
+            patch_done_index = next(
+                idx
+                for idx, (name, payload) in enumerate(events)
+                if name == "activity.completed" and payload["name"] == "apply_resume_patch"
+            )
+            first_delta_index = next(idx for idx, (name, _) in enumerate(events) if name == "message.delta")
+            self.assertLess(patch_done_index, first_delta_index, "应先完成修改和 review，再向用户回复完成")
+            row = db.get(StudentResume, resume.id)
+            self.assertIn("完成开发落地", row.data_json)
+            user_reply = "".join(str(payload.get("delta", "")) for name, payload in events if name == "message.delta")
+            self.assertNotRegex(user_reply, r"https?://|/student/resumes/")
+            self.assertNotRegex(
+                agent_runtime._tool_result_for_model(patch_activity["detail"]),
+                r"https?://|/student/resumes/",
+                "回灌给模型的工具结果不应诱导它在正文里输出链接",
+            )
 
         engine.dispose()
 

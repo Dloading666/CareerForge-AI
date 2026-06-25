@@ -36,6 +36,7 @@ from app.student.agent_runtime import (
     _generate_resume_data_tool,
     _optimize_resume_data_tool,
     _update_resume_data_tool,
+    _apply_resume_patch_tool,
     _analyze_jd_match_tool,
     _read_resume_tool,
     _query_student_profile,
@@ -665,6 +666,255 @@ class TestUpdateResumeEval(unittest.TestCase):
             result = _update_resume_data_tool(db, identity, args, evidence_pool=pool, session=session)
             self.assertEqual(result["status"], "failed", f"版本冲突应被拦截: {result}")
             self.assertIn("version", result.get("error_code", ""), f"应为版本冲突: {result}")
+
+    def test_apply_resume_patch_rewrites_self_evaluation_and_reviews(self):
+        """补丁式修改应保存、review 通过，并返回撤销快照。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps({
+                    "basic": {"name": "李明"},
+                    "skillContent": "<ul><li>Python</li><li>TypeScript</li></ul>",
+                    "selfEvaluationContent": "<p>认真负责，学习能力强。</p>",
+                    "experience": [{
+                        "id": "exp-1", "company": "腾讯科技", "position": "前端开发实习生",
+                        "date": "2024-06 - 2024-12",
+                        "details": "<ul><li>参与微信小程序重构，QPS 提升 30%</li></ul>",
+                        "visible": True,
+                    }],
+                    "projects": [{
+                        "id": "proj-1", "name": "智能简历助手", "role": "参与",
+                        "date": "2024-03 - 2024-06",
+                        "description": "<ul><li>基于 Python 和 FastAPI 搭建后端服务</li></ul>",
+                        "visible": True,
+                    }],
+                }, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(
+                tenant_id=0, student_id=1, title="测试会话",
+                agent_type="resume", active_resume_id=resume.id,
+            )
+            db.add(session)
+            db.commit()
+            pool = SessionEvidencePool()
+            args = {
+                "resume_id": resume.id,
+                "base_updated_at": resume.updated_at.isoformat(),
+                "intent_summary": "改写自我评价",
+                "patches": [{
+                    "action": "rewrite",
+                    "section": "self_evaluation",
+                    "value": "具备前端开发与后端服务实践经验，能围绕业务目标完成开发和优化。\n重视代码质量和协作沟通，能够快速理解需求并推进落地。",
+                }],
+            }
+            result = _apply_resume_patch_tool(db, identity, args, evidence_pool=pool, session=session)
+            self.assertEqual(result["status"], "completed", f"补丁修改应成功: {result}")
+            self.assertTrue(result.get("review_passed"), f"应完成 review: {result}")
+            self.assertIn("revision_id", result, "应返回 revision_id 用于撤销")
+            row = db.get(StudentResume, resume.id)
+            self.assertIn("前端开发与后端服务实践经验", row.data_json)
+
+    def test_apply_resume_patch_blocks_fabricated_company(self):
+        """新增无来源公司应被 review 拦截，且不保存。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps({"basic": {"name": "李明"}, "experience": []}, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(tenant_id=0, student_id=1, title="测试会话", agent_type="resume", active_resume_id=resume.id)
+            db.add(session)
+            db.commit()
+            result = _apply_resume_patch_tool(db, identity, {
+                "resume_id": resume.id,
+                "patches": [{
+                    "action": "add_item",
+                    "section": "experience",
+                    "value": {
+                        "company": "字节跳动",
+                        "position": "后端实习生",
+                        "date": "2024-06 - 2024-12",
+                        "details": "开发推荐系统",
+                    },
+                }],
+            }, evidence_pool=SessionEvidencePool(), session=session)
+            self.assertEqual(result["status"], "failed", f"无来源公司应失败: {result}")
+            row = db.get(StudentResume, resume.id)
+            self.assertNotIn("字节跳动", row.data_json)
+
+    def test_apply_resume_patch_blocks_role_escalation(self):
+        """参与不能被补丁式修改夸大成主导。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps({
+                    "basic": {"name": "李明"},
+                    "projects": [{
+                        "id": "proj-1", "name": "智能简历助手", "role": "参与",
+                        "date": "2024-03 - 2024-06",
+                        "description": "<ul><li>基于 Python 和 FastAPI 搭建后端服务</li></ul>",
+                        "visible": True,
+                    }],
+                }, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(tenant_id=0, student_id=1, title="测试会话", agent_type="resume", active_resume_id=resume.id)
+            db.add(session)
+            db.commit()
+            result = _apply_resume_patch_tool(db, identity, {
+                "resume_id": resume.id,
+                "patches": [{
+                    "action": "update_item",
+                    "section": "projects",
+                    "target_index": 1,
+                    "fields": {"role": "主导", "description": "主导项目架构设计\n实现核心模块"},
+                }],
+            }, evidence_pool=SessionEvidencePool(), session=session)
+            self.assertEqual(result["status"], "failed", f"角色夸大应失败: {result}")
+            row = db.get(StudentResume, resume.id)
+            self.assertIn('"role": "参与"', row.data_json)
+
+    def test_apply_resume_patch_blocks_unbacked_metric(self):
+        """新增数字成果必须来自原简历或用户本轮明确说明。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps({
+                    "basic": {"name": "李明"},
+                    "experience": [{
+                        "id": "exp-1", "company": "腾讯科技", "position": "前端开发实习生",
+                        "date": "2024-06 - 2024-12",
+                        "details": "<ul><li>参与微信小程序重构，QPS 提升 30%</li></ul>",
+                        "visible": True,
+                    }],
+                }, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(tenant_id=0, student_id=1, title="测试会话", agent_type="resume", active_resume_id=resume.id)
+            db.add(session)
+            db.commit()
+            result = _apply_resume_patch_tool(db, identity, {
+                "resume_id": resume.id,
+                "patches": [{
+                    "action": "update_item",
+                    "section": "experience",
+                    "target_index": 1,
+                    "fields": {"details": "优化微信小程序接口性能，QPS 提升 300%"},
+                }],
+            }, evidence_pool=SessionEvidencePool(), session=session)
+            self.assertEqual(result["status"], "failed", f"无来源数字应失败: {result}")
+            row = db.get(StudentResume, resume.id)
+            self.assertNotIn("300%", row.data_json)
+
+    def test_apply_resume_patch_success_payload_feels_comfortable(self):
+        """成功结果应让用户安心：说明已 review、能撤销，不暴露内部词或链接。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps({
+                    "basic": {"name": "李明"},
+                    "skillContent": "<ul><li>Python</li></ul>",
+                    "selfEvaluationContent": "<p>认真负责。</p>",
+                }, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(tenant_id=0, student_id=1, title="测试会话", agent_type="resume", active_resume_id=resume.id)
+            db.add(session)
+            db.commit()
+            result = _apply_resume_patch_tool(db, identity, {
+                "resume_id": resume.id,
+                "base_updated_at": resume.updated_at.isoformat(),
+                "patches": [{
+                    "action": "rewrite",
+                    "section": "self_evaluation",
+                    "value": "具备 Python 实践经验，能够理解需求并完成开发落地。\n重视协作沟通和代码质量，能持续推进任务完成。",
+                }],
+            }, evidence_pool=SessionEvidencePool(), session=session)
+            self.assertEqual(result["status"], "completed", f"应成功: {result}")
+            self.assertTrue(result.get("review_passed"))
+            self.assertTrue(result.get("open_resume_editor"))
+            self.assertIn("review", result.get("summary", "").lower())
+            self.assertIn("revision_id", result)
+            visible_blob = json.dumps({
+                "summary": result.get("summary"),
+                "changes": result.get("changes"),
+                "review": result.get("review"),
+            }, ensure_ascii=False).lower()
+            for forbidden in ("apply_resume_patch", "read_resume", "fact_guard", "harness", "tool_call", "api"):
+                self.assertNotIn(forbidden, visible_blob)
+            self.assertNotRegex(visible_blob, r"https?://|/student/resumes/")
+            self.assertLessEqual(len(result.get("changes", {}).get("field_changes", [])), 4)
+
+    def test_apply_resume_patch_failure_is_comfortable_and_non_mutating(self):
+        """失败时应暂停保存、说人话，并保持原简历不被污染。"""
+        with self.Session() as db:
+            _seed_student(db)
+            identity = _identity()
+            original_doc = {
+                "basic": {"name": "李明"},
+                "experience": [{
+                    "id": "exp-1",
+                    "company": "腾讯科技",
+                    "position": "前端开发实习生",
+                    "date": "2024-06 - 2024-12",
+                    "details": "<ul><li>参与微信小程序重构，QPS 提升 30%</li></ul>",
+                    "visible": True,
+                }],
+            }
+            resume = StudentResume(
+                tenant_id=0, student_id=1,
+                title="我的简历", template_id="classic",
+                data_json=json.dumps(original_doc, ensure_ascii=False),
+            )
+            db.add(resume)
+            db.commit()
+            db.refresh(resume)
+            session = StudentAgentSession(tenant_id=0, student_id=1, title="测试会话", agent_type="resume", active_resume_id=resume.id)
+            db.add(session)
+            db.commit()
+            result = _apply_resume_patch_tool(db, identity, {
+                "resume_id": resume.id,
+                "patches": [{
+                    "action": "update_item",
+                    "section": "experience",
+                    "target_index": 1,
+                    "fields": {"details": "优化微信小程序接口性能，QPS 提升 300%"},
+                }],
+            }, evidence_pool=SessionEvidencePool(), session=session)
+            self.assertEqual(result["status"], "failed", f"应暂停保存: {result}")
+            self.assertIn("display_summary", result)
+            self.assertRegex(result["display_summary"], r"(信息对不上|确认|恢复|修改)")
+            visible_text = (result.get("summary", "") + result.get("display_summary", "")).lower()
+            for forbidden in ("fact_guard", "harness", "tool_call", "traceback", "exception"):
+                self.assertNotIn(forbidden, visible_text)
+            row = db.get(StudentResume, resume.id)
+            self.assertEqual(json.loads(row.data_json), original_doc)
 
 
 # ══════════════════════════════════════════════════════════════════════════

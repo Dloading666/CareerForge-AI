@@ -44,8 +44,9 @@ import { useAuth } from '../shared/auth'
 import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
 
-// 简历事实源中的日期统一精确到月（YYYY-MM），不保留具体日期。
+// 简历事实源内部仍统一到月（YYYY-MM），页面给用户展示为更适合简历的 YYYY.MM。
 const MONTH_FORMAT = 'YYYY-MM'
+const MONTH_PICKER_FORMAT = 'YYYY.MM'
 const RANGE_SEPARATOR = ' ~ '
 
 function toDate(value: string | null | undefined): Date | undefined {
@@ -60,9 +61,16 @@ function normalizeMonth(value: string | null | undefined): string {
   if (!value) return ''
   const raw = value.trim()
   if (!raw || isPresentFlag(raw)) return raw
-  const match = raw.match(/(\d{4})[.\-/年。．](\d{1,2})/)
+  const compact = raw.match(/^(\d{4})(\d{2})$/)
+  if (compact) {
+    const month = Number(compact[2])
+    return month >= 1 && month <= 12 ? `${compact[1]}-${compact[2]}` : raw
+  }
+  const match = raw.match(/(\d{4})[.\-/年。．]\s*(\d{1,2})(?!\d)/)
   if (!match) return raw
-  return `${match[1]}-${match[2].padStart(2, '0')}`
+  const month = Number(match[2])
+  if (month < 1 || month > 12) return raw
+  return `${match[1]}-${String(month).padStart(2, '0')}`
 }
 
 function normalizeMonthOrPresent(value: string | null | undefined): string {
@@ -107,9 +115,74 @@ function splitDateRange(value: string | null | undefined): [string, string] {
   if (!value) return ['', '']
   const v = value.trim()
   if (!v) return ['', '']
+  const matches = [...v.matchAll(/(?:\b(\d{4})(\d{2})\b|\b(\d{4})\s*[.\-/年。．]\s*(\d{1,2})(?!\d))/g)]
+  const monthTokens = matches
+    .map((match) => normalizeMonth(match[0]))
+    .filter((token) => /^\d{4}-\d{2}$/.test(token))
+  if (monthTokens.length >= 2) {
+    return [monthTokens[0], monthTokens[1]]
+  }
+  if (monthTokens.length === 1) {
+    return [monthTokens[0], isPresentFlag(v) ? '至今' : '']
+  }
   const sepIdx = v.indexOf(RANGE_SEPARATOR)
   if (sepIdx === -1) return [normalizeMonth(v), '']
   return [normalizeMonth(v.slice(0, sepIdx).trim()), normalizeMonth(v.slice(sepIdx + RANGE_SEPARATOR.length).trim())]
+}
+
+function MonthPickerInput({
+  value,
+  onChange,
+  placeholder,
+  disabled = false,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  disabled?: boolean
+}) {
+  return (
+    <DatePicker.MonthPicker
+      format={MONTH_PICKER_FORMAT}
+      value={toDate(value)}
+      onChange={(_dateString, date) => onChange(formatMonth(date))}
+      placeholder={placeholder}
+      allowClear
+      disabled={disabled}
+      style={{ flex: 1, minWidth: 0 }}
+    />
+  )
+}
+
+function MonthRangeFields({
+  start,
+  end,
+  onChange,
+  allowPresent = false,
+}: {
+  start: string
+  end: string
+  onChange: (start: string, end: string) => void
+  allowPresent?: boolean
+}) {
+  const endIsPresent = isPresentFlag(end)
+  return (
+    <div className="profile-date-range-inputs">
+      <MonthPickerInput value={start} onChange={(next) => onChange(next, end)} placeholder="开始月份" />
+      <span>至</span>
+      <MonthPickerInput
+        value={end}
+        onChange={(next) => onChange(start, next)}
+        placeholder="结束月份"
+        disabled={endIsPresent}
+      />
+      {allowPresent && (
+        <Checkbox checked={endIsPresent} onChange={(checked) => onChange(start, checked ? '至今' : '')}>
+          至今
+        </Checkbox>
+      )}
+    </div>
+  )
 }
 
 // ---------- Types ----------
@@ -1647,25 +1720,13 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                             {(() => {
                               const [startDate, endDate] = splitDateRange(item.duration)
                               return (
-                                <div className="profile-date-range-inputs">
-                                  <Input
-                                    value={startDate}
-                                    onChange={(value) =>
-                                      update({ ...item, duration: joinDateRange(value, endDate) })
-                                    }
-                                    placeholder="开始 YYYY-MM"
-                                    maxLength={7}
-                                  />
-                                  <span>至</span>
-                                  <Input
-                                    value={endDate}
-                                    onChange={(value) =>
-                                      update({ ...item, duration: joinDateRange(startDate, value) })
-                                    }
-                                    placeholder="结束 YYYY-MM"
-                                    maxLength={7}
-                                  />
-                                </div>
+                                <MonthRangeFields
+                                  start={startDate}
+                                  end={endDate}
+                                  onChange={(start, end) =>
+                                    update({ ...item, duration: joinDateRange(start, end) })
+                                  }
+                                />
                               )
                             })()}
                           </FieldRow>
@@ -1728,7 +1789,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           </FieldRow>
                           <FieldRow label="开始月份">
                             <DatePicker.MonthPicker
-                              format={MONTH_FORMAT}
+                              format={MONTH_PICKER_FORMAT}
                               value={toDate(item.start_date)}
                               onChange={(_dateString, date) =>
                                 update({ ...item, start_date: formatMonth(date) })
@@ -1741,7 +1802,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           <FieldRow label="结束月份">
                             <div className="profile-date-with-present">
                               <DatePicker.MonthPicker
-                                format={MONTH_FORMAT}
+                                format={MONTH_PICKER_FORMAT}
                                 value={toDate(item.end_date)}
                                 onChange={(_dateString, date) =>
                                   update({ ...item, end_date: formatMonth(date) })
@@ -1813,7 +1874,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           </FieldRow>
                           <FieldRow label="开始月份">
                             <DatePicker.MonthPicker
-                              format={MONTH_FORMAT}
+                              format={MONTH_PICKER_FORMAT}
                               value={toDate(item.start_date)}
                               onChange={(_dateString, date) =>
                                 update({ ...item, start_date: formatMonth(date) })
@@ -1826,7 +1887,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                           <FieldRow label="结束月份">
                             <div className="profile-date-with-present">
                               <DatePicker.MonthPicker
-                                format={MONTH_FORMAT}
+                                format={MONTH_PICKER_FORMAT}
                                 value={toDate(item.end_date)}
                                 onChange={(_dateString, date) =>
                                   update({ ...item, end_date: formatMonth(date) })
@@ -2572,7 +2633,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                       </FieldRow>
                       <FieldRow label="开始月份">
                         <DatePicker.MonthPicker
-                          format={MONTH_FORMAT}
+                          format={MONTH_PICKER_FORMAT}
                           value={toDate(item.start_date)}
                           onChange={(_dateString, date) =>
                             update({ ...item, start_date: formatMonth(date) })
@@ -2585,7 +2646,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                       <FieldRow label="结束月份">
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <DatePicker.MonthPicker
-                            format={MONTH_FORMAT}
+                            format={MONTH_PICKER_FORMAT}
                             value={toDate(item.end_date)}
                             onChange={(_dateString, date) =>
                               update({ ...item, end_date: formatMonth(date) })
@@ -2669,7 +2730,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                       </FieldRow>
                       <FieldRow label="开始月份">
                         <DatePicker.MonthPicker
-                          format={MONTH_FORMAT}
+                          format={MONTH_PICKER_FORMAT}
                           value={toDate(item.start_date)}
                           onChange={(_dateString, date) =>
                             update({ ...item, start_date: formatMonth(date) })
@@ -2682,7 +2743,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                       <FieldRow label="结束月份">
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <DatePicker.MonthPicker
-                            format={MONTH_FORMAT}
+                            format={MONTH_PICKER_FORMAT}
                             value={toDate(item.end_date)}
                             onChange={(_dateString, date) =>
                               update({ ...item, end_date: formatMonth(date) })
@@ -2775,47 +2836,15 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
                       <FieldRow label="起止月份">
                         {(() => {
                           const [startStr, endStr] = splitDateRange(item.duration)
-                          const startDate = toDate(startStr)
-                          const endDate = toDate(endStr)
-                          const hasAny = Boolean(startDate) || Boolean(endDate)
-                          const disabled = isPresentFlag(endStr)
                           return (
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              <DatePicker.RangePicker
-                                mode="month"
-                                format={MONTH_FORMAT}
-                                value={
-                                  hasAny
-                                    ? ([startDate, endDate].filter(Boolean) as Date[])
-                                    : undefined
-                                }
-                                onChange={(_dateStrings, dates) => {
-                                  const arr = (Array.isArray(dates) ? dates : []) as unknown[]
-                                  const s = formatMonth(arr[0])
-                                  const e = formatMonth(arr[1])
-                                  update({ ...item, duration: joinDateRange(s, e) })
-                                }}
-                                placeholder={['开始月份', '结束月份']}
-                                allowClear
-                                disabled={disabled}
-                                style={{ flex: 1 }}
-                              />
-                              <Checkbox
-                                checked={isPresentFlag(endStr)}
-                                onChange={(checked) => {
-                                  if (checked) {
-                                    update({
-                                      ...item,
-                                      duration: joinDateRange(startStr, '至今'),
-                                    })
-                                  } else if (isPresentFlag(endStr)) {
-                                    update({ ...item, duration: startStr })
-                                  }
-                                }}
-                              >
-                                至今
-                              </Checkbox>
-                            </div>
+                            <MonthRangeFields
+                              start={startStr}
+                              end={endStr}
+                              allowPresent
+                              onChange={(start, end) =>
+                                update({ ...item, duration: joinDateRange(start, end) })
+                              }
+                            />
                           )
                         })()}
                       </FieldRow>

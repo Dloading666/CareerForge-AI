@@ -170,6 +170,38 @@ export interface AgentChatViewProps {
 const MAX_RESUMES = 6
 const AUTO_ATTACHMENT_PROMPT = '请帮我分析上传的附件。'
 
+async function copyMessageText(text: string) {
+  if (!text.trim()) return
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch { /* noop */ }
+    document.body.removeChild(ta)
+  }
+  Message.success('已复制')
+}
+
+function parseServerDate(value: string) {
+  const raw = value.trim()
+  if (!raw) return null
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+  const date = new Date(hasTimezone ? raw : `${raw}Z`)
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+function formatMessageTime(value: string) {
+  const date = parseServerDate(value)
+  if (!date) return ''
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 const reasoningOptions: { value: ReasoningEffort; label: string; desc?: string }[] = [
   { value: 'auto', label: '自动', desc: '根据任务难度智能选择' },
   { value: 'low', label: '低', desc: '快速响应，简洁建议' },
@@ -518,6 +550,7 @@ const toolDisplayNames: Record<string, string> = {
   generate_resume_data: '生成在线简历',
   optimize_resume_data: '生成优化版简历',
   update_resume_data: '更改简历',
+  apply_resume_patch: '修改并 Review 简历',
   export_resume_pdf: '导出简历 PDF',
   read_webpage: '读取网页',
   web_search: '搜索网络信息',
@@ -598,6 +631,7 @@ const ACTIVITY_ICON_MAP: Record<string, ActivityIconSpec> = {
   generate_resume_data: { icon: IconRobot, tone: 'generate' },
   optimize_resume_data: { icon: IconBulb, tone: 'optimize' },
   update_resume_data: { icon: IconEdit, tone: 'edit' },
+  apply_resume_patch: { icon: IconEdit, tone: 'edit' },
   export_resume_pdf: { icon: IconExport, tone: 'export' },
   read_webpage: { icon: IconLink, tone: 'web' },
   web_search: { icon: IconSearch, tone: 'search' },
@@ -792,13 +826,14 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
   const [reverting, setReverting] = useState<number | null>(null)
   const [revertedResumeIds, setRevertedResumeIds] = useState<Set<number>>(new Set())
   const editorLinks = useMemo(() => {
-    const links = new Map<number, { resumeId: number; label: string; activityName: string; revisionId?: number }>()
+    const links = new Map<number, { resumeId: number; label: string; activityName: string; revisionId?: number; reviewPassed?: boolean }>()
     for (const a of [...activities].sort((left, right) => left.id - right.id)) {
       if (a.status !== 'completed') continue
       const detail = a.detail || {}
       if (detail?.open_resume_editor && typeof detail?.resume_id === 'number') {
         const label = a.name === 'generate_resume_data' ? '查看生成的简历'
           : a.name === 'optimize_resume_data' ? '查看优化后的简历'
+          : a.name === 'apply_resume_patch' ? '查看修改后的简历'
           : a.name === 'update_resume_data' ? '查看修改后的简历'
           : '查看简历'
         links.set(detail.resume_id as number, {
@@ -806,6 +841,7 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
           label,
           activityName: a.name,
           revisionId: typeof detail?.revision_id === 'number' ? detail.revision_id as number : undefined,
+          reviewPassed: detail?.review_passed === true,
         })
       }
     }
@@ -865,6 +901,8 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
       ? '已生成简历'
       : editorLinks[0]?.activityName === 'optimize_resume_data'
         ? '已优化简历'
+        : editorLinks[0]?.activityName === 'apply_resume_patch'
+          ? '已修改简历'
         : '已修改简历'
 
   if (editorLinks.length === 0) return null
@@ -884,15 +922,20 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
             <span className="resume-result-card-link">
               查看简历 <IconCaretRight />
             </span>
+            {editorLinks.some((link) => link.reviewPassed) && (
+              <span className="resume-result-card-review">
+                <IconCheck /> 已完成 review
+              </span>
+            )}
           </span>
         </button>
         <div className="resume-result-card-actions">
-          {editorLinks.some((link) => link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId)) && (
+          {editorLinks.some((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && !revertedResumeIds.has(link.resumeId)) && (
             <button
               type="button"
               className="resume-result-card-revert"
               onClick={() => {
-                const target = editorLinks.find((link) => link.activityName === 'update_resume_data' && !revertedResumeIds.has(link.resumeId))
+                const target = editorLinks.find((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && !revertedResumeIds.has(link.resumeId))
                 if (target) handleRevert(target.resumeId, target.revisionId)
               }}
               disabled={reverting !== null}
@@ -900,7 +943,7 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
               {reverting !== null ? '撤销中…' : '撤销'}
             </button>
           )}
-          {editorLinks.some((link) => link.activityName === 'update_resume_data' && revertedResumeIds.has(link.resumeId)) && (
+          {editorLinks.some((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && revertedResumeIds.has(link.resumeId)) && (
             <span className="resume-result-card-reverted">
               <IconCheck /> 已撤销
             </span>
@@ -1018,15 +1061,6 @@ function AssistantMessage({
           <>
             {cleanMessageContent ? (
               <div className="assistant-answer">
-                {!pending && (
-                  <button
-                    className="msg-copy-btn"
-                    title="复制"
-                    onClick={() => navigator.clipboard.writeText(cleanMessageContent)}
-                  >
-                    <IconCopy />
-                  </button>
-                )}
                 <MarkdownMessage content={cleanMessageContent} />
                 {pending && <span className="stream-cursor" />}
               </div>
@@ -1043,6 +1077,13 @@ function AssistantMessage({
         )}
         <ResumeEditorLinks activities={activities} />
         <GeneratedFileLinks files={files} />
+        {!pending && cleanMessageContent.trim() && (
+          <div className="assistant-message-actions">
+            <button type="button" className="message-action-btn" aria-label="复制回复" onClick={() => void copyMessageText(cleanMessageContent)}>
+              <IconCopy />
+            </button>
+          </div>
+        )}
         {!pending && suggestions && suggestions.length > 0 && onSuggestionClick && (
           <MessageSuggestions suggestions={suggestions} onSuggestionClick={onSuggestionClick} />
         )}
@@ -1154,6 +1195,8 @@ export function AgentChatView({
   const streamStartRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
+  const [editingMessageText, setEditingMessageText] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
@@ -1280,6 +1323,8 @@ export function AgentChatView({
     setNotice(null)
     setPendingAttachments([])
     setQueue([])
+    setEditingMessageId(null)
+    setEditingMessageText('')
 
     // 2. 优先从缓存恢复
     const cached = sessionCache.current.get(sessionToLoad.id)
@@ -1386,6 +1431,8 @@ export function AgentChatView({
     setNotice(null)
     setActiveResumeId(null)
     setQueue([])
+    setEditingMessageId(null)
+    setEditingMessageText('')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newChatTrigger])
 
@@ -1462,7 +1509,7 @@ export function AgentChatView({
     for (const a of activities) {
       if (a.status !== 'completed') continue
       const detail = a.detail || {}
-      if ((a.name === 'generate_resume_data' || a.name === 'optimize_resume_data' || a.name === 'update_resume_data')
+      if ((a.name === 'generate_resume_data' || a.name === 'optimize_resume_data' || a.name === 'update_resume_data' || a.name === 'apply_resume_patch')
         && typeof detail?.resume_id === 'number') {
         setActiveResumeId(detail.resume_id as number)
       }
@@ -1637,6 +1684,57 @@ export function AgentChatView({
       setPendingAttachments((prev) => [...sendingAttachments, ...prev])
     } finally {
       setStreaming(false)
+    }
+  }
+
+  const forceScrollToThreadBottom = () => {
+    isNearBottomRef.current = true
+    setShowScrollBtn(false)
+    window.requestAnimationFrame(() => {
+      const node = threadRef.current
+      if (!node) return
+      node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+    })
+  }
+
+  const startEditingMessage = (message: AgentMessage, text: string) => {
+    if (!text.trim()) return
+    setEditingMessageId(message.id)
+    setEditingMessageText(text)
+  }
+
+  const cancelEditingMessage = () => {
+    setEditingMessageId(null)
+    setEditingMessageText('')
+  }
+
+  const submitEditedMessage = async () => {
+    const text = editingMessageText.trim()
+    if (!text) return
+    setEditingMessageId(null)
+    setEditingMessageText('')
+    if (streaming) {
+      const id = queuedIdRef.current
+      queuedIdRef.current -= 1
+      setQueue((prev) => [...prev, { id, content: text, attachments: [] }])
+      forceScrollToThreadBottom()
+      return
+    }
+    forceScrollToThreadBottom()
+    await runSend(text, [])
+    forceScrollToThreadBottom()
+  }
+
+  const handleEditKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelEditingMessage()
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void submitEditedMessage()
     }
   }
 
@@ -1903,6 +2001,7 @@ export function AgentChatView({
     // Sync 简历实时刷新信号：AI 改完简历后 store.resumeSignal.tick 自增，转发到本地 state
     if (storeState.resumeSignal && storeState.resumeSignal.tick !== lastResumeTickRef.current) {
       lastResumeTickRef.current = storeState.resumeSignal.tick
+      setActiveResumeId(storeState.resumeSignal.resumeId)
       setResumePreviewTick(storeState.resumeSignal.tick)
     }
   }, [storeTick, agentSession?.id])
@@ -2020,40 +2119,84 @@ export function AgentChatView({
             const displayContent = (
               message.content.trim() === AUTO_ATTACHMENT_PROMPT && msgAttachments.length > 0
             ) ? '' : message.content
+            const canActOnText = displayContent.trim().length > 0
+            const canEditText = canActOnText && msgAttachments.length === 0
+            const isEditingThisMessage = editingMessageId === message.id
             return (
               <div key={message.id} className="message-row user">
-                <div className={`user-message-content${displayContent ? '' : ' image-only'}`}>
-                  {imageAttachmentsForMessage.length > 0 && (
-                    <div className="user-image-grid">
-                      {imageAttachmentsForMessage.map((att) => {
-                        const src = typeof att.download_url === 'string' ? att.download_url : ''
-                        return (
-                          <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
-                            <img src={src} alt={att.original_name} />
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {fileAttachmentsForMessage.length > 0 && (
-                    <div className="user-file-grid">
-                      {fileAttachmentsForMessage.map((att) => (
-                        <a
-                          key={att.id}
-                          className="user-file-chip"
-                          href={att.download_url ?? '#'}
-                          target="_blank"
-                          rel="noreferrer"
-                          download={att.original_name}
+                <div className={`user-message-content${displayContent ? '' : ' image-only'}${isEditingThisMessage ? ' editing' : ''}`}>
+                  {isEditingThisMessage ? (
+                    <div className="user-edit-bubble">
+                      <textarea
+                        className="user-edit-textarea"
+                        value={editingMessageText}
+                        autoFocus
+                        rows={2}
+                        onChange={(event) => setEditingMessageText(event.target.value)}
+                        onKeyDown={handleEditKeyDown}
+                      />
+                      <div className="user-edit-actions">
+                        <button type="button" className="user-edit-btn secondary" onClick={cancelEditingMessage}>取消</button>
+                        <button
+                          type="button"
+                          className="user-edit-btn primary"
+                          disabled={!editingMessageText.trim()}
+                          onClick={() => void submitEditedMessage()}
                         >
-                          <IconFilePdf style={{ fontSize: 16, color: '#165DFF', flexShrink: 0 }} />
-                          <span className="user-file-chip-name">{att.original_name}</span>
-                        </a>
-                      ))}
+                          发送
+                        </button>
+                      </div>
                     </div>
-                  )}
-                  {displayContent && (
-                    <div className="message-bubble user"><MarkdownMessage content={displayContent} /></div>
+                  ) : (
+                    <>
+                      {imageAttachmentsForMessage.length > 0 && (
+                        <div className="user-image-grid">
+                          {imageAttachmentsForMessage.map((att) => {
+                            const src = typeof att.download_url === 'string' ? att.download_url : ''
+                            return (
+                              <div key={att.id} className="user-image-thumb" onClick={() => setLightboxImage(src)}>
+                                <img src={src} alt={att.original_name} />
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {fileAttachmentsForMessage.length > 0 && (
+                        <div className="user-file-grid">
+                          {fileAttachmentsForMessage.map((att) => (
+                            <a
+                              key={att.id}
+                              className="user-file-chip"
+                              href={att.download_url ?? '#'}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={att.original_name}
+                            >
+                              <IconFilePdf style={{ fontSize: 16, color: '#165DFF', flexShrink: 0 }} />
+                              <span className="user-file-chip-name">{att.original_name}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {displayContent && (
+                        <div className="message-bubble user"><MarkdownMessage content={displayContent} /></div>
+                      )}
+                      <div className="user-message-actions">
+                        <span className="message-time">{formatMessageTime(message.created_at)}</span>
+                        {canActOnText && (
+                          <>
+                            <button type="button" className="message-action-btn" aria-label="复制消息" onClick={() => void copyMessageText(displayContent)}>
+                              <IconCopy />
+                            </button>
+                            {canEditText && (
+                              <button type="button" className="message-action-btn" aria-label="编辑消息" onClick={() => startEditingMessage(message, displayContent)}>
+                                <IconEdit />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>

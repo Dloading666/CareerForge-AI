@@ -510,10 +510,10 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
         name="update_resume_data",
         description=(
-            "更新学生已有的在线简历（局部修改），用于像 Codex 改代码一样持续精修当前工作简历。"
+            "更新学生已有的在线简历（整段兜底更新），用于复杂整体改写或兼容旧流程。"
             "调用前必须先 read_resume 确认简历内容。"
             "resume_id 可选：不传则更新当前工作简历（session 绑定）。"
-            "用户要求调整语气、顺序、重点、删改段落、突出某项能力、换成更强表达时优先调用本工具。"
+            "用户要求调整语气、顺序、重点、删改段落、突出某项能力、换成更强表达时，优先调用 apply_resume_patch；只有需要替换完整章节时才调用本工具。"
             "若用户在本轮明确提供了新事实，先用 save_session_note(type=fact) 保存，再写入简历；不得增加原简历、个人档案或用户明说内容之外的事实。"
         ),
         source="builtin",
@@ -533,6 +533,63 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
                 "self_evaluation": {"type": "string"},
             },
             "required": [],
+        },
+        metadata={"kind": "resume"},
+    ),
+    ToolDefinition(
+        name="apply_resume_patch",
+        description=(
+            "像 Codex 改代码一样，对当前工作简历做小步补丁式修改并自动 review。"
+            "适用于用户明确要求加内容、删内容、改措辞、调整重点、突出能力、改自我评价、修改某段经历等连续精修场景。"
+            "调用前必须先 read_resume 获取当前简历和 base_updated_at。"
+            "只提交要改的补丁，不要重写整份简历；保存后系统会重新读取并 review，确认没有新增无来源信息、夸大职责、虚构数字或格式问题。"
+            "若用户本轮明确提供新事实，先用 save_session_note(type=fact) 保存，再写入简历。"
+        ),
+        source="builtin",
+        priority=967,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "resume_id": {"type": "integer", "description": "要修改的简历 ID。不传则修改当前工作简历。"},
+                "base_updated_at": {"type": "string", "description": "read_resume 返回的 updated_at，用于防止覆盖用户手动编辑。"},
+                "intent_summary": {"type": "string", "description": "用一句话说明用户想改什么。"},
+                "patches": {
+                    "type": "array",
+                    "description": "小步修改列表。每个补丁只改一个章节或一个条目。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": [
+                                    "set_field",
+                                    "append_lines",
+                                    "remove_lines",
+                                    "rewrite",
+                                    "add_item",
+                                    "update_item",
+                                    "delete_item",
+                                ],
+                                "description": "修改动作。",
+                            },
+                            "section": {
+                                "type": "string",
+                                "enum": ["title", "basic", "skills", "self_evaluation", "education", "experience", "projects"],
+                                "description": "要修改的简历板块。",
+                            },
+                            "field": {"type": "string", "description": "要修改的字段，如 title/name/details/description/company/role/date。"},
+                            "target_id": {"type": "string", "description": "条目 id；没有 id 时可用 target_index 或 target_text。"},
+                            "target_index": {"type": "integer", "description": "1-based 条目序号，例如第三段项目经历传 3。"},
+                            "target_text": {"type": "string", "description": "用于定位条目的原文片段。"},
+                            "value": {"description": "新内容。列表板块 add/update 时传对象；文本板块传字符串或字符串数组。"},
+                            "fields": {"type": "object", "description": "update_item 时要更新的字段集合。"},
+                            "reason": {"type": "string", "description": "为什么做这处修改，供 review 和用户摘要使用。"},
+                        },
+                        "required": ["action", "section"],
+                    },
+                },
+            },
+            "required": ["patches"],
         },
         metadata={"kind": "resume"},
     ),
@@ -1129,6 +1186,7 @@ def _tool_start_label(tool: ToolDefinition, arguments: dict[str, Any]) -> str:
         "generate_resume_data": "正在生成在线简历…",
         "optimize_resume_data": "正在创建优化版简历…",
         "update_resume_data": "正在更改简历…",
+        "apply_resume_patch": "正在修改并检查简历…",
         "export_resume_pdf": "正在导出简历 PDF…",
         "read_webpage": "正在读取岗位网页…",
         "web_search": "正在搜索相关信息…",
@@ -1960,6 +2018,7 @@ ACTIVE_BUILTIN_TOOL_NAMES = (
     "generate_resume_data",
     "optimize_resume_data",
     "update_resume_data",
+    "apply_resume_patch",
     "analyze_jd_match",
     "save_session_note",
 )
@@ -2101,10 +2160,10 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "- 空字段必须保持为空：个人档案中的空数组或空字段表示学生尚未填写，绝不能为了让简历完整而补齐。"
         "可以调整已有事实的顺序和表达，但不能增加原文没有的新事实、新技能、新指标或新经历。资料不足时明确列出缺少项并请学生补充。\n"
         "- 写入保护：generate_resume_data 会忽略模型提交的事实字段并由服务端从个人档案重建；"
-        "optimize_resume_data、update_resume_data 和 export_resume_pdf 共享同一套事实核验契约——关键实体（公司名、学校名、职位、项目名、时间段、技术栈、数字指标）必须在证据中有据，但允许改写表达、动词、STAR 结构和措辞优化。校验失败后不得换一种说法绕过校验。\n"
+        "optimize_resume_data、apply_resume_patch、update_resume_data 和 export_resume_pdf 共享同一套事实核验契约——关键实体（公司名、学校名、职位、项目名、时间段、技术栈、数字指标）必须在证据中有据，但允许改写表达、动词、STAR 结构和措辞优化。校验失败后不得换一种说法绕过校验。\n"
         "- 像 Codex 改代码一样工作：先根据用户意图生成或保存一个可编辑版本，然后围绕当前工作简历持续精修。"
         "用户说『再改一下/精修/弱一点/强一点/突出某能力/删掉某段/换个语气』时，默认是在改当前工作简历；"
-        "必须先 read_resume 读取当前版本，再调用 update_resume_data 保存，不要只给建议、不落盘。\n"
+        "必须先 read_resume 读取当前版本，再调用 apply_resume_patch 保存，不要只给建议、不落盘。只有需要整段替换完整章节时才用 update_resume_data 兜底。\n"
         "- 订制 Skill：只要用户提供 JD 或要求『订制/针对岗位/ATS 优化/岗位匹配后改简历』，"
         "必须先调用 skill__evidence_backed_resume_tailor，再按其事实清单、JD 优先级、证据矩阵和保存前自检流程执行；"
         "然后调用 analyze_jd_match 提交结构化 JD 分析（P0/P1 需求、证据矩阵）；"
@@ -2134,7 +2193,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  · 简历图片：点评内容、指出可优化的点，若学生想优化则引导导入简历中心；\n"
         "  · JD 截图：提取岗位要求并据此订制简历；\n"
         "  · 其他图片：描述内容后主动询问学生想做什么，不要只回复「收到图片」就结束。\n"
-        "- 简历写作标准（generate/optimize/update/export 均适用，四者共享同一套事实来源契约）：\n"
+        "- 简历写作标准（generate/optimize/apply_patch/update/export 均适用，共享同一套事实来源契约）：\n"
         "  · 经历/项目每条描述尽量以真实强动词开头。优先使用「实现、完成、优化、搭建、设计、开发、整理、分析、封装」；"
         "不要为了显得更强把「参与」升级成「主导/独立负责/从0到1」，强动词不等于角色升级；\n"
         "  · 尽量采用 STAR 格式：【背景/规模】→【具体行动】→【可量化结果】，"
@@ -2143,7 +2202,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "  · 自我评价控制在 2-3 句，重点突出与 JD 最匹配的核心能力，不写泛泛的「认真负责」「吃苦耐劳」；\n"
         "  · 没有具体数字时，用规模描述（「百万级 DAU」「10+ 人跨部门」）替代空洞形容词；\n"
         "  · 同一份简历中时间格式统一为 YYYY-MM（如 2022-06），不保留具体日期，勿混用。\n"
-        "- 修改已有在线简历：调用 update_resume_data（需提供 resume_id），完成后不要在正文中输出任何链接或 URL——系统会自动在消息下方渲染「查看简历」按钮。\n"
+        "- 修改已有在线简历：优先调用 apply_resume_patch 做小步修改并自动 review；只有需要替换完整章节时才调用 update_resume_data。完成后不要在正文中输出任何链接或 URL——系统会自动在消息下方渲染「查看简历」按钮。\n"
         "- 修改简历前必须基于最近一次 read_resume 的内容做最小变更，禁止凭记忆重写整个章节。"
         "传入 read_resume 时拿到的 updated_at 作为 base_updated_at 参数，用于版本检查。\n"
         "- 生成可下载简历：当学生需要『修改好的 / 可下载的简历』时，先基于真实简历完成改写，再调用 "
@@ -2159,7 +2218,7 @@ def _harness_system_prompt(config: Any, reasoning_effort: str, agent_type: str =
         "- 用户提出过的禁止项和偏好（见「本会话已确认的事实与约束」清单）在整个会话中持续有效，"
         "违反任何一条都算严重错误——即使用户自己后来忘了，你也不能忘。\n"
         "- 行动准则（写操作「先说后做」）：\n"
-        "  ▸ 调用 generate/optimize/update_resume_data 或 export_resume_pdf 前，先用 1-2 句话预告（改哪份简历、改什么章节、为什么）；\n"
+        "  ▸ 调用 generate/optimize/apply_resume_patch/update_resume_data 或 export_resume_pdf 前，先用 1-2 句话预告（改哪份简历、改什么章节、为什么）；\n"
         "  ▸ 用户最新消息是明确指令（「帮我加进去」「改吧」「优化一下」）→ 说完直接动手，不要再追问确认；\n"
         "  ▸ 用户只是提供信息或闲聊（「我做过一个 XX 项目」「我还会 Python」）→ 不得直接改简历，先复述理解 + 给出建议方案，问「要我直接更新到简历里吗？」；\n"
         "  ▸ 用户表达过「以后直接改不用问」（已存入偏好）→ 本会话内豁免第 3 条，收到信息后直接动手。\n"
@@ -2854,7 +2913,7 @@ async def run_agent_loop(
             if result.get("status") == "completed":
                 completed_tools.add(name)
                 # 自动绑定：generate/optimize/update 成功后，把 resume_id 写入 session.active_resume_id
-                if name in ("generate_resume_data", "optimize_resume_data", "update_resume_data"):
+                if name in ("generate_resume_data", "optimize_resume_data", "update_resume_data", "apply_resume_patch"):
                     result_resume_id = result.get("resume_id")
                     if result_resume_id:
                         session.active_resume_id = int(result_resume_id)
@@ -3288,6 +3347,8 @@ async def _dispatch_tool(
         return _generate_resume_data_tool(db, identity, args, evidence_pool=evidence_pool)
     if name == "optimize_resume_data":
         return _optimize_resume_data_tool(db, identity, args, attachments, evidence_pool)
+    if name == "apply_resume_patch":
+        return _apply_resume_patch_tool(db, identity, args, evidence_pool, session=session)
     if name == "update_resume_data":
         return _update_resume_data_tool(db, identity, args, evidence_pool, session=session)
     if name == "analyze_jd_match":
@@ -4476,24 +4537,33 @@ def _generate_resume_data_tool(
         for source in evidence_pool.collect_evidence_sources():
             evidence_sources.append(source)
 
+    # 事实层校验：身份字段会在保存前由服务端强制覆盖为真实档案，
+    # 因此校验也应先按真实档案替换，避免模型提交的占位姓名误伤生成流程。
+    validation_args = dict(args)
+    validation_basic = dict(validation_args.get("basic") or {})
+    for key in ("name", "email", "phone"):
+        if profile.get(key):
+            validation_basic[key] = profile[key]
+    validation_args["basic"] = validation_basic
+
     # 事实层校验：只检查数字/技术词/专名/时间段是否在证据中
-    violations, fact_whitelist = _validate_resume_facts(args, evidence_sources)
+    violations, fact_whitelist = _validate_resume_facts(validation_args, evidence_sources)
     if violations:
         return _fact_guard_failure("generate_resume_data", violations, fact_whitelist)
 
     # 程度词阶梯检测
-    role_escalation_violations = _check_role_escalation(args, evidence_sources)
+    role_escalation_violations = _check_role_escalation(validation_args, evidence_sources)
     if role_escalation_violations:
         return _fact_guard_failure("generate_resume_data", role_escalation_violations, fact_whitelist)
 
     # JD GAP 铁律：GAP 项禁止进入简历
     if evidence_pool and evidence_pool.gap_keywords:
-        gap_violations = _check_gap_violations(args, evidence_pool.gap_keywords)
+        gap_violations = _check_gap_violations(validation_args, evidence_pool.gap_keywords)
         if gap_violations:
             return _fact_guard_failure("generate_resume_data", gap_violations, fact_whitelist)
 
     # 条目归属校验（shadow mode：只记录不拦截）
-    attribution_violations = _check_item_attribution(args, evidence_sources)
+    attribution_violations = _check_item_attribution(validation_args, evidence_sources)
     if attribution_violations:
         if ITEM_ATTRIBUTION_SHADOW_MODE:
             logger.warning("item_attribution shadow_mode violations tool=%s violations=%s", "generate_resume_data", attribution_violations[:10])
@@ -4749,6 +4819,549 @@ def _optimize_resume_data_tool(
         "open_resume_editor": True,
         "fact_validation": {"passed": True, "source": "profile_or_supplied_resume"},
         "quality_check": quality if quality.get("warnings") else None,
+    }
+
+
+_PATCH_LIST_SECTIONS = {"education", "experience", "projects"}
+_PATCH_TEXT_SECTIONS = {"skills", "self_evaluation"}
+_PATCH_SECTION_LABELS = {
+    "title": "简历标题",
+    "basic": "基本信息",
+    "skills": "专业技能",
+    "self_evaluation": "自我评价",
+    "education": "教育经历",
+    "experience": "工作经历",
+    "projects": "项目经历",
+}
+_PATCH_ITEM_FIELD_ALIASES = {
+    "start_date": "startDate",
+    "end_date": "endDate",
+    "description_text": "description",
+    "details_text": "details",
+}
+_PATCH_BASIC_FIELD_ALIASES = {
+    "target_position": "title",
+    "birth_date": "birthDate",
+}
+_METRIC_TOKEN_RE = _re.compile(
+    r"(?<![\d-])\d+(?:\.\d+)?\s*(?:%|％|万|千|亿|人|次|项|个|倍|小时|天|ms|秒|qps|QPS|\+)(?![\d-])"
+)
+
+
+def _patch_lines(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw = [str(item or "") for item in value]
+    elif isinstance(value, str) and "<" in value:
+        raw = _rich_text_to_lines(value)
+    else:
+        raw = str(value or "").splitlines()
+    lines: list[str] = []
+    for line in raw:
+        clean = str(line or "").strip().lstrip("-•*·、 ").strip()
+        if clean:
+            lines.append(clean)
+    return lines
+
+
+def _patch_list_html(value: Any) -> str:
+    return _ta_to_list("\n".join(_patch_lines(value)))
+
+
+def _patch_para_html(value: Any) -> str:
+    return _ta_to_para("\n".join(_patch_lines(value)))
+
+
+def _clone_resume_doc(raw: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return json.loads(json.dumps(raw or {}, ensure_ascii=False))
+    except Exception:
+        return dict(raw or {})
+
+
+def _patch_error(summary: str, *, code: str = "resume_patch_invalid") -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "tool": "apply_resume_patch",
+        "error_code": code,
+        "recoverable": True,
+        "summary": summary,
+        "display_summary": "这次修改需要再确认一下目标内容",
+    }
+
+
+def _patch_target_index(items: list[dict[str, Any]], patch: dict[str, Any]) -> Optional[int]:
+    target_id = str(patch.get("target_id") or patch.get("item_id") or "").strip()
+    if target_id:
+        for idx, item in enumerate(items):
+            if str(item.get("id") or "") == target_id:
+                return idx
+    raw_index = patch.get("target_index") if patch.get("target_index") is not None else patch.get("index")
+    if raw_index is not None:
+        try:
+            idx = int(raw_index) - 1
+            if 0 <= idx < len(items):
+                return idx
+        except (TypeError, ValueError):
+            return None
+    target_text = str(patch.get("target_text") or patch.get("match_text") or "").strip()
+    if target_text:
+        needle = _normalize_evidence(target_text)
+        for idx, item in enumerate(items):
+            haystack = _normalize_evidence(" ".join(_collect_evidence_values(item)))
+            if needle and needle in haystack:
+                return idx
+    return None
+
+
+def _normalize_patch_item(section: str, value: Any) -> dict[str, Any]:
+    src = value if isinstance(value, dict) else {}
+    if section == "education":
+        return {
+            "id": src.get("id") or f"edu-{uuid.uuid4().hex[:8]}",
+            "school": src.get("school") or "",
+            "major": src.get("major") or "",
+            "degree": src.get("degree") or "",
+            "startDate": src.get("start_date") or src.get("startDate") or "",
+            "endDate": src.get("end_date") or src.get("endDate") or "",
+            "gpa": src.get("gpa") or "",
+            "description": _patch_list_html(src.get("description") or ""),
+            "visible": src.get("visible", True),
+        }
+    if section == "experience":
+        return {
+            "id": src.get("id") or f"exp-{uuid.uuid4().hex[:8]}",
+            "company": src.get("company") or "",
+            "position": src.get("position") or "",
+            "date": src.get("date") or "",
+            "details": _patch_list_html(src.get("details") or src.get("description") or ""),
+            "visible": src.get("visible", True),
+        }
+    return {
+        "id": src.get("id") or f"proj-{uuid.uuid4().hex[:8]}",
+        "name": src.get("name") or "",
+        "role": src.get("role") or "",
+        "date": src.get("date") or "",
+        "description": _patch_list_html(src.get("description") or src.get("details") or ""),
+        "visible": src.get("visible", True),
+        "link": src.get("link") or "",
+        "linkLabel": src.get("linkLabel") or src.get("link_label") or "",
+    }
+
+
+def _apply_patch_fields(section: str, item: dict[str, Any], fields: dict[str, Any]) -> list[str]:
+    changed: list[str] = []
+    for raw_key, raw_value in fields.items():
+        key = _PATCH_ITEM_FIELD_ALIASES.get(str(raw_key), str(raw_key))
+        if section == "experience" and key in {"description", "details"}:
+            key = "details"
+            value = _patch_list_html(raw_value)
+        elif section in {"projects", "education"} and key in {"description", "details"}:
+            key = "description"
+            value = _patch_list_html(raw_value)
+        elif section == "education" and key in {"startDate", "endDate"}:
+            value = str(raw_value or "")
+        elif key == "visible":
+            value = bool(raw_value)
+        else:
+            value = str(raw_value or "")
+        if item.get(key) != value:
+            item[key] = value
+            changed.append(key)
+    return changed
+
+
+def _apply_resume_patch_operations(
+    existing: dict[str, Any],
+    *,
+    row_title: str,
+    row_template_id: str,
+    args: dict[str, Any],
+) -> tuple[Optional[dict[str, Any]], Optional[str], Optional[str], dict[str, Any], Optional[dict[str, Any]]]:
+    doc = _clone_resume_doc(existing)
+    title = row_title
+    template_id = row_template_id
+    patches = args.get("patches") or []
+    if not isinstance(patches, list) or not patches:
+        return None, None, None, {}, _patch_error("没有收到要修改的内容。")
+
+    changes: dict[str, Any] = {"updated_sections": [], "field_changes": [], "items": []}
+    for patch in patches:
+        if not isinstance(patch, dict):
+            return None, None, None, changes, _patch_error("修改内容格式不正确，请重新整理后再试。")
+        action = str(patch.get("action") or "").strip()
+        section = str(patch.get("section") or "").strip()
+        label = _PATCH_SECTION_LABELS.get(section, section or "简历")
+        if not action or section not in _PATCH_SECTION_LABELS:
+            return None, None, None, changes, _patch_error("有一处修改没有说明要改哪个板块。")
+
+        if section == "title":
+            value = str(patch.get("value") or "").strip()
+            if not value:
+                return None, None, None, changes, _patch_error("新的简历标题不能为空。")
+            title = value[:128]
+            doc["title"] = title
+            changes["field_changes"].append("简历标题")
+            changes["items"].append({"section": section, "action": "set_field", "summary": "更新简历标题"})
+            continue
+
+        if section == "basic":
+            field = str(patch.get("field") or "").strip()
+            field = _PATCH_BASIC_FIELD_ALIASES.get(field, field)
+            if not field:
+                return None, None, None, changes, _patch_error("基本信息修改缺少字段名。")
+            basic = doc.setdefault("basic", {})
+            if not isinstance(basic, dict):
+                basic = {}
+                doc["basic"] = basic
+            basic[field] = str(patch.get("value") or "")
+            changes["field_changes"].append(f"基本信息: {field}")
+            changes["items"].append({"section": section, "action": "set_field", "summary": f"更新基本信息 {field}"})
+            continue
+
+        if section in _PATCH_TEXT_SECTIONS:
+            html_key = "skillContent" if section == "skills" else "selfEvaluationContent"
+            current_lines = _rich_text_to_lines(str(doc.get(html_key) or ""))
+            value_lines = _patch_lines(patch.get("value"))
+            if action in {"set_field", "rewrite"}:
+                doc[html_key] = _patch_list_html(value_lines) if section == "skills" else _patch_para_html(value_lines)
+                changes["field_changes"].append(label)
+                changes["items"].append({"section": section, "action": action, "summary": f"改写{label}"})
+            elif action == "append_lines":
+                merged = list(current_lines)
+                for line in value_lines:
+                    if line not in merged:
+                        merged.append(line)
+                doc[html_key] = _patch_list_html(merged) if section == "skills" else _patch_para_html(merged)
+                changes["field_changes"].append(label)
+                changes["items"].append({"section": section, "action": action, "summary": f"补充{label}"})
+            elif action == "remove_lines":
+                needles = {_normalize_evidence(line) for line in value_lines}
+                kept = [line for line in current_lines if _normalize_evidence(line) not in needles]
+                doc[html_key] = _patch_list_html(kept) if section == "skills" else _patch_para_html(kept)
+                changes["field_changes"].append(label)
+                changes["items"].append({"section": section, "action": action, "summary": f"删减{label}"})
+            else:
+                return None, None, None, changes, _patch_error(f"{label}暂不支持这个修改动作：{action}")
+            continue
+
+        if section in _PATCH_LIST_SECTIONS:
+            items = doc.setdefault(section, [])
+            if not isinstance(items, list):
+                items = []
+                doc[section] = items
+            if action == "add_item":
+                item = _normalize_patch_item(section, patch.get("value") or patch.get("fields") or {})
+                items.append(item)
+                changes["field_changes"].append(f"{label}: +1 条")
+                changes["items"].append({"section": section, "action": action, "summary": f"新增{label}"})
+                continue
+            idx = _patch_target_index(items, patch)
+            if idx is None:
+                return None, None, None, changes, _patch_error(f"没有定位到要修改的{label}，请说清楚是哪一段。", code="resume_patch_target_not_found")
+            if action == "delete_item":
+                items.pop(idx)
+                changes["field_changes"].append(f"{label}: -1 条")
+                changes["items"].append({"section": section, "action": action, "summary": f"删除第 {idx + 1} 条{label}"})
+                continue
+            if action == "update_item":
+                fields = patch.get("fields")
+                if not isinstance(fields, dict):
+                    value = patch.get("value")
+                    fields = value if isinstance(value, dict) else {}
+                field = str(patch.get("field") or "").strip()
+                if field:
+                    fields[field] = patch.get("value")
+                if not fields:
+                    return None, None, None, changes, _patch_error(f"{label}修改缺少新内容。")
+                changed_fields = _apply_patch_fields(section, items[idx], fields)
+                if changed_fields:
+                    changes["field_changes"].append(f"{label}: 第 {idx + 1} 条")
+                    changes["items"].append({"section": section, "action": action, "summary": f"更新第 {idx + 1} 条{label}", "fields": changed_fields})
+                continue
+            return None, None, None, changes, _patch_error(f"{label}暂不支持这个修改动作：{action}")
+
+    deduped_sections = []
+    for item in changes["items"]:
+        section = item.get("section")
+        if section and section not in deduped_sections:
+            deduped_sections.append(section)
+    changes["updated_sections"] = deduped_sections
+    changes["summary"] = "、".join(changes["field_changes"][:6]) if changes["field_changes"] else "内容已更新"
+    doc["title"] = title
+    doc["templateId"] = template_id
+    return doc, title, template_id, changes, None
+
+
+def _resume_doc_to_tool_args(doc: dict[str, Any], *, title: str, template_id: str) -> dict[str, Any]:
+    basic = doc.get("basic") or {}
+    return {
+        "title": title,
+        "template_id": template_id,
+        "basic": {
+            "name": basic.get("name") or "",
+            "target_position": basic.get("title") or "",
+            "email": basic.get("email") or "",
+            "phone": basic.get("phone") or "",
+            "location": basic.get("location") or "",
+            "birth_date": basic.get("birthDate") or "",
+        },
+        "education": [
+            {
+                "school": item.get("school") or "",
+                "major": item.get("major") or "",
+                "degree": item.get("degree") or "",
+                "start_date": item.get("startDate") or "",
+                "end_date": item.get("endDate") or "",
+                "gpa": item.get("gpa") or "",
+                "description": "\n".join(_rich_text_to_lines(item.get("description") or "")),
+            }
+            for item in (doc.get("education") or []) if isinstance(item, dict) and item.get("visible", True) is not False
+        ],
+        "experience": [
+            {
+                "company": item.get("company") or "",
+                "position": item.get("position") or "",
+                "date": item.get("date") or "",
+                "details": "\n".join(_rich_text_to_lines(item.get("details") or "")),
+            }
+            for item in (doc.get("experience") or []) if isinstance(item, dict) and item.get("visible", True) is not False
+        ],
+        "projects": [
+            {
+                "name": item.get("name") or "",
+                "role": item.get("role") or "",
+                "date": item.get("date") or "",
+                "description": "\n".join(_rich_text_to_lines(item.get("description") or "")),
+            }
+            for item in (doc.get("projects") or []) if isinstance(item, dict) and item.get("visible", True) is not False
+        ],
+        "skills": "\n".join(_rich_text_to_lines(doc.get("skillContent") or "")),
+        "self_evaluation": "\n".join(_rich_text_to_lines(doc.get("selfEvaluationContent") or "")),
+    }
+
+
+def _metric_tokens_from_sources(sources: list[Any]) -> set[str]:
+    text_parts: list[str] = []
+    for source in sources:
+        if isinstance(source, str):
+            text_parts.append(source)
+        elif isinstance(source, dict):
+            text_parts.extend(_collect_evidence_values(source))
+        elif isinstance(source, list):
+            for item in source:
+                if isinstance(item, dict):
+                    text_parts.extend(_collect_evidence_values(item))
+                else:
+                    text_parts.append(str(item))
+    blob = "\n".join(text_parts)
+    return {_re.sub(r"\s+", "", m.group(0)) for m in _METRIC_TOKEN_RE.finditer(blob)}
+
+
+def _check_unbacked_metrics(args: dict[str, Any], evidence_sources: list[Any]) -> list[str]:
+    evidence_metrics = _metric_tokens_from_sources(evidence_sources)
+    candidate_metrics = _metric_tokens_from_sources([args])
+    missing = sorted(metric for metric in candidate_metrics if metric not in evidence_metrics)
+    return [f"数字「{metric}」没有来源" for metric in missing[:10]]
+
+
+def _review_resume_patch_result(
+    args: dict[str, Any],
+    evidence_sources: list[Any],
+    evidence_pool: Optional[SessionEvidencePool],
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    violations, fact_whitelist = _validate_resume_facts(args, evidence_sources)
+    errors.extend(violations)
+    errors.extend(_check_role_escalation(args, evidence_sources))
+    errors.extend(_check_unbacked_metrics(args, evidence_sources))
+    if evidence_pool and evidence_pool.gap_keywords:
+        errors.extend(_check_gap_violations(args, evidence_pool.gap_keywords))
+    attribution_violations = _check_item_attribution(args, evidence_sources)
+    if attribution_violations:
+        if ITEM_ATTRIBUTION_SHADOW_MODE:
+            logger.warning("item_attribution shadow_mode violations tool=%s violations=%s", "apply_resume_patch", attribution_violations[:10])
+        else:
+            errors.extend(attribution_violations)
+    quality = _check_resume_quality(args, require_sections=False)
+    errors.extend(f"{e['section']}: {e['issue']}" for e in quality.get("errors") or [])
+    warnings.extend(f"{w['section']}: {w['issue']}" for w in quality.get("warnings") or [])
+    return {
+        "passed": not errors,
+        "checks": [
+            "已重新读取修改后的简历",
+            "已检查新增信息是否有来源",
+            "已检查表达是否夸大",
+            "已检查格式和简历表达",
+        ],
+        "errors": errors[:10],
+        "warnings": warnings[:10],
+        "quality_check": quality,
+        "fact_whitelist": fact_whitelist,
+    }
+
+
+def _friendly_review_errors(errors: list[str]) -> str:
+    if not errors:
+        return "有几处内容需要再确认。"
+    friendly: list[str] = []
+    for error in errors[:4]:
+        text = str(error)
+        if "无来源专名" in text or "没有来源" in text or "找不到依据" in text:
+            friendly.append("有内容在你的简历或档案里找不到依据")
+        elif "角色升级" in text or "主导" in text or "独立" in text:
+            friendly.append("有表达可能夸大了你的实际职责")
+        elif "GAP" in text:
+            friendly.append("有岗位缺口能力不能直接写进简历")
+        elif "时间格式" in text or "YYYY-MM" in text:
+            friendly.append("有时间格式需要统一")
+        elif "空话" in text or "自我评价" in text:
+            friendly.append("自我评价里还有偏空泛的表达")
+        else:
+            friendly.append("有一处内容需要再确认")
+    deduped = list(dict.fromkeys(friendly))
+    return "；".join(deduped)
+
+
+def _apply_resume_patch_tool(
+    db: Session,
+    identity: AuthIdentity,
+    args: dict[str, Any],
+    evidence_pool: Optional[SessionEvidencePool] = None,
+    session: Optional[StudentAgentSession] = None,
+) -> dict[str, Any]:
+    args = _normalize_literal_escapes(args)
+    resume_id = args.get("resume_id")
+    if not resume_id and session:
+        resume_id = getattr(session, "active_resume_id", None)
+    if not resume_id:
+        return _patch_error("还没有选中要修改的简历。请先选择当前要编辑的简历。", code="resume_patch_missing_resume")
+    row = db.scalar(
+        select(StudentResume).where(
+            StudentResume.id == int(resume_id),
+            StudentResume.student_id == identity.user_id,
+            StudentResume.tenant_id == identity.tenant_id,
+        )
+    )
+    if not row:
+        return _patch_error(f"简历 ID {resume_id} 不存在或无权限。", code="resume_patch_not_found")
+
+    base_updated_at = args.get("base_updated_at")
+    if base_updated_at and row.updated_at:
+        try:
+            base_dt = datetime.fromisoformat(str(base_updated_at).replace("Z", "+00:00"))
+            if base_dt.tzinfo is None:
+                base_dt = base_dt.replace(tzinfo=timezone.utc)
+            row_dt = row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at.tzinfo is None else row.updated_at
+            if abs((row_dt - base_dt).total_seconds()) > 1:
+                return {
+                    "status": "failed",
+                    "tool": "apply_resume_patch",
+                    "error_code": "resume_version_retry",
+                    "recoverable": True,
+                    "summary": "这份简历在读取之后被修改过，请重新读取最新版后再做最小修改。",
+                    "display_summary": "简历刚被改过，正在重新读取最新版",
+                }
+        except (ValueError, TypeError):
+            pass
+
+    original_title = row.title
+    original_template_id = row.template_id
+    try:
+        existing = json.loads(row.data_json or "{}")
+        if not isinstance(existing, dict):
+            existing = {}
+    except Exception:
+        existing = {}
+
+    next_doc, next_title, next_template_id, changes, apply_error = _apply_resume_patch_operations(
+        existing,
+        row_title=row.title,
+        row_template_id=row.template_id,
+        args=args,
+    )
+    if apply_error:
+        return apply_error
+    assert next_doc is not None and next_title is not None and next_template_id is not None
+
+    if evidence_pool:
+        evidence_sources = evidence_pool.collect_evidence_sources()
+        if not evidence_pool.profile_snapshot:
+            profile_result = _query_student_profile(db, identity)
+            profile = profile_result.get("profile") or {}
+            evidence_pool.set_profile(profile)
+            evidence_sources.append(profile)
+    else:
+        profile_result = _query_student_profile(db, identity)
+        evidence_sources = [profile_result.get("profile") or {}]
+    evidence_sources.append(existing)
+
+    review_args = _resume_doc_to_tool_args(next_doc, title=next_title, template_id=next_template_id)
+    pre_review = _review_resume_patch_result(review_args, evidence_sources, evidence_pool)
+    if not pre_review["passed"]:
+        return {
+            "status": "failed",
+            "tool": "apply_resume_patch",
+            "error_code": "resume_patch_review_retry",
+            "recoverable": True,
+            "summary": "修改后的简历 review 未通过：" + _friendly_review_errors(pre_review["errors"]),
+            "display_summary": "这次修改有几处信息对不上，正在调整后再试",
+            "review": {k: v for k, v in pre_review.items() if k != "fact_whitelist"},
+        }
+
+    revision_id = _snapshot_resume_revision(db, identity, row, source="ai_update", session_id=session.id if session else None)
+    row.title = next_title
+    row.template_id = next_template_id
+    next_doc["title"] = next_title
+    next_doc["templateId"] = next_template_id
+    row.data_json = json.dumps(next_doc, ensure_ascii=False)
+    db.commit()
+    db.refresh(row)
+
+    try:
+        saved_doc = json.loads(row.data_json or "{}")
+        if not isinstance(saved_doc, dict):
+            saved_doc = {}
+    except Exception:
+        saved_doc = {}
+    post_args = _resume_doc_to_tool_args(saved_doc, title=row.title, template_id=row.template_id)
+    post_review = _review_resume_patch_result(post_args, evidence_sources, evidence_pool)
+    if not post_review["passed"]:
+        row.data_json = json.dumps(existing, ensure_ascii=False)
+        row.title = original_title
+        row.template_id = original_template_id
+        db.commit()
+        return {
+            "status": "failed",
+            "tool": "apply_resume_patch",
+            "error_code": "resume_patch_review_failed",
+            "recoverable": True,
+            "summary": "保存后 review 未通过，已恢复到修改前：" + _friendly_review_errors(post_review["errors"]),
+            "display_summary": "这次修改没有通过检查，已恢复到修改前",
+            "review": {k: v for k, v in post_review.items() if k != "fact_whitelist"},
+        }
+
+    review_public = {k: v for k, v in post_review.items() if k != "fact_whitelist"}
+    summary_bits = changes.get("field_changes") or []
+    summary = f"简历《{row.title}》已修改并完成 review。"
+    if summary_bits:
+        summary += "本次主要调整：" + "、".join(summary_bits[:4]) + "。"
+    if post_review.get("warnings"):
+        summary += "另有几处表达可继续精修。"
+    return {
+        "status": "completed",
+        "tool": "apply_resume_patch",
+        "summary": summary,
+        "resume_id": row.id,
+        "editor_url": f"/student/resumes/{row.id}",
+        "open_resume_editor": True,
+        "revision_id": revision_id,
+        "changes": changes,
+        "review": review_public,
+        "review_passed": True,
+        "reviewed_resume_preview": _structured_resume_to_text(row)[:1200],
     }
 
 
