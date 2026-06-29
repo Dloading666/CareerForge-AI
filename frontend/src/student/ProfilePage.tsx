@@ -45,7 +45,7 @@ import { apiRequest } from '../shared/api'
 import { CalendarPage } from './CalendarPage'
 
 // 简历事实源内部仍统一到月（YYYY-MM），页面给用户展示为更适合简历的 YYYY.MM。
-const MONTH_FORMAT = 'YYYY-MM'
+const MONTH_FORMAT = 'YYYY.MM'
 const MONTH_PICKER_FORMAT = 'YYYY.MM'
 const RANGE_SEPARATOR = ' ~ '
 
