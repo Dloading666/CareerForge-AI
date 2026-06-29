@@ -5,7 +5,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import type { ReactNode } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { richTextToTextarea } from '../utils/content'
 
@@ -140,7 +140,9 @@ export function RichTextEditor({
 }: RichTextEditorProps) {
   // We need to handle the case where the parent passes an empty/legacy value.
   // Tiptap requires explicit initial content; we hydrate from HTML.
-  const initialHtml = useRef<string>(value || '')
+  // 用 useState 惰性初始化而不是 useRef：初始内容只在挂载时取一次，
+  // 放进 state 既不触发额外渲染（只读初始值），又避免在渲染期间访问 ref。
+  const initialHtml = useState(() => value || '')[0]
   const isInternalUpdate = useRef(false)
 
   const editor = useEditor({
@@ -156,8 +158,9 @@ export function RichTextEditor({
         showOnlyWhenEditable: true,
       }),
     ],
-    content: initialHtml.current,
+    content: initialHtml,
     onUpdate({ editor: ed }) {
+      // 标记本次 onChange 由用户输入触发，供下方 effect 判断不要把值回塞（防循环）。
       isInternalUpdate.current = true
       const html = ed.getHTML()
       onChange(html === '<p></p>' ? '' : html)
