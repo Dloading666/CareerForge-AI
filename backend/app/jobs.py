@@ -109,12 +109,23 @@ def enqueue_resume_pdf(resume_id: int, user_id: int, tenant_id: int) -> str:
     return job.id
 
 
-def get_job_status(job_id: str) -> Optional[dict[str, Any]]:
-    """Return a JSON-friendly status snapshot, or None if the job is gone."""
+def get_job_status(job_id: str, *, expected_user_id: int | None = None) -> Optional[dict[str, Any]]:
+    """Return a JSON-friendly status snapshot, or None if the job is gone.
+
+    若传入 expected_user_id，会校验 job 归属：不属于该用户的 job 一律当作
+    不存在（返回 None），避免越权查询他人简历导出任务。
+    generate_resume_pdf_job 的参数顺序为 (resume_id, user_id, tenant_id)。
+    """
     try:
         job = Job.fetch(job_id, connection=get_redis())
     except NoSuchJob:
         return None
+
+    if expected_user_id is not None:
+        args = job.args or ()
+        job_user_id = args[1] if len(args) >= 2 else None  # 参数顺序: resume_id, user_id, tenant_id
+        if job_user_id is not None and job_user_id != expected_user_id:
+            return None  # 不属于该用户，当作不存在
 
     status = job.get_status()
     payload: dict[str, Any] = {
@@ -131,12 +142,21 @@ def get_job_status(job_id: str) -> Optional[dict[str, Any]]:
     return payload
 
 
-def get_job_result_path(job_id: str) -> Optional[Path]:
-    """Return the on-disk result path for a finished job, or None if missing."""
+def get_job_result_path(job_id: str, *, expected_user_id: int | None = None) -> Optional[Path]:
+    """Return the on-disk result path for a finished job, or None if missing.
+
+    若传入 expected_user_id，会校验 job 归属：不属于该用户的 job 一律当作
+    不存在（返回 None），避免越权下载他人简历 PDF。
+    """
     try:
         job = Job.fetch(job_id, connection=get_redis())
     except NoSuchJob:
         return None
+    if expected_user_id is not None:
+        args = job.args or ()
+        job_user_id = args[1] if len(args) >= 2 else None  # 参数顺序: resume_id, user_id, tenant_id
+        if job_user_id is not None and job_user_id != expected_user_id:
+            return None  # 不属于该用户，当作不存在
     if job.get_status() != JobStatus.FINISHED:
         return None
     result = job.result

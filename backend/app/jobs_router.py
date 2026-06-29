@@ -52,7 +52,8 @@ def enqueue_export_resume_pdf(
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, current=Depends(require_role("student"))):
-    info = get_job_status(job_id)
+    identity, _ = current
+    info = get_job_status(job_id, expected_user_id=identity.user_id)
     if not info:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在或已过期")
     return ok(info)
@@ -60,7 +61,8 @@ def get_job(job_id: str, current=Depends(require_role("student"))):
 
 @router.get("/jobs/{job_id}/download")
 def download_job_result(job_id: str, current=Depends(require_role("student"))):
-    path = get_job_result_path(job_id)
+    identity, _ = current
+    path = get_job_result_path(job_id, expected_user_id=identity.user_id)
     if not path:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
