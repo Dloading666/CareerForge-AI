@@ -34,7 +34,6 @@ export function AuthPage() {
   const [countdown, setCountdown] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [sendingCode, setSendingCode] = useState(false)
-  const [debugCode, setDebugCode] = useState<string | null>(null)
   const [captchaId, setCaptchaId] = useState('')
   const [captchaImage, setCaptchaImage] = useState('')
   const [studentCaptcha, setStudentCaptcha] = useState('')
@@ -71,7 +70,6 @@ export function AuthPage() {
   useEffect(() => {
     if (prevEmailRef.current && prevEmailRef.current !== account) {
       setStudentCode('')
-      setDebugCode(null)
       setCountdown(0)
     }
     prevEmailRef.current = account
@@ -142,12 +140,11 @@ export function AuthPage() {
         captcha_id: captchaId,
         captcha_code: studentCaptcha.trim(),
       }
-      const data = await apiRequest<{ cooldown_sec: number; debug_code?: string }>(
+      const data = await apiRequest<{ cooldown_sec: number }>(
         '/api/v1/auth/student/email/send-code',
         { method: 'POST', body: JSON.stringify(body) },
       )
       setCountdown(data.cooldown_sec)
-      setDebugCode(data.debug_code ?? null)
       notify.success('验证码已发送，请查收邮箱')
       void loadCaptcha()
     } catch (error) {
@@ -229,7 +226,6 @@ export function AuthPage() {
     setStudentCode('')
     setPassword('')
     setStudentConfirmPassword('')
-    setDebugCode(null)
     setCountdown(0)
     setFeedback(null)
   }
@@ -268,7 +264,6 @@ export function AuthPage() {
       setStudentCode('')
       setPassword('')
       setStudentConfirmPassword('')
-      setDebugCode(null)
       setCountdown(0)
     } catch (error) {
       const message = error instanceof ApiError ? error.message : '密码重置失败'
@@ -356,10 +351,6 @@ export function AuthPage() {
                 输入绑定的邮箱，获取验证码后设置新密码。
               </Typography.Text>
 
-              {debugCode ? (
-                <Alert className="debug-code-banner" type="info" content={`开发环境验证码：${debugCode}`} showIcon />
-              ) : null}
-
               <Input
                 size="large"
                 prefix={<IconEmail />}
@@ -435,10 +426,6 @@ export function AuthPage() {
                 <Tabs.TabPane key="login" title="邮箱登录" />
                 <Tabs.TabPane key="register" title="邮箱注册" />
               </Tabs>
-
-              {debugCode ? (
-                <Alert className="debug-code-banner" type="info" content={`开发环境验证码：${debugCode}`} showIcon />
-              ) : null}
 
               <Input
                 size="large"
@@ -527,7 +514,6 @@ export function AuthPage() {
                         setPassword('')
                         setStudentConfirmPassword('')
                         setStudentCode('')
-                        setDebugCode(null)
                         setCountdown(0)
                         setFeedback(null)
                       }}

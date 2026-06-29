@@ -76,15 +76,17 @@
 ### 1. 配置环境变量
 
 ```bash
-cp backend/.env.example backend/.env.docker
+cp backend/.env.docker.example backend/.env.docker
 ```
 
 至少修改以下字段：
 
 ```env
+APP_ENV=production
 DATABASE_URL=mysql+pymysql://zhipei:你的密码@mysql:3306/zhipei_agent?charset=utf8mb4
 REDIS_URL=redis://:你的密码@redis:6379/0
 JWT_SECRET_KEY=替换为随机长字符串
+API_KEY_ENCRYPTION_KEY=替换为 Fernet 随机密钥
 
 # 管理员初始账号（首次启动自动创建）
 ADMIN_BOOTSTRAP_USERNAME=admin

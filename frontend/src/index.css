@@ -380,10 +380,6 @@ textarea {
   font-size: 13px;
 }
 
-.debug-code-banner {
-  margin-bottom: 16px;
-}
-
 .register-form {
   display: flex;
   flex-direction: column;
