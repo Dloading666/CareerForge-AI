@@ -919,32 +919,35 @@ function ResumeEditorLinks({ activities }: { activities: AgentActivity[] }) {
           </span>
           <span className="resume-result-card-copy">
             <span className="resume-result-card-title">{title}</span>
-            <span className="resume-result-card-link">
-              查看简历 <IconCaretRight />
-            </span>
-            {editorLinks.some((link) => link.reviewPassed) && (
-              <span className="resume-result-card-review">
-                <IconCheck /> 已完成 review
+            <span className="resume-result-card-meta">
+              <span className="resume-result-card-link">
+                查看简历 <IconCaretRight />
               </span>
-            )}
+              {editorLinks.some((link) => link.reviewPassed) && (
+                <span className="resume-result-card-review">
+                  <IconCheck /> 内容检查通过
+                </span>
+              )}
+            </span>
           </span>
         </button>
         <div className="resume-result-card-actions">
           {editorLinks.some((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && !revertedResumeIds.has(link.resumeId)) && (
             <button
               type="button"
-              className="resume-result-card-revert"
+              className={`resume-result-card-revert${reverting !== null ? ' is-loading' : ''}`}
               onClick={() => {
                 const target = editorLinks.find((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && !revertedResumeIds.has(link.resumeId))
                 if (target) handleRevert(target.resumeId, target.revisionId)
               }}
               disabled={reverting !== null}
             >
-              {reverting !== null ? '撤销中…' : '撤销'}
+              {reverting !== null ? <IconLoading /> : <IconUndo />}
+              <span>{reverting !== null ? '正在撤销' : '撤销本次修改'}</span>
             </button>
           )}
           {editorLinks.some((link) => (link.activityName === 'update_resume_data' || link.activityName === 'apply_resume_patch') && revertedResumeIds.has(link.resumeId)) && (
-            <span className="resume-result-card-reverted">
+            <span className="resume-result-card-reverted" role="status">
               <IconCheck /> 已撤销
             </span>
           )}
@@ -1075,8 +1078,6 @@ function AssistantMessage({
             )}
           </>
         )}
-        <ResumeEditorLinks activities={activities} />
-        <GeneratedFileLinks files={files} />
         {!pending && cleanMessageContent.trim() && (
           <div className="assistant-message-actions">
             <button type="button" className="message-action-btn" aria-label="复制回复" onClick={() => void copyMessageText(cleanMessageContent)}>
@@ -1084,6 +1085,8 @@ function AssistantMessage({
             </button>
           </div>
         )}
+        <ResumeEditorLinks activities={activities} />
+        <GeneratedFileLinks files={files} />
         {!pending && suggestions && suggestions.length > 0 && onSuggestionClick && (
           <MessageSuggestions suggestions={suggestions} onSuggestionClick={onSuggestionClick} />
         )}
@@ -2108,6 +2111,7 @@ export function AgentChatView({
         </div>
       )}
 
+      <div className="agent-thread-shell">
       <div ref={threadRef} className="agent-thread">
         {notice && (
           <div className="agent-error-line">
@@ -2265,6 +2269,7 @@ export function AgentChatView({
           <IconCaretDown />
         </button>
       )}
+      </div>
 
       <div
         className={`agent-composer${isDraggingOver ? ' drag-over' : ''}`}
