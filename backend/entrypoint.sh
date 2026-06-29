@@ -47,8 +47,9 @@ if [ $alembic_rc -ne 0 ]; then
   alembic_rc=$?
   set -e
   if [ $alembic_rc -ne 0 ]; then
-    echo "alembic upgrade heads also failed (rc=$alembic_rc); falling back to stamp heads" >&2
-    alembic stamp heads
+    echo "alembic upgrade heads also failed (rc=$alembic_rc)" >&2
+    echo "数据库迁移失败，拒绝启动以避免缺表/缺字段故障。请检查迁移脚本。" >&2
+    exit 1
   fi
 fi
 
