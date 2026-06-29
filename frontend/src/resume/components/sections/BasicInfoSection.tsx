@@ -5,16 +5,10 @@ import { useRef, useState } from 'react'
 import { useResumeEditor } from '../../useResumeEditor'
 import { createCustomField, RESUME_PHOTO_HEIGHT, RESUME_PHOTO_WIDTH } from '../../constants'
 import { updateResume, uploadResumeAvatar } from '../../api'
+import { MonthPickerInput } from '../MonthPickerInput'
 
 const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp'
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
-
-function normalizeMonth(value: string | null | undefined): string {
-  if (!value) return ''
-  const match = value.trim().match(/(\d{4})[.\-/年。．](\d{1,2})/)
-  if (!match) return value.trim()
-  return `${match[1]}-${match[2].padStart(2, '0')}`
-}
 
 export function BasicInfoSection() {
   const { resume, updateBasic, markSaving, markSaved, markError } = useResumeEditor()
@@ -101,11 +95,10 @@ export function BasicInfoSection() {
           <Input value={resume.basic.location} onChange={(value) => updateBasic({ location: value })} />
         </Form.Item>
         <Form.Item label="出生月份">
-          <Input
-            value={normalizeMonth(resume.basic.birthDate)}
-            onChange={(value) => updateBasic({ birthDate: normalizeMonth(value) })}
-            placeholder="YYYY-MM"
-            maxLength={7}
+          <MonthPickerInput
+            value={resume.basic.birthDate}
+            onChange={(value) => updateBasic({ birthDate: value })}
+            placeholder="选择月份"
           />
         </Form.Item>
         <Form.Item label="GitHub Key">

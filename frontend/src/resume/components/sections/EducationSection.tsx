@@ -4,6 +4,7 @@ import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 import { useResumeEditor } from '../../useResumeEditor'
 import { FieldAiAssist } from '../FieldAiAssist'
 import { RichTextEditor } from '../RichTextEditor'
+import { MonthPickerInput } from '../MonthPickerInput'
 
 export function EducationSection() {
   const { resume, addEducation, removeEducation, updateEducation } = useResumeEditor()
@@ -37,18 +38,16 @@ export function EducationSection() {
             </Form.Item>
             <Form.Item label="起止时间">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
-                <Input
+                <MonthPickerInput
                   value={item.startDate}
                   onChange={(startDate) => updateEducation(item.id, { startDate })}
-                  placeholder="开始 YYYY-MM"
-                  maxLength={7}
+                  placeholder="开始月份"
                 />
                 <span style={{ color: '#86909c' }}>至</span>
-                <Input
+                <MonthPickerInput
                   value={item.endDate}
                   onChange={(endDate) => updateEducation(item.id, { endDate })}
-                  placeholder="结束 YYYY-MM"
-                  maxLength={7}
+                  placeholder="结束月份"
                 />
               </div>
             </Form.Item>
