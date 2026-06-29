@@ -1155,6 +1155,7 @@ type SavedSessionState = {
   heartbeats: Record<number, { output_chars: number; phase: string }>
   stepsPlan: { steps: string[] } | null
   messageSuggestions: Record<number, string[]>
+  queue: QueuedMessage[]
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
@@ -1183,6 +1184,10 @@ export function AgentChatView({
   const studentNickname = (session?.profile.nickname as string) || studentName
 
   const [agentSession, setAgentSession] = useState<AgentChatSession | null>(null)
+  // 跟踪最新的 agentSession：state 在闭包里是旧值，ref 是同步最新值，
+  // 用于 createAgentSession 异步期间检测用户是否已切到别的会话。
+  const agentSessionRef = useRef<AgentChatSession | null>(agentSession)
+  useEffect(() => { agentSessionRef.current = agentSession }, [agentSession])
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<Record<number, GeneratedFile[]>>({})
@@ -1309,6 +1314,7 @@ export function AgentChatView({
         heartbeats,
         stepsPlan,
         messageSuggestions,
+        queue,
       })
       // 限制缓存大小：最多保留 5 个 session
       if (sessionCache.current.size > 5) {
@@ -1322,12 +1328,13 @@ export function AgentChatView({
 
     setNotice(null)
     setPendingAttachments([])
-    setQueue([])
     setEditingMessageId(null)
     setEditingMessageText('')
 
     // 2. 优先从缓存恢复
     const cached = sessionCache.current.get(sessionToLoad.id)
+    // 恢复目标会话的排队内容（无缓存则清空，避免串入其他会话的待发消息）
+    setQueue(cached?.queue ?? [])
     if (cached) {
       setHistoryLoading(false)
       // 需要从 API 获取 session 元数据（title 等可能更新了）
@@ -1347,6 +1354,7 @@ export function AgentChatView({
       setHeartbeats(cached.heartbeats)
       setStepsPlan(cached.stepsPlan ?? null)
       setMessageSuggestions(cached.messageSuggestions ?? {})
+      setQueue(cached.queue ?? [])
       return
     }
 
@@ -1412,7 +1420,7 @@ export function AgentChatView({
       sessionCache.current.set(agentSession.id, {
         messages, activities, generatedFiles, runtimeStatuses,
         runtimeInfo, userMessageAttachments, storeSegments, heartbeats, stepsPlan,
-        messageSuggestions,
+        messageSuggestions, queue,
       })
     }
     setAgentSession(null)
@@ -1457,18 +1465,21 @@ export function AgentChatView({
 
   // 工作简历切换：已有 session 走 PATCH，否则只存 state
   const handleResumeChange = useCallback(async (resumeId: number | null) => {
-    setActiveResumeId(resumeId)
+    const prev = activeResumeId
+    setActiveResumeId(resumeId) // 乐观更新，UI 立即响应
     if (agentSession?.id) {
       try {
         await apiRequest<AgentChatSession>(`/api/v1/student/master/sessions/${agentSession.id}`, {
           method: 'PATCH',
           body: JSON.stringify({ active_resume_id: resumeId }),
         })
-      } catch {
-        // silent — state already updated locally
+      } catch (err: unknown) {
+        setActiveResumeId(prev) // 失败回滚，避免下次修改落到旧简历
+        const detail = (err as { detail?: string })?.detail
+        Message.error(detail || '切换工作简历失败，请重试')
       }
     }
-  }, [agentSession?.id])
+  }, [agentSession?.id, activeResumeId])
 
   // 右侧预览面板：拖拽调宽（宽度提升到父组件受控，松手时持久化）
   const handlePreviewResizeDown = useCallback((e: React.MouseEvent) => {
@@ -1616,6 +1627,13 @@ export function AgentChatView({
     } catch (error) {
       setNotice(error instanceof ApiError ? error.message : '创建对话失败')
       return
+    }
+
+    // 竞态保护：createAgentSession 是异步的，await 期间用户可能已切到历史会话。
+    // 若已切走，把消息发到用户当前看着的会话，而非刚创建的新会话。
+    const latest = agentSessionRef.current
+    if (latest && currentSession && latest.id !== currentSession.id) {
+      currentSession = latest
     }
 
     const optimisticId = optimisticIdRef.current
