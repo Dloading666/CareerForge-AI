@@ -340,10 +340,8 @@ def send_student_email_code(db: Session, payload: StudentEmailCodeSendRequest, i
     except Exception:
         pass
 
-    data = {"cooldown_sec": settings.email_code_cooldown_seconds}
-    if settings.is_development:
-        data["debug_code"] = code
-    return data
+    # 验证码只通过邮件送达，任何环境都不在响应中返回明文。
+    return {"cooldown_sec": settings.email_code_cooldown_seconds}
 
 
 def verify_student_email_code(db: Session, *, email: str, scene: str, code: str) -> None:
@@ -472,6 +470,17 @@ def change_student_email(
     verify_student_email_code(db, email=new_email, scene="change_email", code=payload.code)
     student.email = new_email
     student.email_verified_at = utcnow()
+
+    # 邮箱是登录凭证的一部分，换邮箱后吊销该学生所有未失效的刷新令牌，
+    # 强制重新登录（与重置密码一致），避免旧邮箱签发的 token 继续生效。
+    tokens = db.scalars(
+        select(StudentRefreshToken).where(
+            StudentRefreshToken.student_id == student.id,
+            StudentRefreshToken.revoked.is_(False),
+        )
+    ).all()
+    for token in tokens:
+        token.revoked = True
     db.commit()
     db.refresh(student)
     return {"email": student.email, "email_verified_at": student.email_verified_at.isoformat() if student.email_verified_at else None}
