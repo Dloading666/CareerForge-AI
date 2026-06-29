@@ -37,11 +37,12 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 
 
 def _client_ip(request: Request) -> str:
-    # Honor X-Forwarded-For when behind Nginx / load balancer; fall back to socket peer.
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    # 复用可信 IP 提取逻辑：默认只信任 socket 对端，仅在配置了可信代理跳数时
+    # 才从 X-Forwarded-For 提取真实客户端，避免伪造 XFF 绕过限流。
+    from app.infra.client_ip import trusted_client_ip
+
+    ip = trusted_client_ip(request, request.headers.get("X-Forwarded-For"))
+    return ip or "unknown"
 
 
 def _is_exempt(path: str) -> bool:

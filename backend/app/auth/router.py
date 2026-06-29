@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Header, Request, UploadFile
 import os, uuid, shutil
 from sqlalchemy.orm import Session
+
+from app.infra.client_ip import trusted_client_ip
 
 from app.auth.schemas import (
     AdminLoginRequest,
@@ -45,71 +47,78 @@ def get_captcha():
 @router.post("/student/email/send-code")
 def student_send_code(
     payload: StudentEmailCodeSendRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
 ):
-    data = send_student_email_code(db, payload, ip=x_forwarded_for)
+    data = send_student_email_code(db, payload, ip=trusted_client_ip(request, x_forwarded_for))
     return ok(data)
 
 
 @router.post("/login")
 def unified_login(
     payload: UnifiedLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
 ):
-    data = login_unified(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    data = login_unified(db, payload, ip=trusted_client_ip(request, x_forwarded_for), user_agent=user_agent)
     return ok(data)
 
 
 @router.post("/student/register")
 def student_register(
     payload: StudentRegisterRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
 ):
-    data = register_student(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    data = register_student(db, payload, ip=trusted_client_ip(request, x_forwarded_for), user_agent=user_agent)
     return ok(data)
 
 
 @router.post("/student/reset-password")
 def student_reset_password(
     payload: StudentResetPasswordRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
 ):
-    data = reset_student_password(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    data = reset_student_password(db, payload, ip=trusted_client_ip(request, x_forwarded_for), user_agent=user_agent)
     return ok(data)
 
 
 @router.post("/student/login")
 def student_login(
     payload: StudentLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
 ):
-    data = login_student(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    data = login_student(db, payload, ip=trusted_client_ip(request, x_forwarded_for), user_agent=user_agent)
     return ok(data)
 
 
 @router.post("/admin/login")
 def admin_login(
     payload: AdminLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
 ):
-    data = login_admin(db, payload, ip=x_forwarded_for, user_agent=user_agent)
+    data = login_admin(db, payload, ip=trusted_client_ip(request, x_forwarded_for), user_agent=user_agent)
     return ok(data)
 
 
 @router.post("/sso/login")
 async def sso_token_login(
     payload: SSOLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_forwarded_for: Optional[str] = Header(default=None),
     user_agent: Optional[str] = Header(default=None),
@@ -117,7 +126,7 @@ async def sso_token_login(
     data = await sso_login(
         db,
         token=payload.token,
-        ip=x_forwarded_for,
+        ip=trusted_client_ip(request, x_forwarded_for),
         user_agent=user_agent,
     )
     return ok(data)

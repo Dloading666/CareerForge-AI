@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     api_rate_limit_rps: int = Field(default=200, alias="API_RATE_LIMIT_RPS")  # per IP per window; 0 disables
     api_rate_limit_window_seconds: int = Field(default=60, alias="API_RATE_LIMIT_WINDOW_SECONDS")
+    trusted_proxy_count: int = Field(
+        default=0,
+        alias="TRUSTED_PROXY_COUNT",
+        description="前置可信代理跳数；用于从 X-Forwarded-For 提取真实客户端 IP。0=不信任 XFF（默认最安全）",
+    )
 
     admin_bootstrap_username: str = Field(default="admin", alias="ADMIN_BOOTSTRAP_USERNAME")
     admin_bootstrap_email: str = Field(default="admin@example.com", alias="ADMIN_BOOTSTRAP_EMAIL")
