@@ -149,12 +149,24 @@ def list_master_models(
 
 
 @router.delete("/master/sessions/{session_id}")
-def delete_master_session(
+async def delete_master_session(
     session_id: int,
     db: Session = Depends(get_db),
     current=Depends(require_role("student")),
 ):
     identity, _ = current
+    # 防御性兜底：前端不可信（用户可能直接调 API 或前端崩溃），删除会话前
+    # 先取消该 session 正在跑的后台 run，避免会话已删但 AI 继续改简历。
+    active_runs = run_manager.get_active_runs(identity)
+    for run in active_runs:
+        if run.get("session_id") == session_id:
+            run_id = run.get("run_id")
+            if run_id is not None:
+                try:
+                    await run_manager.cancel(run_id, identity)
+                except Exception:
+                    # 单个 run 取消失败不阻塞删除
+                    pass
     delete_session(db, identity, session_id)
     return ok({"id": session_id}, msg="deleted")
 
