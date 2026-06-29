@@ -8,16 +8,19 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import Header, Request
+from fastapi import Request
 
 from app.core.config import get_settings
 
 
 def trusted_client_ip(
     request: Request,
-    x_forwarded_for: Optional[str] = Header(default=None, alias="X-Forwarded-For"),
+    x_forwarded_for: Optional[str] = None,
 ) -> Optional[str]:
     """返回用于限流的客户端 IP。
+
+    本函数被 auth/router 各端点和 rate_limit 中间件直接调用（非 FastAPI 依赖注入），
+    XFF 由调用方从 request 头取出后传入。
 
     - 无 XFF：返回 socket 对端 IP（最可信）。
     - 有 XFF 但 TRUSTED_PROXY_COUNT=0：忽略 XFF，返回 socket 对端（默认，最安全）。
