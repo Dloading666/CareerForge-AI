@@ -320,8 +320,9 @@ return { title: 'AI简历助手', subtitle: '智能辅助简历制作、优化�
 
   const handleDeleteSession = async (target: AgentChatSession) => {
     try {
+      // 先取消后端正在跑的 run，避免会话已删但 AI 继续改简历
+      await chatRuntimeStore.cancelSessionRun(target.id)
       await apiRequest(`/api/v1/student/master/sessions/${target.id}`, { method: 'DELETE' })
-      chatRuntimeStore.abortSession(target.id)
       chatRuntimeStore.clearSession(target.id)
       setResumeSessions((prev) => prev.filter((s) => s.id !== target.id))
       if (resumeActiveId === target.id) {
