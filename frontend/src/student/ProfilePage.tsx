@@ -630,7 +630,7 @@ function ListSection<T>({
 // ---------- Page ----------
 
 export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange }: { onAvatarChange?: (url: string) => void; activeTab?: string; onTabChange?: (tab: string) => void }) {
-  const { session, refreshProfile } = useAuth()
+  const { refreshProfile } = useAuth()
   const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -692,9 +692,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
 
   const fetchProfile = async () => {
     try {
-      const res = await apiRequest<Profile>('/api/v1/student/profile', {
-        headers: { Authorization: `Bearer ${session?.access}` },
-      })
+      const res = await apiRequest<Profile>('/api/v1/student/profile')
       setProfile(res)
     } catch {
       Message.error('加载失败')
@@ -716,7 +714,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
       if (feedbackFile) formData.append('screenshot', feedbackFile)
       await apiRequest('/api/v1/student/feedback', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session?.access}` },
         body: formData,
       })
       Message.success('反馈提交成功，感谢！')
@@ -735,7 +732,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     // Initial profile hydration is intentionally driven by the mounted page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchProfile()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const openEdit = async (sourceProfile: Profile | null = profile) => {
@@ -766,9 +762,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           level?: number | null
           description?: string | null
         }[]
-      }>('/api/v1/student/profile/details', {
-        headers: { Authorization: `Bearer ${session?.access}` },
-      })
+      }>('/api/v1/student/profile/details')
       setWorkExperiences(
         (details.work_experiences ?? []).map((it) => ({
           id: it.id ?? null,
@@ -870,10 +864,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         })
       await apiRequest('/api/v1/student/profile', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access}`,
-        },
         body: JSON.stringify({
           ...values,
           birth_date: formatMonth(values.birth_date),
@@ -884,39 +874,43 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
           expected_location: expectedLocation,
         }),
       })
-      await apiRequest('/api/v1/student/profile/details', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access}`,
-        },
-        body: JSON.stringify({
-          work_experiences: workExperiences.map((item) => ({
-            ...item,
-            start_date: normalizeMonthOrPresent(item.start_date),
-            end_date: normalizeMonthOrPresent(item.end_date),
-          })),
-          projects: projects.map((item) => ({
-            ...item,
-            start_date: normalizeMonthOrPresent(item.start_date),
-            end_date: normalizeMonthOrPresent(item.end_date),
-          })),
-          honors: honors.map((item) => ({
-            ...item,
-            award_date: normalizeMonth(item.award_date),
-          })),
-          educations: educations.map((item) => ({
-            ...item,
-            duration: normalizeDateRange(item.duration),
-          })),
-          certifications: certifications.map((item) => ({
-            ...item,
-            issue_date: normalizeMonth(item.issue_date),
-            expire_date: normalizeMonth(item.expire_date),
-          })),
-          skills: skillItems,
-        }),
-      })
+      // 基本信息（第一个 PUT）已成功。经历明细（第二个 PUT）单独捕获，
+      // 失败时明确告知用户「部分成功」，避免用户误以为整体未保存而用旧数据覆盖。
+      try {
+        await apiRequest('/api/v1/student/profile/details', {
+          method: 'PUT',
+          body: JSON.stringify({
+            work_experiences: workExperiences.map((item) => ({
+              ...item,
+              start_date: normalizeMonthOrPresent(item.start_date),
+              end_date: normalizeMonthOrPresent(item.end_date),
+            })),
+            projects: projects.map((item) => ({
+              ...item,
+              start_date: normalizeMonthOrPresent(item.start_date),
+              end_date: normalizeMonthOrPresent(item.end_date),
+            })),
+            honors: honors.map((item) => ({
+              ...item,
+              award_date: normalizeMonth(item.award_date),
+            })),
+            educations: educations.map((item) => ({
+              ...item,
+              duration: normalizeDateRange(item.duration),
+            })),
+            certifications: certifications.map((item) => ({
+              ...item,
+              issue_date: normalizeMonth(item.issue_date),
+              expire_date: normalizeMonth(item.expire_date),
+            })),
+            skills: skillItems,
+          }),
+        })
+      } catch {
+        Message.warning('基本信息已保存，但经历明细保存失败，请重试保存')
+        void fetchProfile()
+        return
+      }
       Message.success('保存成功')
       setLastSavedAt(new Date())
       void fetchProfile()
@@ -987,7 +981,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     }
     setSendingPwdCode(true)
     try {
-      const res = await apiRequest<{ cooldown_sec: number; debug_code?: string }>(
+      const res = await apiRequest<{ cooldown_sec: number }>(
         '/api/v1/auth/student/email/send-code',
         {
           method: 'POST',
@@ -1000,8 +994,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         },
       )
       setPwdCountdown(res.cooldown_sec || 60)
-      if (res.debug_code) Message.info(`开发环境验证码：${res.debug_code}`)
-      else Message.success('验证码已发送至邮箱，请查收')
+      Message.success('验证码已发送至邮箱，请查收')
     } catch (e) {
       Message.error(e instanceof Error ? e.message : '验证码发送失败')
       void loadPwdCaptcha()
@@ -1068,7 +1061,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         banner_url?: string
       }>(endpoint, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session?.access}` },
         body: fd,
       })
       const url = res.avatar_url || res.resume_avatar_url || res.banner_url
@@ -1186,7 +1178,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     try {
       await apiRequest('/api/v1/student/profile', {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${session?.access}` },
         body: JSON.stringify({ nickname: trimmed || null }),
       })
       setProfile((p) => (p ? { ...p, nickname: trimmed || null } : p))
@@ -1210,7 +1201,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     }
     setSendingEmailCode(true)
     try {
-      const res = await apiRequest<{ cooldown_sec: number; debug_code?: string }>(
+      const res = await apiRequest<{ cooldown_sec: number }>(
         '/api/v1/auth/student/email/send-code',
         {
           method: 'POST',
@@ -1223,8 +1214,7 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
         },
       )
       setEmailCountdown(res.cooldown_sec || 60)
-      if (res.debug_code) Message.info(`开发环境验证码：${res.debug_code}`)
-      else Message.success('验证码已发送至新邮箱，请查收')
+      Message.success('验证码已发送至新邮箱，请查收')
     } catch (e) {
       Message.error(e instanceof Error ? e.message : '验证码发送失败')
       void loadAcctCaptcha()
@@ -1242,7 +1232,6 @@ export function ProfilePage({ onAvatarChange, activeTab = 'profile', onTabChange
     try {
       await apiRequest('/api/v1/student/profile/email', {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${session?.access}` },
         body: JSON.stringify({ new_email: newEmail.trim(), code: emailCode.trim() }),
       })
       setProfile((p) => (p ? { ...p, email: newEmail.trim(), email_verified_at: new Date().toISOString() } : p))
